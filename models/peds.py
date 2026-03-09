@@ -15,7 +15,7 @@ class PEDS(nnx.Module):
 
         # 100 nanometers / step_size nanometer
         self.resolution = resolution
-        self.layer_sizes = [25] + hidden_sizes + [resolution**2]
+        self.layer_sizes = [25] + hidden_sizes + [resolution**2]  # 25 input features (5x5 grid) and output is the conductivity grid (resolution x resolution)
         self.activation = activation
         self.learn_residual = learn_residual
 
@@ -43,7 +43,7 @@ class PEDS(nnx.Module):
         conductivity_generated = jnp.reshape(conductivity_generated, (batch_size, self.resolution, self.resolution))
 
         # Rescale and Adjust
-        if self.learn_residual:
+        if self.learn_residual: # If learn_residual is True, the model adds a base conductivity to the generator outpu
             conductivities = conductivity_original_wrapper(pores, self.resolution)
             conductivity_generated = conductivity_generated+conductivities 
 

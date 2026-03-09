@@ -11,3 +11,9 @@ data/highfidelity/high_fidelity_10017.npz
 sftp.json
 data/highfidelity/high_fidelity_2_16000.npz
 data/highfidelity/high_fidelity_2_20000.npz
+
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
