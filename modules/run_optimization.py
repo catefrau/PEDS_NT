@@ -24,7 +24,7 @@ def optimize(exp_name, model_name, model,opt, kappas, seed):
 
     for k in kappas:
 
-        design, kappa_optimized = optimizer(model, k, seed)
+        design, kappa_optimized = optimizer(model, k, seed)  # design is the binary array of the optimized geometry, kappa_optimized is the kappa value obtained from the optimized geometry. Both are returned by the optimization function (either genetic_algorithm or gradient_opt) depending on the choice of optimizer in the config_experiment.py file. 
 
         print(f"Optimized for {k}: found {kappa_optimized} for {design}")
 
@@ -42,16 +42,16 @@ def choose_optimizer(opt):
     if opt == "ga":
         return lambda model, k,seed: genetic_algorithm(model, k, seed,  n=25, pop_size=200, generations=40, cxpb=0.5, mutpb=0.2, tournsize=3, indpb=0.05)
     
-    if opt == "grad":
-        return lambda model, k, seed: gradient_opt(model, k,seed,  neigh=True, batch_size=200, steps=50, lr=0.1)
+    if opt == "grad": # the otput of the function (runs Adam + binarizes) is passed in line 23 -> 27 if the optimizer is chosen as "grad" in the config_experiment.py file 
+        return lambda model, k, seed: gradient_opt(model, k,seed,  neigh=True, batch_size=200, steps=51, lr=0.1)
     
     else:
         print("Unrecognized optimization method")
         pass
         
 
-if __name__ == "__main__":
-
+if __name__ == "__main__":   # doesn't run when imported as a module, only when executed as a script. This is useful for testing the optimization function independently from the rest of the code.
+    # in the full_pipeline only the optimize function is called
     import os
     os.chdir("/Users/antoniovaragnolo/Desktop/PEDSBoltzmann/Codes/")
     print("Current working directory:", os.getcwd())

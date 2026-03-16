@@ -14,15 +14,15 @@ e1 = {
     "stratified": "all",
 
     # Training
-    "epochs": 1,
-    "batch_size": 200,
+    "epochs": 100,
+    "batch_size": 200, # training samples per batch
     "learn_rate_max": 5e-3,
     "learn_rate_min": 5e-4,
     "schedule": "cosine-cycles",
 
     # Optimization
     "opt": "grad",
-    "kappas": [0.0, 10.0]
+    "kappas": [10.0, 20.0]
 }
 
 e2 = {

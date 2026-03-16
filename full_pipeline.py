@@ -99,8 +99,3 @@ if rank == 0 and exp_config['optimization']:
 # 6 Same but with ensemble (store N models)
 
 
-# After break
-
-# Active Learning framework
-# Stochastic optimization (easy)
-# Compare results with and without UQ

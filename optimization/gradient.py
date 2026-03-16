@@ -8,7 +8,7 @@ def gradient_opt(model, target, seed, neigh=True, batch_size=10, steps=100, lr=0
     if neigh:
         def loss_fn(params, model, target):
             noise = jax.random.normal(jax.random.PRNGKey(0), params.shape) * 0.05
-            perturbed_params = jnp.clip(params + noise, 0, 1)  
+            perturbed_params = jnp.clip(params + noise, 0, 1)  # what are those???
 
             if isinstance(model, PEDS):
                 k, _ = model(perturbed_params)
@@ -26,20 +26,23 @@ def gradient_opt(model, target, seed, neigh=True, batch_size=10, steps=100, lr=0
 
     # Optimizer with momentum
     optimizer = optax.adam(lr)
-    opt_state = optimizer.init(params)
+    opt_state = optimizer.init(params) # initializes the optimizer state based on the initial parameters
 
 
     def step(params, opt_state):
-        loss, grads = jax.value_and_grad(loss_fn)(params, model, target)
-        updates, opt_state = optimizer.update(grads, opt_state)
+        loss, grads = jax.value_and_grad(loss_fn)(params, model, target) # loss_fn computes the MSE between calculated and target kappa within a batch
+        updates, opt_state = optimizer.update(grads, opt_state) # computes the parameter updates based on the gradients and the optimizer state 
         params = optax.apply_updates(params, updates)
         return params, opt_state, loss
 
     # Optimization loop
     for _ in range(steps):
-        params, opt_state, loss = step(params, opt_state)
-        if _ % 25 == 0:
+        params, opt_state, loss = step(params, opt_state) #params shape is (batch_size, 25)
+        if _ % 25 == 0:   # Print loss every 25 steps
             print(f"Step {_} losses mean: {loss}")
+            #print(f"--- the params are: {params}")
+            # print(f"--- the param shapes is: {params.shape}")  #(batch_size, 25)
+            #print(f"--- this misterious opt_state is: {opt_state}")
     
     # Binarization step
     binary_params = (params > 0.5).astype(jnp.float32)
@@ -61,9 +64,10 @@ def gradient_opt(model, target, seed, neigh=True, batch_size=10, steps=100, lr=0
     best_k_binarized = k_binarized[best_idx]
 
     print(f"Best Found params: {best_params} with kappa= {best_k}")
+    print(f"size of this array: {best_binary_params.shape}")
     print(f"Binarized {best_binary_params} with kappa={best_k_binarized}")
 
-    return best_binary_params, best_k_binarized
+    return best_binary_params, best_k_binarized # this is design, kappa_optimized in the run_optimization.py file, which is then saved in the csv file in the experiments folder.
 
 
 """

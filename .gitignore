@@ -17,3 +17,10 @@ data/highfidelity/high_fidelity_2_20000.npz
 __pycache__/
 *.pyc
 *.pyo
+
+# Generated experiment outputs
+experiments/coding/figures/
+experiments/coding/figures/peds_evolution/
+experiments/coding/weights/
+experiments/coding/curves/
+experiments/coding/results/
