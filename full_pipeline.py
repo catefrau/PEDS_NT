@@ -1,6 +1,7 @@
 import os
 from mpi4py import MPI
 from flax import nnx
+import jax.numpy as jnp
 
 from modules.data_ingestion import data_ingestion
 from modules.choose_model import select_model
@@ -28,7 +29,7 @@ create_folders(exp_config['exp_name'], model_config['model_name']) # experiment 
 
 model = select_model(
     rngs=rngs, 
-    model_type=model_config["model"], 
+    model_type=model_config["model"],    # can easily switch between architectures through choose_model.py (fig.3A): "peds" for the PEDS surrogate, "mlp" for a simple MLP surrogate
     resolution=model_config["resolution"], 
     learn_residual=model_config["learn_residual"], 
     hidden_sizes=model_config["hidden_sizes"], 
@@ -38,6 +39,7 @@ model = select_model(
 )
 
 # Params initializing or restoring
+# Initializes weights randomly or restores trained weights from a checkpoint using Orbax. 
 model, checkpointer = initialize_or_restore_params(model, model_config["model_name"], base_dir= exp_config['exp_name'], rank=rank) # check or do it deeper
 
 # Ingest data
@@ -88,6 +90,23 @@ if rank == 0 and exp_config['optimization']:
         seed=rngs
     )
 
+print("---------- \n Try PEDS on a simple example: given the pores config, what's the predicted kappa?")
+# Example binary geometry (5x5), 1 = solid, 0 = pore
+pores_5x5 = jnp.array([
+    [0, 0, 0, 1, 1], 
+    [1, 1, 0, 1, 0],
+    [0, 1, 0, 0, 0],
+    [0, 1, 0, 0, 0],
+    [0, 1, 0, 0, 1],
+], dtype=jnp.float32)
+
+# Add batch dimension and flatten: shape (1, 5, 5)
+pores_batch = pores_5x5[jnp.newaxis, :, :]
+
+# Forward pass through surrogate (no gradients, no training)
+kappa_pred, conductivity_field = model(pores_batch, training=False)
+
+print(f"Predicted kappa: {float(kappa_pred[0])} \n --------")
 
 # ToDo:
 

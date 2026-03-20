@@ -15,7 +15,7 @@ def optimized_conductivity_grid_jax(pores, N):
     size_square = int(10 * 1 / step_size)
     half_size_square = size_square // 2
     subgrid = jnp.ones((size_square, size_square)) * 1e-9
-    indices = jnp.stack(jnp.meshgrid(jnp.arange(5), jnp.arange(5)), axis=-1).reshape(-1, 2)
+    indices = jnp.stack(jnp.meshgrid(jnp.arange(5), jnp.arange(5)), axis=-1).reshape(-1, 2) # pairs (x,y) of the grid
 
     batch_size = pores.shape[0]
     pores = jnp.reshape(pores, [batch_size, 5, 5])
@@ -25,12 +25,12 @@ def optimized_conductivity_grid_jax(pores, N):
     for idx in indices:
         x_idx, y_idx = idx
 
-        # Compute the start and end positions for the slice
+        # Compute the start and end physical positions for the slice
         start_x = half_size_square + x_idx * size_square * 2
         start_y = half_size_square + y_idx * size_square * 2
 
         # Identify which batches to update
-        mask = pores[:, x_idx, y_idx]  # Shape: (batch_size,)
+        mask = pores[:, x_idx, y_idx]  # Shape: (batch_size,)  — 1 if pore exists, 0 if not
         
         # Generate a full grid of subgrid positions for all batches
         update = mask[:, None, None] * subgrid[None, :, :]  # Shape: (batch_size, size_square, size_square)
@@ -51,7 +51,7 @@ def conductivity_grid_5by5(pores):
    
 def conductivity_original_wrapper(pores, N):
 
-    if N >= 20:
+    if N >= 20: # size of grid for PEDS example is 25x25 
 
         return optimized_conductivity_grid_jax(pores, N)
     
@@ -60,7 +60,7 @@ def conductivity_original_wrapper(pores, N):
 
         pass
 
-    if N ==5:
+    if N ==5:  # this is for the 'code_check' model where the conductivity grid is 5x5 and directly corresponds to the pore configuration.
 
         return conductivity_grid_5by5(pores)
     

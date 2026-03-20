@@ -2,13 +2,13 @@ e1 = {
     "exp_name": "coding",
     "seed": 10,
 
-    # Run
-    "training": True,
-    "valid": True, # change the validation to try different validations
-    "optimization": True,
+    # Run, turn on/off different steps of the pipeline
+    "training": False,
+    "valid": False, # change the validation to try different validations
+    "optimization": True,  # inverse design
 
     # Data
-    "filename_data": "high_fidelity_2_20000.npz", # do we need this?
+    "filename_data": "high_fidelity_2_20000.npz",
     "train_size": 200, # change to train, test, validation
     "test_size": 200,
     "stratified": "all",
@@ -22,7 +22,8 @@ e1 = {
 
     # Optimization
     "opt": "grad",
-    "kappas": [10.0, 20.0]
+    #"kappas": None, # None means we will use the kappas from the validation set
+    "kappas": [20.0],
 }
 
 e2 = {

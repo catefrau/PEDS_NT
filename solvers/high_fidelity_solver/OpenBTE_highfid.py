@@ -14,7 +14,7 @@ def highfidelity_solver(pores, step_size, save_show_res = False):
 
     # cancel any previous geometry saved 
 
-    # Create Material
+    # Create Material (load material properties from file, here silicon)
     rta_data = load_rta('Si_rta') 
     mat = RTA2DSym(data=rta_data)
 

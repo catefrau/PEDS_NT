@@ -26,7 +26,7 @@ def gauss_solver(conductivity, iterations=1000):
     epsilon = 1e-6  # Small value to prevent division by zero
     kappa_sum = kappa_r + kappa_l + kappa_d + kappa_u + epsilon
 
-    def body_fn(u, _):
+    def body_fn(u, _):  # 2D temperature field u updated at each iteration for the 4 neighbours
         
         u_r = jnp.roll(u, shift=1, axis=1)
         u_l = jnp.roll(u, shift=-1, axis=1)
