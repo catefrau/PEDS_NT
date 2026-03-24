@@ -31,7 +31,7 @@ def print_generated(model, pores, conductivity_res, epoch, model_name, exp_name,
     conductivity_res_numpy = [np.asarray(jax.lax.stop_gradient(r)) for r in conductivity_res[:3]]
     kappa_predicted_n = [np.asarray(jax.lax.stop_gradient(r)) for r in kappa_predicted[:3]]
 
-    if model.learn_residual:
+    if model.learn_residual: # the baseline conductivity field
 
         # Create the figure and axes for 3x3 subplots
         fig, axes = plt.subplots(3, 3, figsize=(18, 15), gridspec_kw={"width_ratios": [1, 1, 1]})
@@ -136,7 +136,7 @@ def plot_learning_curves(exp_name, epoch_times, epoch_losses, valid_losses, vali
 
     # Save the figure
     plt.tight_layout()
-    plt.savefig(f"{exp_name}/figures/learning_curve_{model_name}.png")
+    plt.savefig(f"experiments/{exp_name}/figures/learning_curve_{model_name}.png")
     plt.close()
 
     # Create a figure with two subplots
@@ -165,9 +165,39 @@ def plot_learning_curves(exp_name, epoch_times, epoch_losses, valid_losses, vali
 
     # Save the figure
     plt.tight_layout()
-    plt.savefig(f"{exp_name}/figures/learning_curve_{model_name}.png")
+    plt.savefig(f"experiments/{exp_name}/figures/learning_curve_{model_name}.png")
     plt.close()
 
+def plot_loss_curves(exp_name, model_name, epoch_losses, valid_losses, valid_perc_losses):
+    
+    save_dir = f"experiments/{exp_name}/figures"
+    os.makedirs(save_dir, exist_ok=True)
+    
+    epochs = np.arange(len(epoch_losses))
+    
+    fig, axs = plt.subplots(1, 2, figsize=(15, 6))
+    
+    # Left: Training vs Validation loss
+    axs[0].plot(epochs, epoch_losses, 'b-', label='Training Loss')
+    axs[0].plot(epochs, valid_losses, 'r-', label='Validation Loss')
+    axs[0].set_xlabel('Epoch')
+    axs[0].set_ylabel('MSE Loss')
+    axs[0].set_title('Training vs Validation Loss')
+    axs[0].legend()
+    axs[0].grid()
+    
+    # Right: Validation % error over epochs
+    axs[1].plot(epochs, valid_perc_losses, 'g-', label='Validation % Error')
+    axs[1].axhline(5.0, color='gray', linestyle='--', label='5% target')
+    axs[1].set_xlabel('Epoch')
+    axs[1].set_ylabel('Mean % Error')
+    axs[1].set_title('Validation % Error over Epochs')
+    axs[1].legend()
+    axs[1].grid()
+    
+    plt.tight_layout()
+    plt.savefig(f"{save_dir}/loss_curves_{model_name}.png")
+    plt.close()
 
 def update_and_check_grads(grads, grads_new):
     """Update gradients and check for NaN or infinity values."""
@@ -359,7 +389,7 @@ def plot_update_learning_curves(exp_name, model_name, n_past_epoch, epoch, epoch
         epoch_tot = len(epoch_losses_tot)
         
         # Plot and save
-        #plot_learning_curves(epoch_times_tot, epoch_losses_tot, valid_losses_tot, valid_perc_losses_tot, schedule, model_name, epoch_tot, learn_rate_max, learn_rate_min)
+        plot_learning_curves(exp_name, epoch_times_tot, epoch_losses_tot, valid_losses_tot, valid_perc_losses_tot, schedule, model_name, epoch_tot, learn_rate_max, learn_rate_min)
         np.savez(
             f"experiments/{exp_name}/curves/training_curves_{model_name}.npz", 
             epoch_times=epoch_times_tot, 
@@ -370,7 +400,7 @@ def plot_update_learning_curves(exp_name, model_name, n_past_epoch, epoch, epoch
         )
     except Exception as e:
         print(f"No training curves file: {e}. Creating new one.")
-        #plot_learning_curves(epoch_times, epoch_losses, valid_losses, valid_perc_losses, schedule, model_name, epoch, learn_rate_max, learn_rate_min)
+        plot_learning_curves(exp_name, epoch_times, epoch_losses, valid_losses, valid_perc_losses, schedule, model_name, epoch, learn_rate_max, learn_rate_min)
         np.savez(
             f"experiments/{exp_name}/curves/training_curves_{model_name}.npz", 
             epoch_times=epoch_times, 

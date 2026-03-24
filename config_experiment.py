@@ -3,19 +3,19 @@ e1 = {
     "seed": 10,
 
     # Run, turn on/off different steps of the pipeline
-    "training": False,
+    "training": True,
     "valid": False, # change the validation to try different validations
-    "optimization": True,  # inverse design
+    "optimization": False,  # inverse design
 
     # Data
     "filename_data": "high_fidelity_2_20000.npz",
-    "train_size": 200, # change to train, test, validation
-    "test_size": 200,
+    "train_size": 100, # total data points
+    "test_size": 100,
     "stratified": "all",
 
     # Training
     "epochs": 100,
-    "batch_size": 200, # training samples per batch
+    "batch_size": 100, # training samples per batch
     "learn_rate_max": 5e-3,
     "learn_rate_min": 5e-4,
     "schedule": "cosine-cycles",

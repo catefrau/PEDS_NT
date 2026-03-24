@@ -10,7 +10,7 @@ from flax import nnx
 import jax
 
 from modules.params_utils import save_params
-from modules.training_utils import data_loader, print_generated, update_and_check_grads, clip_gradients, plot_update_learning_curves, choose_schedule, accumulate_gradients, distribute_dataset, mpi_allreduce_gradients, update_curves
+from modules.training_utils import data_loader, print_generated, update_and_check_grads, clip_gradients, plot_update_learning_curves, plot_loss_curves, choose_schedule, accumulate_gradients, distribute_dataset, mpi_allreduce_gradients, update_curves
 from models.peds import PEDS
 
 
@@ -38,7 +38,7 @@ def train_model(exp_name, model_name,
         
         if isinstance(model, PEDS):
             def loss_fn(model):
-                kappa_pred, conductivity_res = model(pores, True) # change here
+                kappa_pred, conductivity_res = model(pores, True) # takes pore geometry and outputs PEDS estimate
                 if (epoch+1+n_past_epoch) in [1, 2, 4, 7, 11, 17, 26, 39, 58, 86, 130, 195, 293, 440, 660, 999] and batch_n == 0 and rank == 0:
                     print_generated(model, pores, conductivity_res, epoch+1+n_past_epoch, model_name, exp_name, kappa_pred, kappas) # change here
                 residuals = kappa_pred - kappas
@@ -56,7 +56,7 @@ def train_model(exp_name, model_name,
                 return loss
             
         # Compute loss and gradients
-        loss, grads = nnx.value_and_grad(loss_fn)(model)
+        loss, grads = nnx.value_and_grad(loss_fn)(model) # nnx.value_and_grad is JAX's automatic differentiation engine CHECK HOW THIS PASSES THROUGH THE SOLVER
 
         return loss, grads
 
@@ -100,18 +100,18 @@ def train_model(exp_name, model_name,
     epoch_times = np.zeros(epochs)
 
     # Shard training and validation datasets
-    dataset_train_local = distribute_dataset(dataset_train, rank, size)
+    dataset_train_local = distribute_dataset(dataset_train, rank, size)  # splits the data so each rank (process) handles a portion
     dataset_test_local = distribute_dataset(dataset_test, rank, size)
 
-    for epoch in range(epochs):
+    for epoch in range(epochs): # one update of weights (one pass of data through model)
 
         epoch_time = time.time()
         grads = None
         total_loss = 0.0 
 
-        for en, batch_local in enumerate(data_loader(*dataset_train_local, batch_size=batch_size)):
+        for en, batch_local in enumerate(data_loader(*dataset_train_local, batch_size=batch_size)): # data_loader yields mini-batches of (pores, kappas) pairs 
 
-            # Compute loss and gradients locally
+            # Compute loss and gradients locally (for this batch, epoch, and process)
             local_loss, local_grads = train_step(batch_local, epoch, en, rank)
             
             # Accumulate loss across ranks
@@ -121,7 +121,7 @@ def train_model(exp_name, model_name,
         
         # Update of parameters! # should we impose it to be done when rank ==1?
         
-        optimizer.update(grads)
+        optimizer.update(grads) # where the weights and biases change
 
         if epoch % 50 == 0:
             jax.clear_caches()
@@ -135,7 +135,7 @@ def train_model(exp_name, model_name,
         valid_losses[epoch] = avg_val_loss
         valid_perc_losses[epoch] = total_loss_perc
 
-        if rank == 0 and (epoch+1)%100 == 0:
+        if rank == 0 and (epoch+1)%25 == 0:
 
             print(f"Epoch {epoch+1+n_past_epoch}/{epochs+n_past_epoch}, Training Losses: [{avg_loss:.2f}] , Validation Losses: [{avg_val_loss:.2f}, {total_loss_perc:.2f}%], Epoch time: {time.time() - epoch_time:.2f}s")
             sys.stdout.flush() 
@@ -148,7 +148,8 @@ def train_model(exp_name, model_name,
     if rank == 0:
         
         plot_update_learning_curves(exp_name, model_name, n_past_epoch, epoch, epoch_times, epoch_losses, valid_losses, valid_perc_losses, schedule, learn_rate_max, learn_rate_min)
-    
+        # visual evolution of the losses 
+        plot_loss_curves(exp_name, model_name, epoch_losses, valid_losses, valid_perc_losses)
         save_params(exp_name, model_name, model, checkpointer)
 
         return avg_loss.item(), avg_val_loss.item(), total_loss_perc.item()

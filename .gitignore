@@ -20,7 +20,7 @@ __pycache__/
 
 # Generated experiment outputs
 experiments/coding/figures/
-experiments/coding/figures/peds_evolution/
+experiments/coding/figures/peds_evolution/code_check/
 experiments/coding/weights/
 experiments/coding/curves/
 experiments/coding/results/
