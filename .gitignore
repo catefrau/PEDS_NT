@@ -17,6 +17,7 @@ data/highfidelity/high_fidelity_2_20000.npz
 __pycache__/
 *.pyc
 *.pyo
+*.md
 
 # Generated experiment outputs
 experiments/coding/figures/
@@ -24,3 +25,4 @@ experiments/coding/figures/peds_evolution/code_check/
 experiments/coding/weights/
 experiments/coding/curves/
 experiments/coding/results/
+modules/fullcode_perp.py
