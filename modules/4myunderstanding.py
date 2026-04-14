@@ -109,7 +109,8 @@ def gauss_solver(conductivity, iterations=1000):
         # JAX traces body_fn once and compiles a single XLA while-loop.
         u_new = _update_step(u, kappa_sum, kappa_r, kappa_l, kappa_u, kappa_d)
         return u_new, None  # (new carry, scanned output — None means discard)
-
+    # THIS IS BASICALLY AN U FIELD UPGRADE FUNCTION, WHICH IS CALLED REPEATEDLY BY LAX.SCAN TO UPDATE THE U FIELD ITERATIVELY.
+    
     # lax.scan: functional fixed-point iteration compiled to a single XLA op.
     # Returns (final_carry, stacked_outputs) — we only need the final T.
     T, _ = lax.scan(body_fn, u, None, length=iterations)
@@ -149,13 +150,16 @@ def _gauss_bwd(res, g):
     """
     conductivity, T_final = res
     dL_dT = g  # upstream gradient of the loss w.r.t. the output T field
+    # this is called the cotangent  in autodiff, representing the gradient of the final loss wrt
+    #  the output of the function we're differentiating through (T in this case, from the function _gauss_solver_finalstep).
 
     # jax.vjp computes the vector-Jacobian product (VJP) for an arbitrary function.
     # Here we differentiate `_gauss_solver_finalstep` w.r.t. its first argument
     # (conductivity), passing dL_dT as the cotangent of the output.
     _, vjp_fn = jax.vjp(_gauss_solver_finalstep, conductivity, T_final)
-    dL_dconductivity, _ = vjp_fn(dL_dT)
-
+    dL_dconductivity, dL_dTfinal = vjp_fn(dL_dT)
+    # returns the gradients wrt the primal inputs of _gauss_solver_finalstep, which are conductivity and T_final. 
+    # We only care about the conductivity gradient; the T_final gradient is not needed for this purpose.
     return dL_dconductivity, None  # None for the non-differentiable `iterations` arg
 
 
