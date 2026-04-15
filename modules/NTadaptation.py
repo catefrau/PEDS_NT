@@ -30,44 +30,35 @@ from flax import nnx
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-from NTsolver import precompute_geometry
+from NTsolver import precompute_geometry, build_xs_callables
 from matrix_JAX import diffusion_setup_jax
+from config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
+from config_run import GEO_HOM as GEO
+from diffusion_solver import get_xs_basedon_geo, run_diffusion_solver
+
 
 # ─────────────────────────────────────────────
 # SECTION 1: Physics Solver
 # ─────────────────────────────────────────────
 
-import jax
+xs_tensor = get_xs_basedon_geo(GEO)
 
-def _run_numpy_solver(xs_np):
+def _run_numpy_solver(xs_tensor, geo: GeometryConfig):
     """Pure NumPy function — takes np array, returns np arrays.
     Neutron diffusion solver for the steady-state NT equation."""
-    xs_np = np.array(xs_np)   # ensure NumPy
-    D_fn, Sigma_a_fn, nuSigma_f_fn, Sigma_s_fn, chi_fn = \
-        build_xs_callables(xs_np, GEO)
-    print("runnign forward calc")
-    k_fwd, phi_fwd, _ = DiffusionEigenvalue_MG(
-        R, I, GEO.G, r_div,
-        D_fn, Sigma_a_fn, nuSigma_f_fn, Sigma_s_fn, chi_fn,
-        BC_coeffs, geometry_code
-    )
-    print("runnign adjoint calc")
-    k_adj, phi_adj, _ = DiffusionEigenvalue_MG_adjoint(
-        R, I, GEO.G, r_div,
-        D_fn, Sigma_a_fn, nuSigma_f_fn, Sigma_s_fn, chi_fn,
-        BC_coeffs, geometry_code
-    )
-    print(f"calcs done, k_fwd: {k_fwd}, k_adj: {k_adj} \n")
+    
+    k, phi_fwd, phi_adj = run_diffusion_solver(xs_tensor, geo)
 
     # flatten phi: from [G, I] to [G*(I+1)] to match matrix size
-    phi_fwd_flat = np.zeros(GEO.G * (I+1))
-    phi_adj_flat = np.zeros(GEO.G * (I+1))
-    for g in range(GEO.G):
+    phi_fwd_flat = np.zeros(geo.G * (I+1))
+    phi_adj_flat = np.zeros(geo.G * (I+1))
+    for g in range(geo.G):
         phi_fwd_flat[g*(I+1) : g*(I+1)+I] = phi_fwd[g, :]
         phi_adj_flat[g*(I+1) : g*(I+1)+I] = phi_adj[g, :]
 
-    return np.float32(k_fwd), phi_fwd_flat.astype(np.float32), \
+    return np.float32(k), phi_fwd_flat.astype(np.float32), \
            phi_adj_flat.astype(np.float32)
+
 
 # this is the function that runs when gradients are being computed
 # _NTdiff_fwd must also return the residuals, which _NTdiff_bwd will need later.
@@ -80,6 +71,9 @@ def _NTdiff_fwd(xs_tensor):
         k_fwd: scalar, dominant eigenvalue from forward solve
         phi: [batch, N]  — steady-state neutron flux evolution over space
     """
+    R    = GEO.boundaries[-1].radius
+    I    = int(R / GEO.mesh_size)
+
     N_flat = GEO.G * (I + 1)   # total size of flux vector
 
     keff, phi_fwd, phi_adj = jax.pure_callback(

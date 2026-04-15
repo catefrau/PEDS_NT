@@ -26,3 +26,4 @@ experiments/coding/weights/
 experiments/coding/curves/
 experiments/coding/results/
 modules/fullcode_perp.py
+modules/NThelper.py
