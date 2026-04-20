@@ -30,10 +30,9 @@ from flax import nnx
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-from NTsolver import precompute_geometry, build_xs_callables
 from matrix_JAX import diffusion_setup_jax
 from config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
-from config_run import GEO_HOM as GEO
+from config_run import GEO_CYL as GEO
 from diffusion_solver import get_xs_basedon_geo, run_diffusion_solver
 
 
@@ -41,18 +40,26 @@ from diffusion_solver import get_xs_basedon_geo, run_diffusion_solver
 # SECTION 1: Physics Solver
 # ─────────────────────────────────────────────
 
-xs_tensor = get_xs_basedon_geo(GEO)
+xs_tensor = get_xs_basedon_geo(GEO)  # HERE I WILL ADD THE NN CONTRIB
 
-def _run_numpy_solver(xs_tensor, geo: GeometryConfig):
+def _run_NT_solver(xs_tensor):
     """Pure NumPy function — takes np array, returns np arrays.
-    Neutron diffusion solver for the steady-state NT equation."""
+    Neutron diffusion solver for the steady-state NT equation.
+    GEO is captured from module scope (closure). 
+    Safe because it is a fixed config, not a JAX-traced value,"""
     
-    k, phi_fwd, phi_adj = run_diffusion_solver(xs_tensor, geo)
+    print("\n RUNNING the main NT solver!!!!!!!!!!!")
+    R = GEO.boundaries[-1].radius
+    I = int(R / GEO.mesh_size)
+
+    k, phi_fwd, phi_adj = run_diffusion_solver(xs_tensor, GEO)
+    print(f" \n ---------\n the k is {k}")
 
     # flatten phi: from [G, I] to [G*(I+1)] to match matrix size
-    phi_fwd_flat = np.zeros(geo.G * (I+1))
-    phi_adj_flat = np.zeros(geo.G * (I+1))
-    for g in range(geo.G):
+    N_flat = GEO.G * (I + 1)
+    phi_fwd_flat = np.zeros(N_flat, dtype=np.float32)
+    phi_adj_flat = np.zeros(N_flat, dtype=np.float32)
+    for g in range(GEO.G):
         phi_fwd_flat[g*(I+1) : g*(I+1)+I] = phi_fwd[g, :]
         phi_adj_flat[g*(I+1) : g*(I+1)+I] = phi_adj[g, :]
 
@@ -71,13 +78,14 @@ def _NTdiff_fwd(xs_tensor):
         k_fwd: scalar, dominant eigenvalue from forward solve
         phi: [batch, N]  — steady-state neutron flux evolution over space
     """
+    print("\n Inside the forward pass!!!!")
     R    = GEO.boundaries[-1].radius
     I    = int(R / GEO.mesh_size)
 
     N_flat = GEO.G * (I + 1)   # total size of flux vector
 
     keff, phi_fwd, phi_adj = jax.pure_callback(
-        _run_numpy_solver,
+        _run_NT_solver,
         (
             jax.ShapeDtypeStruct((),        jnp.float32),
             jax.ShapeDtypeStruct((N_flat,), jnp.float32),
@@ -102,6 +110,8 @@ def _NTdiff_bwd(residuals, g):
     Returns:
         dL/d(xs_tensor), shape [batch, M]
     """
+    print("\n Inside the backward pass!!!!")
+
     # --- unpack everything ---
     xs_tensor, k, phi_fwd, phi_adj = residuals
     dL_dk = g  
@@ -156,20 +166,20 @@ def _hardtanh_positive(x):
 
 
 class GeneratorNN(nnx.Module):
-    """MLP that maps a flat pore-geometry vector → a 2D conductivity field.
+    """MLP that maps a flat geometry vector → a 2D conductivity field.
 
     Architecture (matching PEDS config m1):
-        Input  : [batch, 25]    — flattened 5×5 binary pore mask
+        Input  : [batch, 6]    — 6 config parameters
         Hidden : [32, 32]       — fully-connected ReLU layers  
-        Output : [batch, 25]    → reshaped to [batch, 5, 5]
+        Output : [batch, 6]    → reshaped to [batch,6]
                                   with hardtanh_positive activation
                                   so all values ∈ (1e-16, 160)
     """
 
-    def __init__(self, layer_sizes: list, rngs: nnx.Rngs):
+    def __init__(self, layer_sizes: list, n_regions: int, xs_per_region: int, rngs: nnx.Rngs):
         """
         Args:
-            layer_sizes: e.g. [25, 32, 32, 25]  (input → hiddens → output)
+            layer_sizes: e.g. [6, 32, 32, 6]  (input → hiddens → output)
             rngs: nnx.Rngs wraps a JAX PRNGKey and hands out sub-keys on demand.
                   Every nnx module that needs randomness (Linear init, Dropout …)
                   asks `rngs` for a fresh key — no manual key splitting needed.
@@ -193,28 +203,31 @@ class GeneratorNN(nnx.Module):
             )                        # its own unique initialisation key
             for i in range(len(layer_sizes) - 1)
         ]
-        self.resolution = int(layer_sizes[-1] ** 0.5)  # output side-length (5)
+        #  THE OUTPUT OF THE NN IS THE XS_TENSOR, WHICH HAS SIZE (N_regions, XS_per_region)
+        self.n_regions    = n_regions     # 3  (b4c_rod, fuel_annulus, water)
+        self.xs_per_region = xs_per_region  # 12  (4*G + G² for G=2)
+        # self.resolution = int(layer_sizes[-1] ** 0.5)  # output side-length (5)
 
-    def __call__(self, pores: jnp.ndarray, training: bool = False) -> jnp.ndarray:
+    def __call__(self, geoms: jnp.ndarray, training: bool = False) -> jnp.ndarray:
         """
         Args:
-            pores:    [batch, 25]  binary pore mask
+            geoms:    [batch, 6]  binary pore mask
             training: flag for layers like Dropout (unused here, kept for API parity)
 
         Returns:
-            conductivity_field: [batch, 5, 5]  physical conductivity values
+            conductivity_field: [batch,6]  physical conductivity values
         """
-        x = pores
+        x = geoms
         # Apply ReLU on all but the final layer
         for layer in self.layers[:-1]:
             x = nnx.relu(layer(x))        # nnx.relu is just jax.nn.relu, re-exported
         x = self.layers[-1](x)  # Final layer: linear projection → clip to physical range
         x = _hardtanh_positive(x)  # ensures κ > 0 everywhere; could have used softplus(x)
 
-        # Reshape flat vector [batch, 25] → spatial grid [batch, 5, 5]
-        batch_size = pores.shape[0]
+        # Reshape flat vector [batch, 6] → spatial grid [batch,6]
+        batch_size = geoms.shape[0]
         # print(f"The last layer is {x}, the size of the batch being {batch_size} with a resolution of {self.resolution}")
-        return jnp.reshape(x, (batch_size, self.resolution, self.resolution))
+        return jnp.reshape(x, (batch_size, self.n_regions, self.xs_per_region))
 
 
 # ─────────────────────────────────────────────
@@ -228,31 +241,37 @@ class PEDSModel(nnx.Module):
     custom VJP) and then into the NN weights.
     """
 
-    def __init__(self, hidden_sizes: list, resolution: int, rngs: nnx.Rngs):
+    def __init__(self, hidden_sizes: list, n_regions: int, G:int, rngs: nnx.Rngs):
         super().__init__()
-        layer_sizes = [25] + hidden_sizes + [resolution ** 2] #  final size of layers: [25, 32, 32, 25]
+        from diffusion_solver import xs_per_region   # already built for other things
+        xs_region = xs_per_region(G)            # = 12 for G=2
+        output_size = n_regions * xs_region     # = 3 * 12 = 36        
+        layer_sizes = [6] + hidden_sizes + [output_size]  # 6 geometry inputs → 36 XS outputs
+    
         # rngs is stored by nnx and thread through all sub-modules that need it
-        self.generator = GeneratorNN(layer_sizes=layer_sizes, rngs=rngs)
-        self.resolution = resolution
-
-    def __call__(self, pores: jnp.ndarray, training: bool = False):
+        self.generator = GeneratorNN(layer_sizes=layer_sizes, n_regions=n_regions,
+                                 xs_per_region=xs_region, rngs=rngs)
+        self.n_regions = n_regions
+        self.G = G
+        
+    def __call__(self, geoms: jnp.ndarray, training: bool = False):
         """
         Args:
-            pores: [batch, 5, 5] binary pore geometry (flattened inside)
+            geoms: [batch,6] binary pore geometry (flattened inside)
 
         Returns:
-            kappa:               [batch]    effective thermal conductivity
+            keff:               [batch]    effective thermal conductivity
             conductivity_field:  [batch, N, N]  intermediate field (for visualisation)
         """
-        batch_size = pores.shape[0]
-        pores_flat = jnp.reshape(pores, (batch_size, 25))  # flatten spatial dims
+        batch_size = geoms.shape[0]
+        geoms_flat = jnp.reshape(geoms, (batch_size, 6))  # flatten spatial dims
 
         # 1. NN generates a plausible conductivity field
-        xs_tensor = self.generator(pores_flat, training)  # [batch, 5, 5]
+        xs_tensor = self.generator(geoms_flat, training)  # [batch,6]
 
         # 2. Physics solver maps conductivity field → κ
         #    Gradients propagate back through this call via the custom VJP
-        keff = NTdiff_solver(xs_tensor)       
+        keff = NTdiff_solver(xs_tensor[0])  # TODO why only the first elem????'      
 
         return keff, xs_tensor
 
@@ -271,18 +290,19 @@ def data_loader(*arrays, batch_size: int):
 
 
 def load_data(filepath: str, train_size: int, test_size: int, seed: int = 42):
-    """Load pore geometries and κ labels from the .npz dataset. Returns NumPy arrays 
+    """Load geometries specs and keff labels from the .npz dataset created with MC. Returns NumPy arrays 
     """
     data = np.load(filepath, allow_pickle=True)
     print(f"Dataset keys: {list(data.keys())}")
-    pores  = np.array(data['pores'],  dtype=np.float32)   # [N, 5, 5]
-    kappas = np.array(data['kappas'], dtype=np.float32)   # [N]
+    geoms  = np.array(data['params'],  dtype=np.float32)   # [N,6]
+    keffs = np.array(data['keffs'], dtype=np.float32)   # [N]
+    print(f"Loaded the data: example geom {geoms[0]} and keff {keffs[0]}")
     rng = np.random.default_rng(seed)
-    idx = rng.permutation(len(pores)) # randomly shuffle the indices of the dataset to ensure random sampling of training and test sets
+    idx = rng.permutation(len(geoms)) # randomly shuffle the indices of the dataset to ensure random sampling of training and test sets
     train_idx = idx[:train_size] # index to save array from location 0 to location of training set dimension
     test_idx  = idx[train_size:train_size + test_size] # index for the array that takes the following chunk of data, of dimension test set
 
-    return (pores[train_idx], kappas[train_idx]), (pores[test_idx], kappas[test_idx])
+    return (geoms[train_idx], keffs[train_idx]), (geoms[test_idx], keffs[test_idx])
 
 
 # ─────────────────────────────────────────────
@@ -290,20 +310,20 @@ def load_data(filepath: str, train_size: int, test_size: int, seed: int = 42):
 # ─────────────────────────────────────────────
 
 def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
-    hidden_sizes, resolution, seed):
+    hidden_sizes, n_regions, G, seed):
     if hidden_sizes is None:
         hidden_sizes = [32, 32]   # matches config m1 in the original codebase
     # ── 5.1  Data ──────────────────────────────────────────────────────────
     print("Loading data …")
-    (train_pores, train_kappas), (test_pores, test_kappas) = load_data(
+    (train_geoms, train_keffs), (test_geoms, test_keffs) = load_data(
         filepath, train_size, test_size, seed
-    )   # train_pores is a numpy array of shape (train_size, 25), while train_kappas is a numpy array of shape (train_size,) 
-    print(f"  Train: {train_pores.shape}  Test: {test_pores.shape}")
+    )   # train_geoms is a numpy array of shape (train_size, 6), while train_keffs is a numpy array of shape (train_size,) 
+    print(f"  Train: {train_geoms.shape}  Test: {test_geoms.shape}")
     
     # ── 5.2  Model & Optimiser ─────────────────────────────────────────────
     # nnx.Rngs(seed) creates a named-key container to get a fresh, unique PRNGKey.
     rngs  = nnx.Rngs(seed)
-    model = PEDSModel(hidden_sizes=hidden_sizes, resolution=resolution, rngs=rngs)
+    model = PEDSModel(hidden_sizes=hidden_sizes, n_regions=n_regions, G=G, rngs=rngs)
     # Cosine decay schedule: learning rate anneals smoothly from lr_max → lr_min.
     # `alpha` is the ratio min/max, so the schedule bottoms out at lr_min.
     lr_schedule = optax.cosine_decay_schedule(
@@ -314,29 +334,29 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     optimizer = nnx.Optimizer(model, optax.adam(lr_schedule))     # nnx.Optimizer couples the model's parameters with an Optax update rule.
 
     # ── 5.3  Loss / gradient function ─────────────────────────────────────
-    def loss_fn(model, pores, kappas_true):
+    def loss_fn(model, geoms, keffs_true):
         # model is passed explicitly so nnx.value_and_grad knows which pytree to differentiate with respect to.
-        kappa_pred, _ = model(pores, training=True) # kappa predicted by PEDS model
-        residuals = kappa_pred - kappas_true # kappa from the data batch
+        keff_pred, _ = model(geoms, training=True) # keff predicted by PEDS model
+        residuals = keff_pred - keffs_true # keff from the data batch
         return jnp.sum(residuals ** 2)   # Sum (not mean) MSE — consistent with original training.py
     # nnx.value_and_grad is the Flax-nnx analogue of jax.value_and_grad.
     # It differentiates `loss_fn` with respect to its FIRST argument (the model),
     grad_fn = nnx.value_and_grad(loss_fn)  # returning (loss_value, grad_pytree_of_model_params)
 
     # ── 5.4  Validation helper ─────────────────────────────────────────────
-    def validation_step(pores_np, kappas_np):
+    def validation_step(geoms_np, keffs_np):
         """Compute mean squared loss and mean percentage error over the test set."""
         total_sq  = 0.0
         total_pct = 0.0
         # UNDERSTAND HOW IS THIS LOOP REPEATED
-        for batch_idx, (batch_pores, batch_kappas) in enumerate(data_loader(pores_np, kappas_np, batch_size=batch_size)):
+        for batch_idx, (batch_geoms, batch_keffs) in enumerate(data_loader(geoms_np, keffs_np, batch_size=batch_size)):
             # the batch index is always 0 because the test set is smaller than the batch size, so we only have one batch containing the whole test set.
-            kappa_pred, _ = model(jnp.array(batch_pores))   # no training=True → no stochasticity
-            sq_err  = jnp.sum((kappa_pred - batch_kappas) ** 2) # squared error
-            pct_err = jnp.sum(jnp.abs(kappa_pred - batch_kappas) / jnp.abs(batch_kappas) * 100.0) # percent error
+            keff_pred, _ = model(jnp.array(batch_geoms))   # no training=True → no stochasticity
+            sq_err  = jnp.sum((keff_pred - batch_keffs) ** 2) # squared error
+            pct_err = jnp.sum(jnp.abs(keff_pred - batch_keffs) / jnp.abs(batch_keffs) * 100.0) # percent error
             total_sq  += float(sq_err)
             total_pct += float(pct_err)
-        n = len(kappas_np)
+        n = len(keffs_np)
         return total_sq / n, total_pct / n   # mean over all test samples
 
     # ── 5.5  Epoch loop ────────────────────────────────────────────────────
@@ -347,9 +367,9 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     print(f"\nTraining for {epochs} epochs …")
     for epoch in range(epochs):
         epoch_loss = 0.0
-        for batch_pores, batch_kappas in data_loader(train_pores, train_kappas, batch_size=batch_size):
-            bp = jnp.array(batch_pores) # Convert NumPy → JAX arrays once per batch 
-            bk = jnp.array(batch_kappas)
+        for batch_geoms, batch_keffs in data_loader(train_geoms, train_keffs, batch_size=batch_size):
+            bp = jnp.array(batch_geoms) # Convert NumPy → JAX arrays once per batch 
+            bk = jnp.array(batch_keffs)
             print("Running forward pass + AD \n ")
             # Part of training: forward pass + automatic differentiation in one call.
             # `loss` is a scalar; `grads` is a pytree mirroring model's parameter tree.
@@ -372,7 +392,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         # Normalise by dataset size (matches `avg_loss` in training.py)
         avg_train_loss = epoch_loss / train_size
         # Validation (no gradient tracking needed)
-        avg_val_loss, avg_pct_err = validation_step(test_pores, test_kappas)
+        avg_val_loss, avg_pct_err = validation_step(test_geoms, test_keffs)
         print(f"this is batch iteration {iterations + 1} with the average train loss {avg_train_loss}, the average validation loss {avg_val_loss} and the average percentage error {avg_pct_err} \n")
         iterations = iterations+1
         train_losses.append(avg_train_loss)
@@ -402,13 +422,13 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
 def visualise_results(
     model,
-    test_pores:   np.ndarray,
-    test_kappas:  np.ndarray,
+    test_geoms:   np.ndarray,
+    test_keffs:  np.ndarray,
     train_losses: list,
     val_losses:   list,
     val_pct_errs: list,
     sample_idx:   int = 0,
-    save_path:    str = "./experiments/coding/figures/MYCODE_results.png",
+    save_path:    str = "./experiments/coding/figures/MYNT_results.png",
 ):
     """Four-panel figure:
        (a) pore geometry for one test sample
@@ -417,16 +437,16 @@ def visualise_results(
        (d) validation percentage-error curve
     """
     # ── Run one sample through the model ──────────────────────────────────
-    pore_sample   = jnp.array(test_pores[sample_idx:sample_idx + 1])   # [1, 5, 5]
-    kappa_true    = float(test_kappas[sample_idx])
+    pore_sample   = jnp.array(test_geoms[sample_idx:sample_idx + 1])   # [1,6]
+    kappa_true    = float(test_keffs[sample_idx])
 
-    kappa_pred_arr, cond_field = model(pore_sample)
-    kappa_pred  = float(kappa_pred_arr[0])
+    keff_pred_arr, cond_field = model(pore_sample)
+    keff_pred  = float(keff_pred_arr[0])
     cond_np     = np.array(cond_field[0])   # [5, 5]
-    pore_np     = np.array(test_pores[sample_idx])  # [5, 5]
+    pore_np     = np.array(test_geoms[sample_idx])  # [5, 5]
     pore_np = pore_np.reshape(5, 5)             # force to (5, 5) for imshow
 
-    pct_err = abs(kappa_pred - kappa_true) / abs(kappa_true) * 100
+    pct_err = abs(keff_pred - kappa_true) / abs(kappa_true) * 100
 
     # ── Layout ────────────────────────────────────────────────────────────
     fig = plt.figure(figsize=(16, 10))
@@ -449,7 +469,7 @@ def visualise_results(
     im_c = ax_cond.imshow(cond_np, cmap="viridis", interpolation="nearest")
     ax_cond.set_title(
         f"(b) Generated Conductivity Field\n"
-        f"κ_pred = {kappa_pred:.2f}  |  κ_true = {kappa_true:.2f}  |  err = {pct_err:.1f}%",
+        f"κ_pred = {keff_pred:.2f}  |  κ_true = {kappa_true:.2f}  |  err = {pct_err:.1f}%",
         fontsize=11,
     )
     ax_cond.set_xlabel("x");  ax_cond.set_ylabel("y")
@@ -482,7 +502,7 @@ def visualise_results(
     ax_pct.legend()
     ax_pct.grid(True, alpha=0.3)
 
-    plt.suptitle("PEDS Educational Run — Single Device, No MPI", fontsize=14, y=1.01)
+    plt.suptitle("PEDS Run — Single Device, No MPI", fontsize=14, y=1.01)
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"\nFigure saved to: {save_path}")
@@ -497,15 +517,16 @@ if __name__ == "__main__":
 
     # ── Hyperparameters (from config_experiment.py / config_model.py) ─────
     HP = dict(
-        filepath      = "./data/highfidelity/high_fidelity_2_20000.npz",  # adjust path as needed
-        train_size    = 5000,
-        test_size     = 1000,
-        batch_size    = 5000,
-        epochs        = 1000,
+        filepath      = "../data/highfidelity/NT_smallMCrun.npz",  # adjust path as needed
+        train_size    = 80,
+        test_size     = 20,
+        batch_size    = 80,
+        epochs        = 10,
         lr_max        = 5e-3,   # cosine schedule peak learning rate
         lr_min        = 5e-4,   # cosine schedule floor learning rate
         hidden_sizes  = [32, 32],  # matches model config m1
-        resolution    = 5,
+        n_regions    = 3,    # b4c_rod, fuel_annulus, water
+        G            = 2,    # energy groups
         seed          = 42,
     )
 
@@ -513,7 +534,7 @@ if __name__ == "__main__":
     model, train_losses, val_losses, val_pct_errs = train(**HP)
 
     # ── Reload test set for final visualisation ───────────────────────────
-    _, (test_pores, test_kappas) = load_data(
+    _, (test_geoms, test_keffs) = load_data(
         HP["filepath"], HP["train_size"], HP["test_size"], HP["seed"]
     )
 
@@ -521,13 +542,13 @@ if __name__ == "__main__":
  
     visualise_results(
         model        = model,
-        test_pores   = test_pores,
-        test_kappas  = test_kappas,
+        test_geoms   = test_geoms,
+        test_keffs  = test_keffs,
         train_losses = train_losses,
         val_losses   = val_losses,
         val_pct_errs = val_pct_errs,
         sample_idx   = 0,
-        save_path    = "./experiments/coding/figures/MYCODE_results.png",
+        save_path    = "./experiments/coding/figures/NT/results.png",
     )
 
     print("\nDone.")
