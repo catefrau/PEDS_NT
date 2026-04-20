@@ -19,9 +19,9 @@ class MatProperties(NamedTuple):
     # void_fraction    : float = None   # coolant void fraction
     """
     enrichment:          Optional[float] = None
-    moderator_fraction:  Optional[float] = None
+    f_mod:  Optional[float] = None
     plutonium_fraction:  Optional[float] = None
-    CRabsorber_fraction: Optional[float] = None
+    cr_fraction: Optional[float] = None
     
 
 class MaterialSpec(NamedTuple):

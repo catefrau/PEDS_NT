@@ -13,20 +13,20 @@ from config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondi
 GEO_CYL = GeometryConfig(
     G = 2,
     regions = (
-        MaterialSpec('control_rod',      region_index=0),
-        MaterialSpec('core', region_index=1),
-        MaterialSpec('moderator', region_index=2),
+        MaterialSpec('b4c_rod',      region_index=0),
+        MaterialSpec('fuel_annulus', region_index=1),
+        MaterialSpec('water', region_index=2),
     ),
     boundaries = ( # The tuple order is always centre → outside.
-        BoundarySpec(name='CR_outer',      radius=2.0),        
-        BoundarySpec(name='core_outer',      radius=20.0),
-        BoundarySpec(name='moderator_outer', radius=50.0),
+        BoundarySpec(name='CR_outer',      radius=8.),        
+        BoundarySpec(name='core_outer',      radius=30.),
+        BoundarySpec(name='moderator_outer', radius=50.),
     ),
     geometry = 'cylindrical',
     mat_properties = MatProperties(
-        enrichment         = 4.0,   # atom % U-235
-        moderator_fraction = 0.40,  
-        CRabsorber_fraction = 1.,   # like the boron but maybe sth different
+        cr_fraction = 1.,   # like the boron but maybe sth different        
+        enrichment         = 5.,   # atom % U-235
+        f_mod = 0.5,  
     ),
     bc = BoundaryCondition(
         bc_type = 'vacuum',          # zero-flux at outer surface
@@ -47,7 +47,7 @@ GEO_HET = GeometryConfig(
     geometry = 'spherical',
     mat_properties = MatProperties(
         enrichment         = 4.0,   # atom % U-235
-        moderator_fraction = 0.40,   # volume fraction (not used by current regression)
+        f_mod = 0.40,   # volume fraction (not used by current regression)
         plutonium_fraction = None,   # not a MOX case
     ),
     bc = BoundaryCondition(
@@ -56,15 +56,34 @@ GEO_HET = GeometryConfig(
     mesh_size = 0.5,                 # cm per spatial cell
 )
 
-# Homogeneous example (single-zone 'mix' — uncomment to use):
+# Homogeneous example :
 GEO_HOM = GeometryConfig(
      G = 2,
      regions  = (MaterialSpec('mix', region_index=0),),
      boundaries = (BoundarySpec(name='outer', radius=50.0),),
      geometry   = 'spherical',
-     mat_properties = MatProperties(enrichment=4.0, 
-               moderator_fraction = 0.40,), 
+     mat_properties = MatProperties(enrichment=4., 
+               f_mod = 0.50,), 
      bc         = BoundaryCondition(bc_type='vacuum'),
-     mesh_size  = 0.5,
+     mesh_size  = 2.,
+)
+
+GEO_STACY = GeometryConfig(
+    G = 2,
+    regions = (
+        MaterialSpec('uranyl_fuel',      region_index=0),
+        MaterialSpec('water_reflector', region_index=1),
+    ),
+    boundaries = ( # The tuple order is always centre → outside.
+        BoundarySpec(name='core_outer',      radius=29.5),
+        BoundarySpec(name='moderator_outer', radius=59.8),
+    ),
+    geometry = 'cylindrical',
+    mat_properties = MatProperties(
+    ),
+    bc = BoundaryCondition(
+        bc_type = 'vacuum',          # zero-flux at outer surface
+    ),
+    mesh_size = 0.5,                 # cm per spatial cell
 )
 

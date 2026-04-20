@@ -5,27 +5,82 @@
 # Output: k_eff, group flux shapes (forward & adjoint), flux-ratio diagnostics.
 
 import os
-import sys
 import joblib
+import json
 import numpy as np
 import pandas as pd
 import time
 from typing import NamedTuple, Optional
+from pathlib import Path
 import matplotlib.pyplot as plt
 
+import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
-from solvers.NTdiffusion.core.MG1D_eigenvalue import DiffusionEigenvalue_MG, DiffusionEigenvalue_MG_adjoint
+from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import DiffusionEigenvalue_MG, DiffusionEigenvalue_MG_adjoint
 from config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
-from config_run import GEO_HOM as GEO
+from config_run import GEO_CYL as GEO
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  PATHS DEFINITION  
 # ══════════════════════════════════════════════════════════════════════════════
 
-DATA_PATH   = 'polyreg/hom_MCdf_XSk.csv'
-REG_MODEL_PATH = 'polyreg/hom_regre_files'
-_INPUT_COLS = ['enrichment', 'dim_inner', 'f_mod']
+# TODO make the path definition dependent on the GEO
+
+
+DATA_FOLDER    = Path('reg_and_data/inputs/CR')
+DATA_PATH      = DATA_FOLDER / 'full_results.csv'
+META_PATH      = DATA_FOLDER / 'full_results_meta.json'
+#OUTPUT_DIR     = DATA_FOLDER / 'wtfisthis'
+REG_MODEL_PATH = DATA_FOLDER / 'polyreg_model'
+
+OUT_FOLDER = 'reg_and_data/output/CR'
+PLOT_OUTPUT= "plots/CR_fluxes.png"
+
+META_PATH = Path(str(DATA_PATH).replace('.csv', '_meta.json'))
+
+""" DATA_FOLDER    = Path('reg_and_data/inputs/HOM')
+DATA_PATH      = DATA_FOLDER / 'hom_MCdf_XSk.csv'
+META_PATH      = DATA_FOLDER / 'xs_model_meta.json'
+REG_MODEL_PATH = DATA_FOLDER / 'polyreg_model'
+PLOT_OUTPUT= "plots/HOM_fluxes.png" """
+
+
+_KNOB_EXTRACTORS = {
+    'outer_radius' : lambda geo, i: geo.boundaries[i].radius,
+    'enrichment'   : lambda geo, i: (geo.mat_properties.enrichment
+                                     if geo.mat_properties.enrichment is not None
+                                     else 0.0),
+    'f_mod'        : lambda geo, i: (geo.mat_properties.f_mod
+                                     if geo.mat_properties.f_mod is not None
+                                     else 0.0),
+    'cr_fraction'  : lambda geo, i: (geo.mat_properties.cr_fraction
+                                     if hasattr(geo.mat_properties, 'cr_fraction')
+                                     and geo.mat_properties.cr_fraction is not None
+                                     else 0.0),
+}
+
+# ── Load column schema from sidecar (written by MC_solver.save_meta()) ────────
+if os.path.exists(META_PATH):
+    with open(META_PATH) as fh:
+        _meta = json.load(fh)
+
+    _swept     = _meta.get('swept_cols', [])
+    _all_knobs = _meta.get('input_cols', [])
+
+    # Use swept_cols if declared, otherwise fall back to all knobs
+    _INPUT_COLS = _swept if _swept else _all_knobs
+    _CHI_COLS   = _meta.get('chi_cols', [])
+    _XS_COLS    = _meta.get('xs_cols', [])
+    print(f"\n[meta] Loaded from {META_PATH}")
+    #print(f"  geometry={_meta['geometry']} | G={_meta['G']}")
+    #print(f"  input_cols = {_INPUT_COLS}")
+else:
+    # ── Fallback: hardcoded for pre-meta CSV files ────────────────────────────
+    print("[meta] No sidecar found — using hardcoded column names (legacy mode)")
+    _INPUT_COLS = ['enrichment', 'dim_inner', 'f_mod']
+    _CHI_COLS   = []
+    _XS_COLS    = []
+    
 # TODO also change the exclude columns
 # more important X_new = _regression_inputs(geo), 
 # which also hardcodes the columns names. 
@@ -119,9 +174,9 @@ def xs_per_region(G: int) -> int:
 # ══════════════════════════════════════════════════════════════════════════════
 #  REGRESSION MODELS  (loaded once at import time)
 # ══════════════════════════════════════════════════════════════════════════════
-scaler = joblib.load(f'{REG_MODEL_PATH}/xs_scaler.pkl')
-poly   = joblib.load(f'{REG_MODEL_PATH}/xs_poly_transformer.pkl')
-reg    = joblib.load(f'{REG_MODEL_PATH}/xs_regression_model.pkl')
+scaler = joblib.load(REG_MODEL_PATH / 'xs_scaler.pkl')
+poly   = joblib.load(REG_MODEL_PATH / 'xs_poly_transformer.pkl')
+reg    = joblib.load(REG_MODEL_PATH / 'xs_regression_model.pkl')
 
 
 # ── Hardcoded input columns for the current heterogeneous training data ────────
@@ -129,28 +184,65 @@ reg    = joblib.load(f'{REG_MODEL_PATH}/xs_regression_model.pkl')
 #       new mat_properties knobs.  For now we map the three regression inputs
 #       directly from geo.mat_properties and geo.boundaries.
 
+# ── Column name → GeometryConfig value extractor ─────────────────────────────
+# Column names written by MC_solver follow the pattern:
+#   r{i}_{region_name}_{knob}
+# where knob is one of: outer_radius, enrichment, f_mod, cr_fraction
+# We parse the knob suffix and extract the matching value from geo.
+
+
+def _parse_knob(col_name: str) -> tuple[int, str]:
+    """
+    Parse 'r{i}_{region_name}_{knob}' → (region_index, knob_name).
+    e.g. 'r0_uranyl_fuel_outer_radius' → (0, 'outer_radius')
+         'r1_water_reflector_enrichment' → (1, 'enrichment')
+    """
+    # Strip the leading r{i}_ prefix
+    parts = col_name.split('_')
+        # ── Try prefixed format: r{i}_... ────────────────────────────────
+    if parts[0].startswith('r') and parts[0][1:].isdigit():
+        region_idx = int(parts[0][1:])   # 'r0' → 0
+        # Try 2-word suffix first, then 1-word
+        for length in (2, 1):
+            knob = '_'.join(parts[-length:])
+            # Known multi-word knobs: 'outer_radius', 'cr_fraction', 'f_mod'        
+            if knob in _KNOB_EXTRACTORS:
+                return region_idx, knob
+        raise ValueError(
+            f"Cannot parse knob from prefixed column '{col_name}'. "
+            f"Known knobs: {list(_KNOB_EXTRACTORS.keys())}"
+        )
+
+    # ── Fallback: global (unprefixed) column name → region 0 ─────────
+    # Map legacy/homogeneous column names to the unified knob vocabulary
+    _GLOBAL_KNOB_ALIASES = {
+        'dim_inner'  : 'outer_radius',
+        'enrichment' : 'enrichment',
+        'f_mod'      : 'f_mod',
+        'cr_fraction': 'cr_fraction',
+    }
+    if col_name in _GLOBAL_KNOB_ALIASES:
+        return 0, _GLOBAL_KNOB_ALIASES[col_name]
+
+    raise ValueError(
+        f"Cannot parse knob from column '{col_name}'. "
+        f"Expected 'r{{i}}_..._{{knob}}' or one of {list(_GLOBAL_KNOB_ALIASES.keys())}."
+    )
+
+
 def _regression_inputs(geo: GeometryConfig) -> np.ndarray:
     """
     Build the (1, n_inputs) array fed to the polynomial regression.
-    Reads from geo.mat_properties and geo.boundaries.
-
-    Hardcoded to the current 3-feature model:
-        enrichment, dim_inner (core radius), thickness (moderator shell width).
+    Column order is determined by _INPUT_COLS, loaded from the meta sidecar.
+    No hardcoded feature names — works for any geometry and material knobs.
     """
-    mp = geo.mat_properties
+    values = []
+    for col in _INPUT_COLS:
+        region_idx, knob = _parse_knob(col)
+        extractor = _KNOB_EXTRACTORS[knob]
+        values.append(extractor(geo, region_idx))
 
-    if is_homogeneous(geo):
-        # Homogeneous case: single zone — dim_inner = 0, thickness = R
-        R = geo.boundaries[-1].radius
-        enrichment = mp.enrichment if mp.enrichment is not None else 0.0
-        f_mod = mp.moderator_fraction  if mp.moderator_fraction  is not None else 0.0
-        return np.array([[enrichment, R, f_mod]])
-    else:
-        enrichment = mp.enrichment if mp.enrichment is not None else 0.0
-        dim_inner  = geo.boundaries[0].radius               # first zone outer edge = core radius
-        thickness  = geo.boundaries[-1].radius - dim_inner  # remaining shell
-        return np.array([[enrichment, dim_inner, thickness]])
-
+    return np.array([values])   # shape (1, n_inputs)
 
 def _enforce_chi(xs_dict: dict, geo: GeometryConfig) -> dict:
     """
@@ -204,14 +296,26 @@ def predict_xs(geo: GeometryConfig) -> np.ndarray:
     X_poly    = poly.transform(X_scaled)
     xs_values = reg.predict(X_poly)[0]   # shape: (n_output_cols,)
 
+
     # ── Step 2: map predicted values to a named dictionary ────────────────────
     # Column order mirrors the CSV used during training.
     # TODO: load from geo or a config file once training data is generalised.
-    df_cols     = pd.read_csv(DATA_PATH, nrows=0).columns.tolist()
-    chi_cols    = [c for c in df_cols if 'chi' in c]
-    exclude     = _INPUT_COLS +  ['mode', 'geometry_type', 'thickness', 'keff', 'keff_std'] + chi_cols
-    output_cols = [c for c in df_cols if c not in exclude]
-    print(f"  Output columns : {output_cols}")
+    if _XS_COLS:
+        # Fast path: use xs_cols from sidecar (excludes chi automatically)
+        chi_set    = set(_CHI_COLS)
+        output_cols = [c for c in _XS_COLS if c not in chi_set]
+        #print(f"THE OUTPUT COLS ARE {output_cols}")
+        #print("PRINTING STUFF \n")
+        """ for name, val in zip(output_cols, xs_values):
+            print(f"  {name:<45s} = {val:.6f}") """
+    else:
+        # Fallback: derive from CSV header (legacy behaviour)
+        df_cols = pd.read_csv(DATA_PATH, nrows=0).columns.tolist()
+        chi_cols_local = [c for c in df_cols if 'chi' in c]
+        exclude = set(_INPUT_COLS) | {'geometry', 'G', 'keff', 'keff_std'} \
+                | set(chi_cols_local)
+        output_cols = [c for c in df_cols if c not in exclude]
+
     xs_dict = dict(zip(output_cols, xs_values))
 
     # ── Step 3: enforce physics-consistent chi ────────────────────────────────
@@ -281,6 +385,11 @@ def build_xs_callables(xs_tensor: np.ndarray, geo: GeometryConfig):
     nuSigma_f_fn = lambda r, *_: _region_vec(r)[lay['nuSigma_f']]
     chi_fn       = lambda r, *_: _region_vec(r)[lay['chi']]
 
+    print(f"\n --------\n WHAT IS THIS SIGMA PROBLEM {lay['Sigma_s']}")
+    print(f"\n --------\n AND THE OTHERS? THATS D {lay['D']}")
+    print(f"\n --------\n AND THE OTHERS? THATS NUSI {lay['nuSigma_f']}")
+
+    
     def Sigma_s_fn(r, *_):
         s_flat = _region_vec(r)[lay['Sigma_s']]   # (G²,)
         return s_flat.reshape(G, G)               # (G, G)
@@ -294,7 +403,8 @@ def build_xs_callables(xs_tensor: np.ndarray, geo: GeometryConfig):
 
 def normalize_group_fluxes(phi: np.ndarray) -> np.ndarray:
     """Normalise so that group-1 flux at the centre (index 0) equals 1."""
-    return phi / phi[0, 0]
+    max_phi = phi.max()
+    return phi / max_phi
 
 
 _GROUP_COLORS = [
@@ -422,10 +532,10 @@ def _print_config(geo: GeometryConfig):
     print(f"\n  ── Material properties ──")
     if mp.enrichment is not None:
         print(f"    Enrichment         : {mp.enrichment:.2f} atom %")
-    if mp.moderator_fraction is not None:
-        print(f"    Moderator fraction : {mp.moderator_fraction:.4f}")
-    if mp.plutonium_fraction is not None:
-        print(f"    Plutonium fraction : {mp.plutonium_fraction:.4f} atom %")
+    if mp.f_mod is not None:
+        print(f"    Moderator fraction : {mp.f_mod:.4f}")
+    if mp.cr_fraction is not None:
+        print(f"    Plutonium fraction : {mp.cr_fraction:.4f} atom %")
 
     print(f"\n  ── Boundary condition at r = R ──")
     print(f"    Type  : {bc.bc_type}")
@@ -467,9 +577,9 @@ def _print_results(k_fwd, k_adj, phi_fwd_norm, phi_adj_norm,
                 print(f"    φ_fwd_g{g+1}({g_label}) = {phi_fwd_norm[g, idx]:.6e}"
                       f"  |  φ_adj_g{g+1} = {phi_adj_norm[g, idx]:.6e}")
             if G == 2:
-                r_th2fast_fwd = phi_fwd_norm[1,idx]/phi_fwd_norm[0,idx]
-                r_th2fast_adj = phi_adj_norm[1,idx]/phi_adj_norm[0,idx]
-                print(f"    Thermal/Fast ratio  fwd={r_th2fast_fwd:.6f}  |  adj={r_th2fast_adj:.6f}")
+                r_th2fast_fwd = phi_fwd_norm[0,idx] / phi_fwd_norm[1,idx]
+                r_th2fast_adj = phi_adj_norm[0,idx] / phi_adj_norm[1,idx]
+                print(f"    Fast/Thermal ratio  fwd={r_th2fast_fwd:.6f}  |  adj={r_th2fast_adj:.6f}")
 
     # Centre diagnostics
     print(f"\n  ── Centre (r = 0) ──")
@@ -500,7 +610,11 @@ def get_xs_basedon_geo(geo: GeometryConfig,):
     BC_coeffs     = bc_to_coeffs(geo.bc)
 
     # r_div passed to legacy solver: first boundary if hetero, else R (homogeneous)
-    r_div = geo.boundaries[0].radius if not is_homogeneous(geo) else R
+    print(f"THE CONTENT OF THE BOUNDARIES IN GEO IS {geo.boundaries[:-1]}")
+    #r_div = geo.boundaries[0].radius if not is_homogeneous(geo) else R
+    # up to [-1] because the last radius is R and is already stored 
+    r_divisions = [b.radius for b in geo.boundaries[:-1]] if not is_homogeneous(geo) else []
+    print(f"R DIVISIONS NOW ARE {r_divisions}")
 
     # ── 3. Predict XS ─────────────────────────────────────────────────────────
     print("  Predicting XS via polynomial regression for the baseline …")
@@ -510,14 +624,14 @@ def get_xs_basedon_geo(geo: GeometryConfig,):
     _print_xs_summary(xs_tensor, geo)
     return xs_tensor
 
-def run_diffusion_solver(xs_tensor, geo: GeometryConfig, plot_output="plots/fluxes.png"):
+def run_diffusion_solver(xs_tensor, geo, plot_output="plots/fluxes.png"):
     start_time = time.time()
     _print_config(geo)
     R             = geo.boundaries[-1].radius
     I             = int(R / geo.mesh_size)
     geometry_code = GEOMETRY_CODE[geo.geometry]
     BC_coeffs     = bc_to_coeffs(geo.bc)
-    r_div = geo.boundaries[0].radius if not is_homogeneous(geo) else R
+    r_divisions = [b.radius for b in geo.boundaries[:-1]] if not is_homogeneous(geo) else []
 
     # ── 4. Build XS callables ─────────────────────────────────────────────────
     D_fn, Sigma_a_fn, nuSigma_f_fn, Sigma_s_fn, chi_fn = \
@@ -526,14 +640,14 @@ def run_diffusion_solver(xs_tensor, geo: GeometryConfig, plot_output="plots/flux
     # ── 5. Forward & adjoint eigenvalue solves ────────────────────────────────
     print("\n  Running forward eigenvalue solve …")
     k_fwd, phi_fwd, x = DiffusionEigenvalue_MG(
-        R, I, geo.G, r_div,
+        R, I, geo.G, r_divisions,
         D_fn, Sigma_a_fn, nuSigma_f_fn, Sigma_s_fn, chi_fn,
         BC_coeffs, geometry_code
     )
 
     print("  Running adjoint eigenvalue solve …")
     k_adj, phi_adj, x = DiffusionEigenvalue_MG_adjoint(
-        R, I, geo.G, r_div,
+        R, I, geo.G, r_divisions,
         D_fn, Sigma_a_fn, nuSigma_f_fn, Sigma_s_fn, chi_fn,
         BC_coeffs, geometry_code
     )
@@ -546,7 +660,7 @@ def run_diffusion_solver(xs_tensor, geo: GeometryConfig, plot_output="plots/flux
     _print_results(k_fwd, k_adj, phi_fwd_norm, phi_adj_norm, x, geo, elapsed)
 
     # ── 7. Plot ───────────────────────────────────────────────────────────────
-    #_plot_fluxes(x, geo, phi_fwd_norm, phi_adj_norm,plot_output="plots/fluxes.png")
+    _plot_fluxes(x, geo, phi_fwd_norm, phi_adj_norm, plot_output=PLOT_OUTPUT)
 
     return k_fwd, phi_fwd_norm, phi_adj_norm
 
