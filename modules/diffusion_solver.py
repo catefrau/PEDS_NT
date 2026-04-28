@@ -34,7 +34,7 @@ META_PATH      = DATA_FOLDER / 'full_results_meta.json'
 REG_MODEL_PATH = DATA_FOLDER / 'polyreg_model'
 
 OUT_FOLDER = 'reg_and_data/output/CR'
-PLOT_OUTPUT= "plots/CR_fluxes.png"
+PLOT_OUTPUT= "plots/fixed_CR_fluxes.png"
 
 META_PATH = Path(str(DATA_PATH).replace('.csv', '_meta.json'))
 
@@ -85,6 +85,51 @@ else:
 # more important X_new = _regression_inputs(geo), 
 # which also hardcodes the columns names. 
 
+def precompute_geometry(geo: GeometryConfig) -> dict:
+    """
+    Convert a GeometryConfig into a plain dict of Python/NumPy values.
+    """
+    R        = geo.boundaries[-1].radius
+    I        = int(R / geo.mesh_size)
+    Delta_r  = geo.mesh_size
+    geometry_code = GEOMETRY_CODE[geo.geometry]
+
+    # Radial grid: cell edges at r_i = i * Delta_r
+    r_edges = np.array([i * Delta_r for i in range(I + 2)])  # length I+2
+
+    # Surface areas S[i] and volumes V[i] for each geometry
+    if geometry_code == 0:       # slab
+        S = np.ones(I + 1)
+        V = np.ones(I)
+    elif geometry_code == 1:     # cylindrical
+        S = r_edges[:-1]                              # S[i] = r_i
+        V = 0.5 * (r_edges[1:-1]**2 - r_edges[:-2]**2) / Delta_r
+    elif geometry_code == 2:     # spherical
+        S = r_edges[:-1]**2
+        V = (r_edges[1:-1]**3 - r_edges[:-2]**3) / (3 * Delta_r)
+
+    # Map each cell index → region index using boundary radii
+    region_of_cell = []
+    for i in range(I):
+        r_centre = (i + 0.5) * Delta_r
+        reg = 0
+        for j, bspec in enumerate(geo.boundaries):
+            if r_centre <= bspec.radius:
+                reg = j
+                break
+        region_of_cell.append(reg)
+
+    BC = bc_to_coeffs(geo.bc)   # [A, B, C] — already defined in your file
+
+    return {
+        'G'              : geo.G,
+        'I'              : I,
+        'Delta_r'        : Delta_r,
+        'S'              : S,
+        'V'              : V,
+        'BC'             : BC,
+        'region_of_cell' : region_of_cell,
+    }
 
 # ── Geometry string → solver integer ──────────────────────────────────────────
 GEOMETRY_CODE = {'slab': 0, 'cylindrical': 1, 'spherical': 2}
@@ -385,9 +430,9 @@ def build_xs_callables(xs_tensor: np.ndarray, geo: GeometryConfig):
     nuSigma_f_fn = lambda r, *_: _region_vec(r)[lay['nuSigma_f']]
     chi_fn       = lambda r, *_: _region_vec(r)[lay['chi']]
 
-    print(f"\n --------\n WHAT IS THIS SIGMA PROBLEM {lay['Sigma_s']}")
-    print(f"\n --------\n AND THE OTHERS? THATS D {lay['D']}")
-    print(f"\n --------\n AND THE OTHERS? THATS NUSI {lay['nuSigma_f']}")
+    #print(f"\n --------\n WHAT IS THIS SIGMA PROBLEM {lay['Sigma_s']}")
+    #print(f"\n --------\n AND THE OTHERS? THATS D {lay['D']}")
+    #print(f"\n --------\n AND THE OTHERS? THATS NUSI {lay['nuSigma_f']}")
 
     
     def Sigma_s_fn(r, *_):
@@ -626,7 +671,7 @@ def get_xs_basedon_geo(geo: GeometryConfig,):
 
 def run_diffusion_solver(xs_tensor, geo, plot_output="plots/fluxes.png"):
     start_time = time.time()
-    _print_config(geo)
+    #_print_config(geo)
     R             = geo.boundaries[-1].radius
     I             = int(R / geo.mesh_size)
     geometry_code = GEOMETRY_CODE[geo.geometry]
@@ -657,7 +702,7 @@ def run_diffusion_solver(xs_tensor, geo, plot_output="plots/fluxes.png"):
     phi_adj_norm = normalize_group_fluxes(phi_adj)
 
     elapsed = time.time() - start_time
-    _print_results(k_fwd, k_adj, phi_fwd_norm, phi_adj_norm, x, geo, elapsed)
+    #_print_results(k_fwd, k_adj, phi_fwd_norm, phi_adj_norm, x, geo, elapsed)
 
     # ── 7. Plot ───────────────────────────────────────────────────────────────
     _plot_fluxes(x, geo, phi_fwd_norm, phi_adj_norm, plot_output=PLOT_OUTPUT)

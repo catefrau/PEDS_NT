@@ -278,7 +278,7 @@ class PEDSModel(nnx.Module):
         #    Gradients propagate back through this call via the custom VJP
         T = gauss_solver(conductivity_field, iterations=1000)       # [batch, 5, 5]
         kappa = _flux_kappa(conductivity_field, T)                  # [batch]
-
+        print(f"is this single or collection {kappa}, size {kappa.size}")
         return kappa, conductivity_field
 
 
@@ -433,7 +433,7 @@ def visualise_results(
     val_losses:   list,
     val_pct_errs: list,
     sample_idx:   int = 0,
-    save_path:    str = "./experiments/coding/figures/MYCODE_results.png",
+    save_path:    str = "../experiments/coding/figures/MYCODE_results.png",
 ):
     """Four-panel figure:
        (a) pore geometry for one test sample
@@ -522,11 +522,11 @@ if __name__ == "__main__":
 
     # ── Hyperparameters (from config_experiment.py / config_model.py) ─────
     HP = dict(
-        filepath      = "./data/highfidelity/high_fidelity_2_20000.npz",  # adjust path as needed
-        train_size    = 5000,
-        test_size     = 1000,
-        batch_size    = 5000,
-        epochs        = 1000,
+        filepath      = "../data/highfidelity/high_fidelity_2_20000.npz",  # adjust path as needed
+        train_size    = 200,
+        test_size     = 50,
+        batch_size    = 200,
+        epochs        = 10,
         lr_max        = 5e-3,   # cosine schedule peak learning rate
         lr_min        = 5e-4,   # cosine schedule floor learning rate
         hidden_sizes  = [32, 32],  # matches model config m1
