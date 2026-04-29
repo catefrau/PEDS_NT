@@ -646,7 +646,7 @@ def _print_results(k_fwd, k_adj, phi_fwd_norm, phi_adj_norm,
 
 def get_xs_basedon_geo(geo: GeometryConfig,):
     # ── 1. Print problem configuration ────────────────────────────────────────
-    _print_config(geo)
+    #_print_config(geo)
 
     # ── 2. Derived scalars ────────────────────────────────────────────────────
     R             = geo.boundaries[-1].radius
@@ -666,7 +666,7 @@ def get_xs_basedon_geo(geo: GeometryConfig,):
     xs_tensor = predict_xs(geo)  # HERE I WILL ADD THE NN CONTRIB
     print("  The NN created XS will be added as a comtribution …")
     # NN_xs_tensor = NN(geo) -> add weighted contribution to xs_tensor
-    _print_xs_summary(xs_tensor, geo)
+    #_print_xs_summary(xs_tensor, geo)
     return xs_tensor
 
 def run_diffusion_solver(xs_tensor, geo, plot_output="plots/fluxes.png"):

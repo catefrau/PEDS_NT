@@ -29,6 +29,9 @@ import optax
 from flax import nnx
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import time
+from contextlib import contextmanager
+from collections import defaultdict
 
 from matrix_JAX import diffusion_setup_jax
 from config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
@@ -45,27 +48,65 @@ XS_BASELINE = get_xs_basedon_geo(GEO)  # HERE I WILL ADD THE NN CONTRIB
 XS_BASELINE = jnp.array(XS_BASELINE, dtype=jnp.float32)   # convert to JAX
 
 GEO_DATA = precompute_geometry(GEO)
+# Side channel to store the geometry information for each run — indexed by sample position in batch
+_GEO_DATA_CACHE = {}
 SLAY      = xs_layout(GEO.G) # Index slices for each XS type, given G groups
 
+# Global registry — stores all measured times
+_TIMINGS = defaultdict(list)
 
-def _run_NT_solver(xs_tensor):
+@contextmanager
+def timer(label: str, verbose: bool = True):
+    """
+    Context manager that measures wall time and stores it.
+    Usage:  with timer("forward pass"):
+                result = model(x)
+    """
+    start = time.perf_counter()
+    yield
+    elapsed = time.perf_counter() - start
+    _TIMINGS[label].append(elapsed)
+    if verbose:
+        print(f"  ⏱  {label:<35s} {elapsed*1000:.1f} ms")
+
+def print_timing_report():
+    """Print a summary of all measured times after training."""
+    print("\n" + "="*60)
+    print(f"{'TIMING REPORT':^60}")
+    print("="*60)
+    print(f"{'Step':<35s} {'calls':>6s} {'total(s)':>10s} {'mean(ms)':>10s} {'min(ms)':>10s}")
+    print("-"*60)
+    for label, times in sorted(_TIMINGS.items()):
+        total   = sum(times)
+        mean_ms = (total / len(times)) * 1000
+        min_ms  = min(times) * 1000
+        print(f"{label:<35s} {len(times):>6d} {total:>10.2f} {mean_ms:>10.1f} {min_ms:>10.1f}")
+    print("="*60)
+
+
+def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
     """Pure NumPy function — takes np array, returns np arrays.
     Neutron diffusion solver for the steady-state NT equation.
     GEO is captured from module scope (closure). 
     Safe because it is a fixed config, not a JAX-traced value,"""
     
     print("\n RUNNING the main NT solver!!!!!!!!!!!")
-    R = GEO.boundaries[-1].radius
-    I = int(R / GEO.mesh_size)
+    geo_i    = update_geo(GEO, np.array(params_raw_single))
+    geo_data = precompute_geometry(geo_i)       # <-- per-sample geometry
+    _GEO_DATA_CACHE[int(sample_id[0])] = geo_data
 
-    k, phi_fwd, phi_adj = run_diffusion_solver(xs_tensor, GEO)
-    print(f" \n ---------\n the k is {k}")
+    R      = geo_i.boundaries[-1].radius
+    I      = int(R / geo_i.mesh_size)
+
+    with timer("  solver: eigenvalue solve (fwd)", verbose=False):
+        k, phi_fwd, phi_adj = run_diffusion_solver(xs_tensor, geo_i)
+    print(f" the k is {k} \n ---------\n")
 
     # flatten phi: from [G, I] to [G*(I+1)] to match matrix size
-    N_flat = GEO.G * (I + 1)
+    N_flat = geo_i.G * (I + 1)
     phi_fwd_flat = np.zeros(N_flat, dtype=np.float32)
     phi_adj_flat = np.zeros(N_flat, dtype=np.float32)
-    for g in range(GEO.G):
+    for g in range(geo_i.G):
         phi_fwd_flat[g*(I+1) : g*(I+1)+I] = phi_fwd[g, :]
         phi_adj_flat[g*(I+1) : g*(I+1)+I] = phi_adj[g, :]
 
@@ -75,7 +116,7 @@ def _run_NT_solver(xs_tensor):
 
 # this is the function that runs when gradients are being computed
 # _NTdiff_fwd must also return the residuals, which _NTdiff_bwd will need later.
-def _NTdiff_fwd(xs_tensor):
+def _NTdiff_fwd(xs_tensor, params_raw_single, sample_id):
     """Forward pass: run the solver and save the residuals (input, output) for the backward.
     Args:
         XS_tensor: [batch, num_regions x M] neutron cross-sections (NN prediction), 
@@ -85,10 +126,12 @@ def _NTdiff_fwd(xs_tensor):
         phi: [batch, N]  — steady-state neutron flux evolution over space
     """
     print("\n Inside the forward pass!!!!")
-    R    = GEO.boundaries[-1].radius
-    I    = int(R / GEO.mesh_size)
+    geo_i    = update_geo(GEO, np.array(params_raw_single))
 
-    N_flat = GEO.G * (I + 1)   # total size of flux vector
+    R      = geo_i.boundaries[-1].radius
+    I      = int(R / geo_i.mesh_size)
+
+    N_flat = geo_i.G * (I + 1)   # total size of flux vector
 
     keff, phi_fwd, phi_adj = jax.pure_callback(
         _run_NT_solver,
@@ -97,9 +140,16 @@ def _NTdiff_fwd(xs_tensor):
             jax.ShapeDtypeStruct((N_flat,), jnp.float32),
             jax.ShapeDtypeStruct((N_flat,), jnp.float32),
         ),
-        xs_tensor
-    )
-    residuals = (xs_tensor, keff, phi_fwd, phi_adj)        
+        xs_tensor,  params_raw_single, sample_id
+    )  
+    # TODO this geo data is always the same or varies with simulations?
+    # _, F = diffusion_setup_jax(xs_tensor, GEO_DATA, SLAY)
+    # Retrieve geo_data stored by the callback
+    geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
+    _, F = diffusion_setup_jax(xs_tensor, geo_data, SLAY)
+    Fphi = F @ phi_fwd 
+
+    residuals = (xs_tensor, keff, phi_fwd, phi_adj, Fphi, sample_id)        
     # MUST return (primal_output, residuals)
     # primal_output must match exactly what NTdiff_solver returns
     # The second return value is the "residuals" passed to the backward function.
@@ -119,34 +169,42 @@ def _NTdiff_bwd(residuals, g):
     print("\n Inside the backward pass!!!!")
 
     # --- unpack everything ---
-    xs_tensor, k, phi_fwd, phi_adj = residuals
+    xs_tensor, k, phi_fwd, phi_adj, Fphi, sample_id = residuals
+    geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
+    print(f"the keff for this run was {k}")
     #print(f"the back unpack gives a XS tensor {xs_tensor}")
     dL_dk = g  
 
     # --- define the two matrix-vector functions ---
     # phi_fwd is captured from outer scope (treated as constant)    
     def A_phi(xs):
-        A, _ = diffusion_setup_jax(xs, GEO_DATA, SLAY)
-        return A @ phi_fwd 
+        with timer("  A_phi first part", verbose=False):
+            A, _ = diffusion_setup_jax(xs, geo_data, SLAY)
+        with timer("  A_phi second part", verbose=False):        
+            prod = A @ phi_fwd
+        return  prod
     def F_phi(xs):
-        _, F = diffusion_setup_jax(xs, GEO_DATA, SLAY)
+        _, F = diffusion_setup_jax(xs, geo_data, SLAY)
         return F @ phi_fwd 
-    
+        
     print("Generated the matrixes - flux product")
-    value_A, vjp_fn_A = jax.vjp(A_phi, xs_tensor)
-    dA_dp_phi = vjp_fn_A(phi_adj)[0]
-    term1 = dA_dp_phi
+    with timer("  bwd: vjp A@phi", verbose=False):
+        value_A, vjp_fn_A = jax.vjp(A_phi, xs_tensor)
+        dA_dp_phi = vjp_fn_A(phi_adj)[0]
+        term1 = dA_dp_phi
     #print(f"Generated the first term, {term1}, \n which has size {term1.size}")
     print("As the total number of XS, so good")
-    value_F, vjp_fn_F = jax.vjp(F_phi, xs_tensor)
-    dF_dp_phi = vjp_fn_F(phi_adj)[0]
-    term2 = (1/k) * dF_dp_phi
+    with timer("  bwd: vjp F@phi", verbose=False):
+        value_F, vjp_fn_F = jax.vjp(F_phi, xs_tensor)
+        dF_dp_phi = vjp_fn_F(phi_adj)[0]
+        term2 = (1/k) * dF_dp_phi
     #print(f"Generated the second term, {term2}, \n which has size {term2.size}")
     
     numerator = term1 - term2
-    phiadj_F_phi = phi_adj @ F_phi(xs_tensor)  # this is a scalar (dot product of two vectors)
+    with timer("  bwd: denominator", verbose=False):
+        phiadj_F_phi = phi_adj @ Fphi  # this is a scalar (dot product of two vectors)
     #print(f"Generated the adj x F x fwd, {phiadj_F_phi}, \n which has size {phiadj_F_phi.size}")    
-    denominator =  (1/k**2) * phiadj_F_phi
+        denominator =  (1/k**2) * phiadj_F_phi
     print(f" so the denominator is {denominator}")
     dk_dp = - numerator / denominator
     #print(f"The gradient dk/dp is {dk_dp}, with size {dk_dp.size}" )
@@ -154,13 +212,13 @@ def _NTdiff_bwd(residuals, g):
     dL_dp = dL_dk * dk_dp
     #print(f"so, dL/dp is {dL_dp}, with size {dL_dp.size}")
     dL_dxs_tensor = dL_dp
-    return (dL_dxs_tensor, )
+    return (dL_dxs_tensor, None, None)  # only return gradients for xs_tensor; the other two inputs have no gradients
 
 # this function represents what the solver does when called 
 # outside of differentiation context.
 @jax.custom_vjp
-def NTdiff_solver(xs_tensor):
-    keff, _ = _NTdiff_fwd(xs_tensor)  # only care about the primal output
+def NTdiff_solver(xs_tensor, params_raw_single, sample_id):
+    keff, _ = _NTdiff_fwd(xs_tensor, params_raw_single, sample_id)  # only care about the primal output
     return keff    
 
 
@@ -180,7 +238,7 @@ def compute_batch_baselines(params_raw: np.ndarray, geo: GeometryConfig) -> jnp.
         xs_i  = predict_xs(geo_i)                # your existing regression function
         #print(f"working?? first elem {xs_i[0]}")
         baselines.append(xs_i)
-    print(f"the size of the baseline array is {baselines[0]}")    
+    #print(f"the size of the baseline array is {baselines[0]}")    
     return jnp.array(np.stack(baselines), dtype=jnp.float32)  # [batch, 3, 12]
 
 def update_geo(geo: GeometryConfig, params_raw: np.ndarray) -> GeometryConfig:
@@ -234,12 +292,12 @@ def physics_sanity_check(xs_baseline):
 # SECTION 2: Neural Network (Generator)
 # ─────────────────────────────────────────────
 
-def _hardtanh_positive(x):
+def _hardtanh_correction(x):
     """Clip activations to (1e-16, 160.0) — ensures conductivity stays physical.
     This replaces the final activation layer so the network cannot output
     negative conductivities (which would break the physics solver).
     """
-    return jnp.clip(x, 1e-16, 50.0)
+    return 0.2 * jnp.tanh(x)
 
 
 class GeneratorNN(nnx.Module):
@@ -285,6 +343,14 @@ class GeneratorNN(nnx.Module):
         self.xs_per_region = xs_per_region  # 12  (4*G + G² for G=2)
         # self.resolution = int(layer_sizes[-1] ** 0.5)  # output side-length (5)
 
+        self.layers[-1] = nnx.Linear(
+            in_features=layer_sizes[-2],
+            out_features=layer_sizes[-1],
+            kernel_init=nnx.initializers.zeros,   # ← zero init
+            bias_init=nnx.initializers.zeros,
+            rngs=rngs,
+        )
+
     def __call__(self, geoms: jnp.ndarray, training: bool = False) -> jnp.ndarray:
         """
         Args:
@@ -299,7 +365,7 @@ class GeneratorNN(nnx.Module):
         for layer in self.layers[:-1]:
             x = nnx.relu(layer(x))        # nnx.relu is just jax.nn.relu, re-exported
         x = self.layers[-1](x)  # Final layer: linear projection → clip to physical range
-        x = _hardtanh_positive(x)  # ensures κ > 0 everywhere; could have used softplus(x)
+        x = _hardtanh_correction(x)  # ensures κ > 0 everywhere; could have used softplus(x)
 
         # Reshape flat vector [batch, 6] → spatial grid [batch,6]
         batch_size = geoms.shape[0]
@@ -344,34 +410,41 @@ class PEDSModel(nnx.Module):
         geoms_flat = jnp.reshape(geoms, (batch_size, 6))  # flatten spatial dims
 
         # Per-sample baselines from regression (NumPy, not traced by JAX)
-        xs_baselines = compute_batch_baselines(params_raw, GEO)  # [batch, 3, 12]
+        with timer("forward: regression baselines", verbose=False):        
+            xs_baselines = compute_batch_baselines(params_raw, GEO)  # [batch, 3, 12]
+        
         print("RUNNING a gradients physics check ")
-        physics_sanity_check(xs_baselines[0])
+        #physics_sanity_check(xs_baselines[0])
         # NN learns corrections on top of each sample's own baseline
-        xs_corrections = self.generator(geoms_flat, training)  # [batch, 3, 12]
+        with timer("forward: NN generated XS", verbose=False):
+            xs_corrections = self.generator(geoms_flat, training)  # [batch, 3, 12]
         #print(f"what is this tensor {xs_tensor} with size {xs_tensor.size}")  # 2880, or 720, or 36
         print(f"the size of the baselines is {xs_baselines.size} \n while the correction is {xs_corrections.size}")
-        xs_final = xs_baselines + xs_corrections # final mix
-
+        xs_final = xs_baselines * (1.0 + xs_corrections) # final mix
+        print(f" the baseline starting point XS tensor was {xs_baselines[0]}")
+        print(f"and the final corrected one is {xs_final[0]}")
         # 2. Physics solver maps conductivity field → κ
         #    Gradients propagate back through this call via the custom VJP
         #keff = NTdiff_solver(xs_corrections[0])  # TODO why only the first elem????'      
-        ALL_GEO_DATAS = [precompute_geometry(update_geo(GEO, params_raw[i]))
-                        for i in range(len(params_raw))]
+        """ ALL_GEO_DATAS = [precompute_geometry(update_geo(GEO, params_raw[i]))
+                        for i in range(len(params_raw))] """
         # Solver expects a single (3, 12) sample — loop over batch
-        keffs = [] # runs a calc for each of the 10 and then stores
-        for i in range(batch_size):
-            #print(f"the XS prediction for this geom is {xs_final[i]}")
-            #print(f"where the baseline is {XS_BASELINE} \n and the NN gen is {xs_corrections[i]}")
-            keff_i = NTdiff_solver(xs_final[i])   # pass (3, 12) slice
-            keffs.append(keff_i)
-        keffs = jnp.stack(keffs)   # [batch]
+        with timer("forward: solver loop (all samples)", verbose=False):
+            keffs = [] # runs a calc for each of the 10 and then stores
+            for i in range(batch_size):
+                #print(f"the XS prediction for this geom is {xs_final[i]}")
+                #print(f"where the baseline is {XS_BASELINE} \n and the NN gen is {xs_corrections[i]}")
+                keff_i = NTdiff_solver(xs_final[i], 
+                    jnp.array(params_raw[i], dtype=jnp.float32),       # (6,)   raw geometry
+                    jnp.array([i], dtype=jnp.int32), )         # (1,)   sample ID)   # pass (3, 12) slice
+                keffs.append(keff_i)
+            keffs = jnp.stack(keffs)   # [batch]
         """ keffs = jnp.stack([
             NTdiff_solver_with_geo(xs_final[i], ALL_GEO_DATAS[sample_indices[i]])
             for i in range(batch_size)
         ]) """
 
-        print(f"are these all the keffs together? {keffs}, its size is {keffs.size}") 
+        #print(f"are these all the keffs together? {keffs}, its size is {keffs.size}") 
         # same size as batch
         return keffs, xs_final
         #return keff, xs_tensor
@@ -439,9 +512,9 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     print(f"an example of a raw param set is {train_rawparams[0]}")
 
     # ── 5.3  Loss / gradient function ─────────────────────────────────────
-    def loss_fn(model, geoms, keffs_true):
+    def loss_fn(model, geoms, keffs_true, rawparams_batch):
         # model is passed explicitly so nnx.value_and_grad knows which pytree to differentiate with respect to.
-        keff_pred, _ = model(geoms, train_rawparams, training=True) # keff predicted by PEDS model
+        keff_pred, _ = model(geoms, rawparams_batch, training=True) # keff predicted by PEDS model
         print(f"the prediction gives a keff of {keff_pred.primal} (size {keff_pred.size}), compared to {keffs_true} (size {keffs_true.size})")
         residuals = keff_pred - keffs_true # keff from the data batch
         return jnp.sum(residuals ** 2)   # Sum (not mean) MSE — consistent with original training.py
@@ -457,7 +530,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         # UNDERSTAND HOW IS THIS LOOP REPEATED
         for batch_idx, (batch_geoms, batch_keffs, batch_rawparams) in enumerate(data_loader(geoms_np, keffs_np, rawparams_np, batch_size=batch_size)):
             # the batch index is always 0 because the test set is smaller than the batch size, so we only have one batch containing the whole test set.
-            keff_pred, _ = model(jnp.array(batch_geoms, batch_rawparams))   # no training=True → no stochasticity
+            keff_pred, _ = model(jnp.array(batch_geoms), batch_rawparams, training=False)   # no training=True → no stochasticity
             sq_err  = jnp.sum((keff_pred - batch_keffs) ** 2) # squared error
             pct_err = jnp.sum(jnp.abs(keff_pred - batch_keffs) / jnp.abs(batch_keffs) * 100.0) # percent error
             total_sq  += float(sq_err)
@@ -473,33 +546,38 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     print(f"\nTraining for {epochs} epochs …")
     for epoch in range(epochs):
         epoch_loss = 0.0
-        for batch_geoms, batch_keffs in data_loader(train_geoms, train_keffs, batch_size=batch_size):
+        # these are the parameters used for the training loop
+        for batch_geoms, batch_keffs, batch_rawparams_tr in data_loader(train_geoms, train_keffs, train_rawparams, batch_size=batch_size):
             bp = jnp.array(batch_geoms) # Convert NumPy → JAX arrays once per batch 
             bk = jnp.array(batch_keffs)
             print("Running forward pass + AD \n ")
             # Part of training: forward pass + automatic differentiation in one call.
             # `loss` is a scalar; `grads` is a pytree mirroring model's parameter tree.
-            loss, grads = grad_fn(model, bp, bk) # model is the call to PEDS 
-            if epoch % 2 == 0:
-                print(f"for this epoch {epoch}, the loss is {loss}, while the grads pytree structure is presented as follow:")
-                for i, leaf in enumerate(jax.tree.leaves(grads)):
-                    print(
-                        f"Param {i:2d} | shape: {leaf.shape} | "
-                        f"mean grad: {float(jnp.mean(jnp.abs(leaf))):.2e} | "
-                        f"max grad : {float(jnp.max(jnp.abs(leaf))):.2e}"
-                    ) # this pytree is where the weights and biases are stored
-            grad_state = nnx.state(grads) # print this to visualise the full dict
-            epoch_loss += float(loss)
-            # Apply Adam update: grads → moment estimates → parameter delta → model update
-            #   1. Passes grads through the Optax chain (Adam moment updates, LR scaling)
-            #   2. Applies the resulting parameter updates in-place on the model.
-            optimizer.update(grads)
+            with timer("train step: full forward+backward+update"):
+                with timer("train step: forward+loss+grad"):
+                    loss, grads = grad_fn(model, bp, bk, batch_rawparams_tr) # model is the call to PEDS 
+                if epoch % 2 == 0:
+                    print(f"for this epoch {epoch}, the loss is {loss}, while the grads pytree structure is presented as follow:")
+                    for i, leaf in enumerate(jax.tree.leaves(grads)):
+                        print(
+                            f"Param {i:2d} | shape: {leaf.shape} | "
+                            f"mean grad: {float(jnp.mean(jnp.abs(leaf))):.2e} | "
+                            f"max grad : {float(jnp.max(jnp.abs(leaf))):.2e}"
+                        ) # this pytree is where the weights and biases are stored
+                grad_state = nnx.state(grads) # print this to visualise the full dict
+                epoch_loss += float(loss)
+                # Apply Adam update: grads → moment estimates → parameter delta → model update
+                #   1. Passes grads through the Optax chain (Adam moment updates, LR scaling)
+                #   2. Applies the resulting parameter updates in-place on the model.
+                with timer("train step: optimizer update"):
+                    optimizer.update(grads)
 
         # Normalise by dataset size (matches `avg_loss` in training.py)
         avg_train_loss = epoch_loss / train_size
         # Validation (no gradient tracking needed)
-        avg_val_loss, avg_pct_err = validation_step(test_geoms, test_keffs, test_rawparams)
-        print(f"this is batch iteration {iterations + 1} with the average train loss {avg_train_loss}, the average validation loss {avg_val_loss} and the average percentage error {avg_pct_err} \n")
+        with timer("validation step"):
+            avg_val_loss, avg_pct_err = validation_step(test_geoms, test_keffs, test_rawparams)
+        print(f"this is batch iteration {iterations + 1} with the average train loss {avg_train_loss:.4f}, the average validation loss {avg_val_loss:.4f} and the average percentage error {avg_pct_err:.4f} \n")
         iterations = iterations+1
         train_losses.append(avg_train_loss)
         val_losses.append(avg_val_loss)
@@ -624,12 +702,12 @@ if __name__ == "__main__":
     # ── Hyperparameters (from config_experiment.py / config_model.py) ─────
     HP = dict(
         filepath      = "../data/highfidelity/NT_smallMCrun.npz",  # adjust path as needed
-        train_size    = 10,
-        test_size     = 3,
-        batch_size    = 10,
-        epochs        = 2,
-        lr_max        = 5e-3,   # cosine schedule peak learning rate
-        lr_min        = 5e-4,   # cosine schedule floor learning rate
+        train_size    = 5,
+        test_size     = 2,
+        batch_size    = 5,
+        epochs        = 3,
+        lr_max        = 1e-4,   # cosine schedule peak learning rate
+        lr_min        = 1e-6,   # cosine schedule floor learning rate
         hidden_sizes  = [32, 32],  # matches model config m1
         n_regions    = 3,    # b4c_rod, fuel_annulus, water
         G            = 2,    # energy groups
@@ -638,7 +716,7 @@ if __name__ == "__main__":
 
     # ── Train ─────────────────────────────────────────────────────────────
     model, train_losses, val_losses, val_pct_errs = train(**HP)
-
+    print_timing_report()
     # ── Reload test set for final visualisation ───────────────────────────
     _, (test_geoms, test_keffs, test_rawparams) = load_data(
         HP["filepath"], HP["train_size"], HP["test_size"], HP["seed"]
