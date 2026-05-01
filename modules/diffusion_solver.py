@@ -664,7 +664,9 @@ def get_xs_basedon_geo(geo: GeometryConfig,):
     # ── 3. Predict XS ─────────────────────────────────────────────────────────
     print("  Predicting XS via polynomial regression for the baseline …")
     xs_tensor = predict_xs(geo)  # HERE I WILL ADD THE NN CONTRIB
-    print("  The NN created XS will be added as a comtribution …")
+    print(f"  Predicted XS tensor shape: {xs_tensor.shape}  (N_regions={len(geo.regions)}, XS_per_region={xs_tensor.shape[1]})")
+    print(f"  XS layout (index slices): {xs_layout(geo.G)}")
+    print(f"the tensor is {xs_tensor}")
     # NN_xs_tensor = NN(geo) -> add weighted contribution to xs_tensor
     #_print_xs_summary(xs_tensor, geo)
     return xs_tensor
@@ -683,14 +685,14 @@ def run_diffusion_solver(xs_tensor, geo, plot_output="plots/fluxes.png"):
         build_xs_callables(xs_tensor, geo)
 
     # ── 5. Forward & adjoint eigenvalue solves ────────────────────────────────
-    print("\n  Running forward eigenvalue solve …")
+    #print("\n  Running forward eigenvalue solve …")
     k_fwd, phi_fwd, x = DiffusionEigenvalue_MG(
         R, I, geo.G, r_divisions,
         D_fn, Sigma_a_fn, nuSigma_f_fn, Sigma_s_fn, chi_fn,
         BC_coeffs, geometry_code
     )
 
-    print("  Running adjoint eigenvalue solve …")
+    #print("  Running adjoint eigenvalue solve …")
     k_adj, phi_adj, x = DiffusionEigenvalue_MG_adjoint(
         R, I, geo.G, r_divisions,
         D_fn, Sigma_a_fn, nuSigma_f_fn, Sigma_s_fn, chi_fn,
@@ -705,7 +707,7 @@ def run_diffusion_solver(xs_tensor, geo, plot_output="plots/fluxes.png"):
     #_print_results(k_fwd, k_adj, phi_fwd_norm, phi_adj_norm, x, geo, elapsed)
 
     # ── 7. Plot ───────────────────────────────────────────────────────────────
-    _plot_fluxes(x, geo, phi_fwd_norm, phi_adj_norm, plot_output=PLOT_OUTPUT)
+    #_plot_fluxes(x, geo, phi_fwd_norm, phi_adj_norm, plot_output=PLOT_OUTPUT)
 
     return k_fwd, phi_fwd_norm, phi_adj_norm
 

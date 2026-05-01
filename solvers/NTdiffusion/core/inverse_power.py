@@ -55,7 +55,7 @@ def inverse_power_adjoint_old(A, B, epsilon=1e-6):
     The eigenvalue k is the same as the forward problem.
     The eigenvector is the ADJOINT flux (neutron importance).
     '''
-    print("--- Going for the adjoint this time!!! ---")
+    #print("--- Going for the adjoint this time!!! ---")
     Nrows, Ncols = A.shape
 
     x = np.random.random((Nrows))
