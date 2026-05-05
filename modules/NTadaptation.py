@@ -32,15 +32,25 @@ import matplotlib.gridspec as gridspec
 import time
 from contextlib import contextmanager
 from collections import defaultdict
+import csv
 
-from matrix_JAX import diffusion_setup_jax
+from matrix_JAX_optimized import diffusion_setup_jax, Aphi_Fphi_scan
 from config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
 from config_run import GEO_CYL as GEO
 from diffusion_solver import get_xs_basedon_geo, run_diffusion_solver, predict_xs, precompute_geometry, xs_layout
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from plot_functions.xs_heatmap_upd import plot_xs_heatmap
+from plot_functions.xs_subplots import plot_xs_subplots
 
 # ─────────────────────────────────────────────
-# SECTION 1: Physics Solver
+# SECTION 0: variables initiation and global constants
 # ─────────────────────────────────────────────
+train_size    = 80
+test_size     = 20
+batch_size    = train_size
+epochs        = 6
 # predict the XS with the polynomial reg built in the other code
 # acts as a first guess???
 # TODO remove this and thefunction used 
@@ -52,45 +62,22 @@ GEO_DATA = precompute_geometry(GEO)
 _GEO_DATA_CACHE = {}
 SLAY      = xs_layout(GEO.G) # Index slices for each XS type, given G groups
 
-# Global registry — stores all measured times
-_TIMINGS = defaultdict(list)
-
-@contextmanager
-def timer(label: str, verbose: bool = True):
-    """
-    Context manager that measures wall time and stores it.
-    Usage:  with timer("forward pass"):
-                result = model(x)
-    """
-    start = time.perf_counter()
-    yield
-    elapsed = time.perf_counter() - start
-    _TIMINGS[label].append(elapsed)
-    if verbose:
-        print(f"  ⏱  {label:<35s} {elapsed*1000:.1f} ms")
-
-def print_timing_report():
-    """Print a summary of all measured times after training."""
-    print("\n" + "="*60)
-    print(f"{'TIMING REPORT':^60}")
-    print("="*60)
-    print(f"{'Step':<35s} {'calls':>6s} {'total(s)':>10s} {'mean(ms)':>10s} {'min(ms)':>10s}")
-    print("-"*60)
-    for label, times in sorted(_TIMINGS.items()):
-        total   = sum(times)
-        mean_ms = (total / len(times)) * 1000
-        min_ms  = min(times) * 1000
-        print(f"{label:<35s} {len(times):>6d} {total:>10.2f} {mean_ms:>10.1f} {min_ms:>10.1f}")
-    print("="*60)
-
-
+_XS_CACHE: dict = {}
+HEATMAP_INTERVAL = 2
+XS_HEATMAP_SNAPSHOTS = []
+XS_HEATMAP_LABELS = []
+_xs_baseline_ref = [None]        # list-box so inner assignment doesn't shadow
+_snap_final      = None
+# ─────────────────────────────────────────────
+# SECTION 1: Physics Solver
+# ─────────────────────────────────────────────
 def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
     """Pure NumPy function — takes np array, returns np arrays.
     Neutron diffusion solver for the steady-state NT equation.
     GEO is captured from module scope (closure). 
     Safe because it is a fixed config, not a JAX-traced value,"""
     
-    print("\n RUNNING the main NT solver!!!!!!!!!!!")
+    #print("\n RUNNING the main NT solver!!!!!!!!!!!")
     geo_i    = update_geo(GEO, np.array(params_raw_single))
     geo_data = precompute_geometry(geo_i)       # <-- per-sample geometry
     _GEO_DATA_CACHE[int(sample_id[0])] = geo_data
@@ -100,7 +87,7 @@ def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
 
     with timer("  solver: eigenvalue solve (fwd)", verbose=False):
         k, phi_fwd, phi_adj = run_diffusion_solver(xs_tensor, geo_i)
-    print(f" the k is {k} \n ---------\n")
+    #print(f" the k is {k} \n ---------\n")
 
     # flatten phi: from [G, I] to [G*(I+1)] to match matrix size
     N_flat = geo_i.G * (I + 1)
@@ -125,7 +112,7 @@ def _NTdiff_fwd(xs_tensor, params_raw_single, sample_id):
         k_fwd: scalar, dominant eigenvalue from forward solve
         phi: [batch, N]  — steady-state neutron flux evolution over space
     """
-    print("\n Inside the forward pass!!!!")
+    #print("\n Inside the forward pass!!!!")
     geo_i    = update_geo(GEO, np.array(params_raw_single))
 
     R      = geo_i.boundaries[-1].radius
@@ -166,32 +153,28 @@ def _NTdiff_bwd(residuals, g):
     Returns:
         dL/d(xs_tensor), shape [batch, M]
     """
-    print("\n Inside the backward pass!!!!")
+    #print("\n Inside the backward pass!!!!")
 
     # --- unpack everything ---
     xs_tensor, k, phi_fwd, phi_adj, Fphi, sample_id = residuals
     geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
-    print(f"the keff for this run was {k}")
+    #print(f"the keff for this run was {k}")
     #print(f"the back unpack gives a XS tensor {xs_tensor}")
     dL_dk = g  
 
     # --- define the two matrix-vector functions ---
     # phi_fwd is captured from outer scope (treated as constant)    
-    def A_phi(xs):
-        with timer("  A_phi first part", verbose=False):
-            A, _ = diffusion_setup_jax(xs, geo_data, SLAY)
-        with timer("  A_phi second part", verbose=False):        
-            prod = A @ phi_fwd
-        return  prod
-    def F_phi(xs):
-        _, F = diffusion_setup_jax(xs, geo_data, SLAY)
-        return F @ phi_fwd 
+    def AF_phi(xs):
+        with timer("  (Matrixes building part)", verbose=False):
+            return Aphi_Fphi_scan(xs, geo_data, SLAY, phi_fwd)  # returns (Aphi, Fphi)
         
-    print("Generated the matrixes - flux product")
-    with timer("  bwd: vjp A@phi", verbose=False):
-        value_A, vjp_fn_A = jax.vjp(A_phi, xs_tensor)
-        dA_dp_phi = vjp_fn_A(phi_adj)[0]
-        term1 = dA_dp_phi
+    #print("Generated the matrixes - flux product")
+    with timer("  bwd: vjp A@phi, F@phi", verbose=False):
+        _, vjp_fn = jax.vjp(AF_phi, xs_tensor)
+        numerator, = vjp_fn((phi_adj, -(1.0 / k) * phi_adj))
+    
+    
+    """ dA_dp_phi, dF_dp_phi = vjp_fn(xs_tensor)  # both have shape [batch, M]
     #print(f"Generated the first term, {term1}, \n which has size {term1.size}")
     print("As the total number of XS, so good")
     with timer("  bwd: vjp F@phi", verbose=False):
@@ -200,12 +183,13 @@ def _NTdiff_bwd(residuals, g):
         term2 = (1/k) * dF_dp_phi
     #print(f"Generated the second term, {term2}, \n which has size {term2.size}")
     
-    numerator = term1 - term2
+    numerator = term1 - term2 """
+
     with timer("  bwd: denominator", verbose=False):
         phiadj_F_phi = phi_adj @ Fphi  # this is a scalar (dot product of two vectors)
     #print(f"Generated the adj x F x fwd, {phiadj_F_phi}, \n which has size {phiadj_F_phi.size}")    
         denominator =  (1/k**2) * phiadj_F_phi
-    print(f" so the denominator is {denominator}")
+    #print(f" so the denominator is {denominator}")
     dk_dp = - numerator / denominator
     #print(f"The gradient dk/dp is {dk_dp}, with size {dk_dp.size}" )
     #print(f"The gradient dL/dk is {dL_dk}, with size {dL_dk.size}" )
@@ -224,19 +208,54 @@ def NTdiff_solver(xs_tensor, params_raw_single, sample_id):
 
 NTdiff_solver.defvjp(_NTdiff_fwd, _NTdiff_bwd)
 
+# ─────────────────────────────────────────────
+# SECTION 2: Utils: timings, geometry updates, sanity checks
+# ─────────────────────────────────────────────
+
+# Global registry — stores all measured times
+_TIMINGS = defaultdict(list)
+
+@contextmanager
+def timer(label: str, verbose: bool = True):
+    """
+    Context manager that measures wall time and stores it.
+    Usage:  with timer("forward pass"):
+                result = model(x)
+    """
+    start = time.perf_counter()
+    yield
+    elapsed = time.perf_counter() - start
+    _TIMINGS[label].append(elapsed)
+    if verbose:
+        print(f"  ⏱  {label:<35s} {elapsed*1000:.1f} ms")
+
+def print_timing_report():
+    """Print a summary of all measured times after training."""
+    print("\n" + "="*60)
+    print(f"{'TIMING REPORT':^60}")
+    print("="*60)
+    print(f"{'Step':<35s} {'calls':>6s} {'total(s)':>10s} {'mean(ms)':>10s} {'min(ms)':>10s}")
+    print("-"*60)
+    for label, times in sorted(_TIMINGS.items()):
+        total   = sum(times)
+        mean_ms = (total / len(times)) * 1000
+        min_ms  = min(times) * 1000
+        print(f"{label:<35s} {len(times):>6d} {total:>10.2f} {mean_ms:>10.1f} {min_ms:>10.1f}")
+    print("="*60)
+
+
 def compute_batch_baselines(params_raw: np.ndarray, geo: GeometryConfig) -> jnp.ndarray:
     """
     params_raw: [batch, 6] — un-normalized geometry parameters
     Returns: [batch, 3, 12] — regression-predicted XS for each sample
     """
     baselines = []
-    print(f"the shape of the params raw array is {params_raw.shape[0]}")
     for i in range(params_raw.shape[0]):
         # Build a modified GEO for this sample's parameters
         geo_i = update_geo(geo, params_raw[i]) 
         #print(f"insight on geom {geo_i}")
-        xs_i  = predict_xs(geo_i)                # your existing regression function
-        #print(f"working?? first elem {xs_i[0]}")
+        xs_i  = predict_xs(geo_i)        # regression function
+        #print(f"working? first elem {xs_i[0]}")
         baselines.append(xs_i)
     #print(f"the size of the baseline array is {baselines[0]}")    
     return jnp.array(np.stack(baselines), dtype=jnp.float32)  # [batch, 3, 12]
@@ -297,7 +316,7 @@ def _hardtanh_correction(x):
     This replaces the final activation layer so the network cannot output
     negative conductivities (which would break the physics solver).
     """
-    return 0.2 * jnp.tanh(x)
+    return 0.5 * jnp.tanh(x)  # it only influences the output for 50%
 
 
 class GeneratorNN(nnx.Module):
@@ -413,22 +432,17 @@ class PEDSModel(nnx.Module):
         with timer("forward: regression baselines", verbose=False):        
             xs_baselines = compute_batch_baselines(params_raw, GEO)  # [batch, 3, 12]
         
-        print("RUNNING a gradients physics check ")
-        #physics_sanity_check(xs_baselines[0])
         # NN learns corrections on top of each sample's own baseline
         with timer("forward: NN generated XS", verbose=False):
             xs_corrections = self.generator(geoms_flat, training)  # [batch, 3, 12]
-        #print(f"what is this tensor {xs_tensor} with size {xs_tensor.size}")  # 2880, or 720, or 36
-        print(f"the size of the baselines is {xs_baselines.size} \n while the correction is {xs_corrections.size}")
+        #print(f"example of this tensor {xs_tensor}")  
         xs_final = xs_baselines * (1.0 + xs_corrections) # final mix
-        print(f" the baseline starting point XS tensor was {xs_baselines[0]}")
-        print(f"and the final corrected one is {xs_final[0]}")
-        # 2. Physics solver maps conductivity field → κ
-        #    Gradients propagate back through this call via the custom VJP
-        #keff = NTdiff_solver(xs_corrections[0])  # TODO why only the first elem????'      
-        """ ALL_GEO_DATAS = [precompute_geometry(update_geo(GEO, params_raw[i]))
-                        for i in range(len(params_raw))] """
-        # Solver expects a single (3, 12) sample — loop over batch
+        
+        #print("RUNNING a gradients physics check ")
+        #physics_sanity_check(xs_baselines[0])        
+        #print(f" the baseline starting point XS tensor was {xs_baselines[0]}")
+        #print(f"and the final corrected one is {xs_final[0]}")
+
         with timer("forward: solver loop (all samples)", verbose=False):
             keffs = [] # runs a calc for each of the 10 and then stores
             for i in range(batch_size):
@@ -524,9 +538,13 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
     # ── 5.4  Validation helper ─────────────────────────────────────────────
     def validation_step(geoms_np, keffs_np, rawparams_np):
-        """Compute mean squared loss and mean percentage error over the test set."""
+        """Compute mean squared loss and mean percentage error over the test set.
+            Also returns per-sample keff_pred and keff_ref arrays for logging."""
+
         total_sq  = 0.0
         total_pct = 0.0
+        all_keff_pred = []
+        all_keff_ref  = []
         # UNDERSTAND HOW IS THIS LOOP REPEATED
         for batch_idx, (batch_geoms, batch_keffs, batch_rawparams) in enumerate(data_loader(geoms_np, keffs_np, rawparams_np, batch_size=batch_size)):
             # the batch index is always 0 because the test set is smaller than the batch size, so we only have one batch containing the whole test set.
@@ -535,8 +553,11 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             pct_err = jnp.sum(jnp.abs(keff_pred - batch_keffs) / jnp.abs(batch_keffs) * 100.0) # percent error
             total_sq  += float(sq_err)
             total_pct += float(pct_err)
+            all_keff_pred.extend(np.array(keff_pred).tolist())   # ← collect predictions
+            all_keff_ref.extend(np.array(batch_keffs).tolist())  # ← collect references            
         n = len(keffs_np)
-        return total_sq / n, total_pct / n   # mean over all test samples
+        return total_sq / n, total_pct / n, all_keff_pred, all_keff_ref   
+        # mean over all test samples
 
     # ── 5.5  Epoch loop ────────────────────────────────────────────────────
     train_losses   = []
@@ -544,6 +565,13 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     val_pct_errors = []
     iterations = 0 
     print(f"\nTraining for {epochs} epochs …")
+
+        # ── Open keff log file ────────────────────────────────────────────────
+    log_path = "./LOGS/keff_epoch_log.csv"
+    log_file  = open(log_path, "w", newline="")
+    log_writer = csv.writer(log_file)
+    log_writer.writerow(["epoch", "sample_idx", "keff_openmc", "keff_peds", "delta_rho_pcm"])
+
     for epoch in range(epochs):
         epoch_loss = 0.0
         # these are the parameters used for the training loop
@@ -553,7 +581,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             print("Running forward pass + AD \n ")
             # Part of training: forward pass + automatic differentiation in one call.
             # `loss` is a scalar; `grads` is a pytree mirroring model's parameter tree.
-            with timer("train step: full forward+backward+update"):
+            with timer("train step: forward+backward+update"):
                 with timer("train step: forward+loss+grad"):
                     loss, grads = grad_fn(model, bp, bk, batch_rawparams_tr) # model is the call to PEDS 
                 if epoch % 2 == 0:
@@ -571,12 +599,38 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 #   2. Applies the resulting parameter updates in-place on the model.
                 with timer("train step: optimizer update"):
                     optimizer.update(grads)
+            
+            # still inside the epoch loop 
+            # ── Collect heatmap snapshot every HEATMAP_INTERVAL epochs ────────
+            if (epoch + 1) % HEATMAP_INTERVAL == 0 or epoch == 0:
+                _snap_geo_i       = update_geo(GEO, train_rawparams[0])          # single GeometryConfig
+                _snap_baseline    = np.array(predict_xs(_snap_geo_i))            # (3, 12) guaranteed
+
+                _snap_geom_flat   = jnp.array(train_geoms[0:1])                  # (1, 6)
+                _snap_corrections = np.array(
+                    model.generator(_snap_geom_flat, training=False)[0]          # (3, 12)
+                )
+                _snap_final = _snap_baseline * (1.0 + _snap_corrections)         # (3, 12)
+
+                # Freeze baseline reference on the very first snapshot
+                if _xs_baseline_ref[0] is None:
+                    _xs_baseline_ref[0] = _snap_baseline.copy()
+
+                XS_HEATMAP_SNAPSHOTS.append(_snap_corrections.copy())
+                XS_HEATMAP_LABELS.append(f"Epoch {epoch + 1}")
 
         # Normalise by dataset size (matches `avg_loss` in training.py)
         avg_train_loss = epoch_loss / train_size
         # Validation (no gradient tracking needed)
         with timer("validation step"):
-            avg_val_loss, avg_pct_err = validation_step(test_geoms, test_keffs, test_rawparams)
+            avg_val_loss, avg_pct_err, keff_preds, keff_refs = validation_step(test_geoms, test_keffs, test_rawparams)
+        
+        # ── Write per-sample keff values to the log file ─────────────────────
+        for s_idx, (k_ref, k_pred) in enumerate(zip(keff_refs, keff_preds)):
+            delta_rho_pcm = abs((k_pred - k_ref) / (k_pred * k_ref)) * 1e5   # ✅ correct
+            log_writer.writerow([epoch + 1, s_idx, f"{k_ref:.6f}", f"{k_pred:.6f}", f"{delta_rho_pcm:.1f}"])
+        log_file.flush()   # write to disk immediately, so you can tail the file during a long run
+                
         print(f"this is batch iteration {iterations + 1} with the average train loss {avg_train_loss:.4f}, the average validation loss {avg_val_loss:.4f} and the average percentage error {avg_pct_err:.4f} \n")
         iterations = iterations+1
         train_losses.append(avg_train_loss)
@@ -597,6 +651,34 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             jax.clear_caches()
     
     print(f"the total number of iterations is {iterations}.")
+    log_file.close()
+    print(f"\n keff log saved to: {log_path}")
+
+    # ── Generate XS heatmap ───────────────────────────────────────────
+    print(f"[xs_heatmap] baseline ref is None: {_xs_baseline_ref[0] is None}")
+    print(f"[xs_heatmap] number of snapshots collected: {len(XS_HEATMAP_SNAPSHOTS)}")
+    print(f"[xs_heatmap] snapshot labels: {XS_HEATMAP_LABELS}")
+
+    if _xs_baseline_ref[0] is not None and len(XS_HEATMAP_SNAPSHOTS) > 0:
+        print(f"\nGenerating XS heatmap with {len(XS_HEATMAP_SNAPSHOTS)} snapshots …")
+        print(f"saving it to ")
+        plot_xs_heatmap(
+            baseline           = _xs_baseline_ref[0],
+            snapshots          = XS_HEATMAP_SNAPSHOTS,
+            epoch_labels       = XS_HEATMAP_LABELS,
+            final_xs           = _snap_final,
+            G                  = G,
+            save_path          = "./LOGS/figures/xs_heatmap.png",
+            plot_interval_note = f"snapshot every {HEATMAP_INTERVAL} epochs",
+        )
+        plot_xs_subplots(
+            baseline           = _xs_baseline_ref[0],
+            final_xs           = _snap_final,
+            G                  = G,
+            save_path          = "./LOGS/figures/xs_subplots.png",
+        )
+    else:
+        print("[xs_heatmap] skipped — no snapshots collected (epochs < HEATMAP_INTERVAL?)")
     return model, train_losses, val_losses, val_pct_errors
 
 
@@ -702,13 +784,13 @@ if __name__ == "__main__":
     # ── Hyperparameters (from config_experiment.py / config_model.py) ─────
     HP = dict(
         filepath      = "../data/highfidelity/NT_smallMCrun.npz",  # adjust path as needed
-        train_size    = 5,
-        test_size     = 2,
-        batch_size    = 5,
-        epochs        = 3,
-        lr_max        = 1e-4,   # cosine schedule peak learning rate
-        lr_min        = 1e-6,   # cosine schedule floor learning rate
-        hidden_sizes  = [32, 32],  # matches model config m1
+        train_size    = train_size,
+        test_size     = test_size,
+        batch_size    = batch_size,
+        epochs        = epochs,
+        lr_max        = 5e-4,   # cosine schedule peak learning rate
+        lr_min        = 5e-5,   # cosine schedule floor learning rate
+        hidden_sizes  = [64, 32],  # matches model config m1
         n_regions    = 3,    # b4c_rod, fuel_annulus, water
         G            = 2,    # energy groups
         seed          = 42,
