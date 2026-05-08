@@ -41,14 +41,13 @@ from diffusion_solver import get_xs_basedon_geo, run_diffusion_solver, predict_x
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from plot_functions.xs_heatmap_upd import plot_xs_heatmap
-from plot_functions.xs_subplots import plot_xs_subplots
+from plot_functions.xs_heatmap import plot_xs_heatmap, plot_xs_subplots
 
 # ─────────────────────────────────────────────
 # SECTION 0: variables initiation and global constants
 # ─────────────────────────────────────────────
-train_size    = 80
-test_size     = 20
+train_size    = 5
+test_size     = 3
 batch_size    = train_size
 epochs        = 6
 # predict the XS with the polynomial reg built in the other code
@@ -68,18 +67,16 @@ XS_HEATMAP_SNAPSHOTS = []
 XS_HEATMAP_LABELS = []
 _xs_baseline_ref = [None]        # list-box so inner assignment doesn't shadow
 _snap_final      = None
+
 # ─────────────────────────────────────────────
 # SECTION 1: Physics Solver
 # ─────────────────────────────────────────────
 def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
-    """Pure NumPy function — takes np array, returns np arrays.
-    Neutron diffusion solver for the steady-state NT equation.
-    GEO is captured from module scope (closure). 
-    Safe because it is a fixed config, not a JAX-traced value,"""
+    """ NumPy function — Neutron diffusion solver for the steady-state NT equation.
+    GEO is captured from the cached _GEO_DATA_CACHE for the sample."""
     
-    #print("\n RUNNING the main NT solver!!!!!!!!!!!")
     geo_i    = update_geo(GEO, np.array(params_raw_single))
-    geo_data = precompute_geometry(geo_i)       # <-- per-sample geometry
+    geo_data = precompute_geometry(geo_i)       # per-sample geometry
     _GEO_DATA_CACHE[int(sample_id[0])] = geo_data
 
     R      = geo_i.boundaries[-1].radius
@@ -87,7 +84,6 @@ def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
 
     with timer("  solver: eigenvalue solve (fwd)", verbose=False):
         k, phi_fwd, phi_adj = run_diffusion_solver(xs_tensor, geo_i)
-    #print(f" the k is {k} \n ---------\n")
 
     # flatten phi: from [G, I] to [G*(I+1)] to match matrix size
     N_flat = geo_i.G * (I + 1)
@@ -102,7 +98,6 @@ def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
 
 
 # this is the function that runs when gradients are being computed
-# _NTdiff_fwd must also return the residuals, which _NTdiff_bwd will need later.
 def _NTdiff_fwd(xs_tensor, params_raw_single, sample_id):
     """Forward pass: run the solver and save the residuals (input, output) for the backward.
     Args:
@@ -112,7 +107,6 @@ def _NTdiff_fwd(xs_tensor, params_raw_single, sample_id):
         k_fwd: scalar, dominant eigenvalue from forward solve
         phi: [batch, N]  — steady-state neutron flux evolution over space
     """
-    #print("\n Inside the forward pass!!!!")
     geo_i    = update_geo(GEO, np.array(params_raw_single))
 
     R      = geo_i.boundaries[-1].radius
@@ -129,17 +123,12 @@ def _NTdiff_fwd(xs_tensor, params_raw_single, sample_id):
         ),
         xs_tensor,  params_raw_single, sample_id
     )  
-    # TODO this geo data is always the same or varies with simulations?
-    # _, F = diffusion_setup_jax(xs_tensor, GEO_DATA, SLAY)
-    # Retrieve geo_data stored by the callback
     geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
     _, F = diffusion_setup_jax(xs_tensor, geo_data, SLAY)
     Fphi = F @ phi_fwd 
 
     residuals = (xs_tensor, keff, phi_fwd, phi_adj, Fphi, sample_id)        
-    # MUST return (primal_output, residuals)
-    # primal_output must match exactly what NTdiff_solver returns
-    # The second return value is the "residuals" passed to the backward function.
+    # primal must match exactly what NTdiff_solver returns
     return keff, residuals
 
 
@@ -153,58 +142,33 @@ def _NTdiff_bwd(residuals, g):
     Returns:
         dL/d(xs_tensor), shape [batch, M]
     """
-    #print("\n Inside the backward pass!!!!")
-
-    # --- unpack everything ---
     xs_tensor, k, phi_fwd, phi_adj, Fphi, sample_id = residuals
     geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
-    #print(f"the keff for this run was {k}")
-    #print(f"the back unpack gives a XS tensor {xs_tensor}")
     dL_dk = g  
 
     # --- define the two matrix-vector functions ---
-    # phi_fwd is captured from outer scope (treated as constant)    
+    # TODO phi_fwd is captured from outer scope (treated as constant)    
     def AF_phi(xs):
         with timer("  (Matrixes building part)", verbose=False):
             return Aphi_Fphi_scan(xs, geo_data, SLAY, phi_fwd)  # returns (Aphi, Fphi)
         
-    #print("Generated the matrixes - flux product")
     with timer("  bwd: vjp A@phi, F@phi", verbose=False):
         _, vjp_fn = jax.vjp(AF_phi, xs_tensor)
         numerator, = vjp_fn((phi_adj, -(1.0 / k) * phi_adj))
-    
-    
-    """ dA_dp_phi, dF_dp_phi = vjp_fn(xs_tensor)  # both have shape [batch, M]
-    #print(f"Generated the first term, {term1}, \n which has size {term1.size}")
-    print("As the total number of XS, so good")
-    with timer("  bwd: vjp F@phi", verbose=False):
-        value_F, vjp_fn_F = jax.vjp(F_phi, xs_tensor)
-        dF_dp_phi = vjp_fn_F(phi_adj)[0]
-        term2 = (1/k) * dF_dp_phi
-    #print(f"Generated the second term, {term2}, \n which has size {term2.size}")
-    
-    numerator = term1 - term2 """
 
     with timer("  bwd: denominator", verbose=False):
         phiadj_F_phi = phi_adj @ Fphi  # this is a scalar (dot product of two vectors)
-    #print(f"Generated the adj x F x fwd, {phiadj_F_phi}, \n which has size {phiadj_F_phi.size}")    
         denominator =  (1/k**2) * phiadj_F_phi
-    #print(f" so the denominator is {denominator}")
+    
     dk_dp = - numerator / denominator
-    #print(f"The gradient dk/dp is {dk_dp}, with size {dk_dp.size}" )
-    #print(f"The gradient dL/dk is {dL_dk}, with size {dL_dk.size}" )
-    dL_dp = dL_dk * dk_dp
-    #print(f"so, dL/dp is {dL_dp}, with size {dL_dp.size}")
-    dL_dxs_tensor = dL_dp
+    dL_dxs_tensor = dL_dk * dk_dp
     return (dL_dxs_tensor, None, None)  # only return gradients for xs_tensor; the other two inputs have no gradients
 
-# this function represents what the solver does when called 
-# outside of differentiation context.
+# this function represents what the solver does when called outside of differentiation context.
 @jax.custom_vjp
 def NTdiff_solver(xs_tensor, params_raw_single, sample_id):
-    keff, _ = _NTdiff_fwd(xs_tensor, params_raw_single, sample_id)  # only care about the primal output
+    keff, _ = _NTdiff_fwd(xs_tensor, params_raw_single, sample_id) 
     return keff    
-
 
 NTdiff_solver.defvjp(_NTdiff_fwd, _NTdiff_bwd)
 
@@ -251,13 +215,11 @@ def compute_batch_baselines(params_raw: np.ndarray, geo: GeometryConfig) -> jnp.
     """
     baselines = []
     for i in range(params_raw.shape[0]):
-        # Build a modified GEO for this sample's parameters
-        geo_i = update_geo(geo, params_raw[i]) 
-        #print(f"insight on geom {geo_i}")
+        # Build a modified GEO for this sample's raw parameters vector
+        geo_i = update_geo(geo, params_raw[i]) #
         xs_i  = predict_xs(geo_i)        # regression function
-        #print(f"working? first elem {xs_i[0]}")
         baselines.append(xs_i)
-    #print(f"the size of the baseline array is {baselines[0]}")    
+
     return jnp.array(np.stack(baselines), dtype=jnp.float32)  # [batch, 3, 12]
 
 def update_geo(geo: GeometryConfig, params_raw: np.ndarray) -> GeometryConfig:
@@ -545,7 +507,6 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         total_pct = 0.0
         all_keff_pred = []
         all_keff_ref  = []
-        # UNDERSTAND HOW IS THIS LOOP REPEATED
         for batch_idx, (batch_geoms, batch_keffs, batch_rawparams) in enumerate(data_loader(geoms_np, keffs_np, rawparams_np, batch_size=batch_size)):
             # the batch index is always 0 because the test set is smaller than the batch size, so we only have one batch containing the whole test set.
             keff_pred, _ = model(jnp.array(batch_geoms), batch_rawparams, training=False)   # no training=True → no stochasticity
@@ -570,7 +531,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     log_path = "./LOGS/keff_epoch_log.csv"
     log_file  = open(log_path, "w", newline="")
     log_writer = csv.writer(log_file)
-    log_writer.writerow(["epoch", "sample_idx", "keff_openmc", "keff_peds", "delta_rho_pcm"])
+    log_writer.writerow(["epoch", "sample_idx", "keff_openmc", "keff_peds", "delta_rho_pcm",  "epoch_train_loss", "epoch_val_loss"])
 
     for epoch in range(epochs):
         epoch_loss = 0.0
@@ -628,7 +589,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         # ── Write per-sample keff values to the log file ─────────────────────
         for s_idx, (k_ref, k_pred) in enumerate(zip(keff_refs, keff_preds)):
             delta_rho_pcm = abs((k_pred - k_ref) / (k_pred * k_ref)) * 1e5   # ✅ correct
-            log_writer.writerow([epoch + 1, s_idx, f"{k_ref:.6f}", f"{k_pred:.6f}", f"{delta_rho_pcm:.1f}"])
+            log_writer.writerow([epoch + 1, s_idx, f"{k_ref:.6f}", f"{k_pred:.6f}", f"{delta_rho_pcm:.1f}", avg_train_loss, avg_val_loss])
         log_file.flush()   # write to disk immediately, so you can tail the file during a long run
                 
         print(f"this is batch iteration {iterations + 1} with the average train loss {avg_train_loss:.4f}, the average validation loss {avg_val_loss:.4f} and the average percentage error {avg_pct_err:.4f} \n")
