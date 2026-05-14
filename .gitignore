@@ -29,3 +29,8 @@ modules/fullcode_perp.py
 modules/NThelper.py
 modules/LOGS/
 reg_and_data
+gradient_fd_check.py
+grad_check_output.txt
+checkTrainingdata.ipynb
+LOGS/
+FILES/

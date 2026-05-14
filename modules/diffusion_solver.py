@@ -34,7 +34,7 @@ META_PATH      = DATA_FOLDER / 'full_results_meta.json'
 REG_MODEL_PATH = DATA_FOLDER / 'polyreg_model'
 
 OUT_FOLDER = 'reg_and_data/output/CR'
-PLOT_OUTPUT= "plots/fixed_CR_fluxes.png"
+PLOT_OUTPUT= "LOGS/fluxes_plots/fixed_CR_fluxes.png"
 
 META_PATH = Path(str(DATA_PATH).replace('.csv', '_meta.json'))
 
@@ -671,7 +671,7 @@ def get_xs_basedon_geo(geo: GeometryConfig,):
     #_print_xs_summary(xs_tensor, geo)
     return xs_tensor
 
-def run_diffusion_solver(xs_tensor, geo, plot_output="plots/fluxes.png"):
+def run_diffusion_solver(xs_tensor, geo: GeometryConfig, plot_output="plots/fluxes.png"):
     start_time = time.time()
     #_print_config(geo)
     R             = geo.boundaries[-1].radius
@@ -699,9 +699,34 @@ def run_diffusion_solver(xs_tensor, geo, plot_output="plots/fluxes.png"):
         BC_coeffs, geometry_code
     )
 
-    # ── 6. Normalise and post-process ─────────────────────────────────────────
+    # ── Rescale to volume-integrated normalization ──────────────────
+    # phi_fwd_unit has shape [G, I], phi values at cell centers
+    # Rescale so that sum_g sum_i phi[g,i] * V[i] = 1
+    # This gives physically meaningful flux magnitudes for the VJP.
+    R = geo.boundaries[-1].radius
+    I = int(R / geo.mesh_size)
+    Delta_r = geo.mesh_size
+
+    geometry_code = GEOMETRY_CODE[geo.geometry]
+    edges = np.arange(I + 1) * Delta_r
+
+    if geometry_code == 1:   # cylindrical
+        V = np.pi * (edges[1:]**2 - edges[:-1]**2)   # shape [I]
+    elif geometry_code == 2: # spherical
+        V = (4/3) * np.pi * (edges[1:]**3 - edges[:-1]**3)
+    else:                    # slab
+        V = np.ones(I) * Delta_r
+
+    # Volume-weighted norm: sum over all groups and cells
+    vol_norm_fwd = np.sum(phi_fwd * V[np.newaxis, :])  # scalar
+    vol_norm_adj = np.sum(phi_adj * V[np.newaxis, :])  # scalar
+
+    phi_fwd = phi_fwd / vol_norm_fwd   # now sum(phi * V) = 1
+    phi_adj = phi_adj / vol_norm_adj   # same for adjoint
+
+    """ # ── 6. Normalise and post-process ─────────────────────────────────────────
     phi_fwd_norm = normalize_group_fluxes(phi_fwd)
-    phi_adj_norm = normalize_group_fluxes(phi_adj)
+    phi_adj_norm = normalize_group_fluxes(phi_adj) """
 
     elapsed = time.time() - start_time
     #_print_results(k_fwd, k_adj, phi_fwd_norm, phi_adj_norm, x, geo, elapsed)
@@ -709,7 +734,7 @@ def run_diffusion_solver(xs_tensor, geo, plot_output="plots/fluxes.png"):
     # ── 7. Plot ───────────────────────────────────────────────────────────────
     #_plot_fluxes(x, geo, phi_fwd_norm, phi_adj_norm, plot_output=PLOT_OUTPUT)
 
-    return k_fwd, phi_fwd_norm, phi_adj_norm
+    return k_fwd, phi_fwd, phi_adj
 
 if __name__ == '__main__':
     xs_tensor = get_xs_basedon_geo(GEO)

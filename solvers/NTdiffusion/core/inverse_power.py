@@ -3,7 +3,7 @@ from scipy.linalg import lu_factor, lu_solve
 
 # from  LU_factor import LU_factor, LU_solve
 
-def inverse_power(A, B, epsilon=1e-6):
+def inverse_power(A, B, epsilon=1e-10):
     
     '''
     Solve the generalized eigenvalue problem Ax = lB
@@ -47,7 +47,7 @@ def inverse_power(A, B, epsilon=1e-6):
 
     return sign/l, x
 
-def inverse_power_adjoint_old(A, B, epsilon=1e-6):
+def inverse_power_adjoint_old(A, B, epsilon=1e-10):
     '''
     Solve the ADJOINT generalized eigenvalue problem A^T x = l B^T x
     using the inverse power iteration algorithm.
@@ -86,7 +86,7 @@ def inverse_power_adjoint_old(A, B, epsilon=1e-6):
     sign = b_0s[iteration-1] / b_0s[iteration-2]
     return sign/l, x
 
-def inverse_power_adjoint(A, B, epsilon=1e-6, V=None):
+def inverse_power_adjoint(A, B, epsilon=1e-10, V=None):
     '''
     Solve the ADJOINT generalized eigenvalue problem.
     For curvilinear geometries (sphere/cylinder), pass V (volume array)

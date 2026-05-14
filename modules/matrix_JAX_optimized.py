@@ -136,7 +136,11 @@ def Aphi_Fphi_scan(xs_tensor, geo_data, lay, phi):
         out   : (Aphi_i [G], Fphi_i [G]) — contribution at cell i
         """
         reg      = region_of_cell[i]
-        reg_next = region_of_cell[jnp.minimum(i + 1, I - 1)]
+        reg_next = jax.lax.cond(
+            i < I - 1,
+            lambda: region_of_cell[i + 1],
+            lambda: region_of_cell[i],      # last cell: use same region
+        )
 
         D_g      = xs_tensor[reg, lay['D']]                          # [G]
         D_g_next = xs_tensor[reg_next, lay['D']]                     # [G]
@@ -154,7 +158,7 @@ def Aphi_Fphi_scan(xs_tensor, geo_data, lay, phi):
 
         # ── A @ phi contribution at row (g, i) ─────────────────────────
         # Σ_s_out[g] = sum_{g'≠g} Σ_s[g, g']  (scatter out of g)
-        Sig_s_out = jnp.sum(Sig_s, axis=1) - jnp.diag(Sig_s)        # [G]
+        Sig_s_out = jnp.sum(Sig_s, axis=0) - jnp.diag(Sig_s)        # [G]
         diag_coef = Dplus * S[i+1] / (Delta_r * V[i]) + Sig_a + Sig_s_out
 
         Aphi_i  = diag_coef * phi_i                                  # diagonal
@@ -167,7 +171,8 @@ def Aphi_Fphi_scan(xs_tensor, geo_data, lay, phi):
         # Scatter-in: A.at[idx(g,i), idx(gp,i)].add(-Sig_s[gp, g])
         # → (A@phi)[g,i] += sum_{g'≠g} -Sig_s[g', g]*phi[g', i]
         #                 = -(Sig_s.T @ phi_i)[g] + Sig_s[g,g]*phi_i[g]
-        Aphi_i += -(Sig_s.T @ phi_i) + jnp.diag(Sig_s) * phi_i
+
+        Aphi_i -= Sig_s.T @ phi_i - jnp.diag(Sig_s) * phi_i  # exclude self
 
         # ── F @ phi contribution at row (g, i) ─────────────────────────
         # F[idx(g,i), idx(g',i)] = chi[g] * nuSigf[g']

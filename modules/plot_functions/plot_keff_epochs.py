@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import matplotlib.pyplot as plt
 
-log_path="../LOGS/good_keff_epoch_log.csv"
+log_path="../LOGS/keff_epoch_log.csv"
 
 def plot_keff_pcm(log_path, save_path="../LOGS/keff_pcm_evolution.png"):
     import pandas as pd
