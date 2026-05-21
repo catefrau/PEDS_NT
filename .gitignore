@@ -34,3 +34,4 @@ grad_check_output.txt
 checkTrainingdata.ipynb
 LOGS/
 FILES/
+*.npz

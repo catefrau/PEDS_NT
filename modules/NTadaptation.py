@@ -48,10 +48,10 @@ from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import diffusion_setup, r
 # ─────────────────────────────────────────────
 # SECTION 0: variables initiation and global constants
 # ─────────────────────────────────────────────
-train_size    = 15
-test_size     = 5
+train_size    = 100
+test_size     = 30
 batch_size    = train_size
-epochs        = 10
+epochs        = 1
 # predict the XS with the polynomial reg built in the other code
 # acts as a first guess???
 # TODO remove this and thefunction used 
@@ -477,25 +477,26 @@ def diagnose_scan_autodiff(xs_tensor, geo_data, phi_fwd, phi_adj, k):
         for m, xname in enumerate(xs_type_names):
             a = float(grad_analytic[r, m])
             f = float(grad_fd[r, m])
-            if (abs(f) < 1e-6 or abs(f) == 0) or (abs(a) < 1e-6 or abs(a) == 0):
+            """ if (abs(f) < 1e-6 or abs(f) == 0) or (abs(a) < 1e-6 or abs(a) == 0):
                 continue
             if abs(xs_np[r, m]) < abs_floor:
-                continue
+                continue """
             rel = abs(a - f) / (abs(f) + 1e-30)
-            all_rel.append(rel)
             
             ref_scale = max(abs(a), abs(f))
             if ref_scale <= grad_noise_floor:
-                flag = "~"  # both are float32 noise — skip
+                flag = "noise"  # both are float32 noise — skip
                 #continue    # <-- add this to exclude from allrel
-            elif abs(f) < grad_noise_floor and abs(a) >= grad_noise_floor:
+            elif abs(f) < grad_noise_floor or abs(f) == 0: # and abs(a) >= grad_noise_floor:
                 flag = " FD_UNRESOLVED"     # AD sees it, float32 FD cannot
-            elif abs(a) < grad_noise_floor and abs(f) >= grad_noise_floor:
+            elif abs(a) < grad_noise_floor or abs(a) == 0: # and abs(f) >= grad_noise_floor:
                 flag = " AD_ZERO !"         # AD blind to something FD finds
             elif rel > 0.05:
                 flag = " !"
             else:
                 flag = ""
+                all_rel.append(rel)
+
                 
             eps_i = float(eps_used[r, m])
             xs_val = float(xs_np[r, m])
@@ -504,7 +505,7 @@ def diagnose_scan_autodiff(xs_tensor, geo_data, phi_fwd, phi_adj, k):
     if all_rel:
         print(f"\n  Max rel error  : {max(all_rel):.3e}")
         mean_re = sum(all_rel)/len(all_rel)
-        print(f"  Mean rel error : {mean_re:.3e} (target < 1e-2)")
+        print(f"  Mean rel error : {mean_re:.3e} (target < 1e-2 in relevant)")
         if mean_re < 1e-2:
             print("  ✅ Scan autodiff is CORRECT — bug is elsewhere in the pipeline")
         else:
@@ -588,31 +589,23 @@ def diagnose_full_vjp(xs_tensor, params_raw_single, sample_id, rel_eps=1e-2, abs
             a = float(grad_analytic[r, m])
             f = float(grad_fd[r, m])
             ref_scale = max(abs(a), abs(f))
-            if ref_scale < grad_noise_floor:
-                continue  
-            if abs(f) < 1e-10 and abs(a) < 1e-10:
-                continue
-            if abs(xs_np[r, m]) < abs_floor:
-                continue
             rel = abs(a - f) / (abs(f) + 1e-30)
-            all_rel.append(rel)
-
-            refscale = max(abs(a), abs(f))
-            if refscale < grad_noise_floor:
-                flag = "  (noise)"
-            elif abs(f) < grad_noise_floor and abs(a) > grad_noise_floor:
-                flag = "  FD-UNRESOLVED"
-            elif abs(a) < grad_noise_floor and abs(f) > grad_noise_floor:
-                flag = "  ADZERO !"
+            if ref_scale < grad_noise_floor:
+                flag = "  noise!"  
+            elif abs(f) < grad_noise_floor or abs(f) == 0 and abs(a) >= grad_noise_floor:
+                flag = " FD_UNRESOLVED"     # AD sees it, float32 FD cannot
+            elif abs(a) < grad_noise_floor or abs(a) == 0 and abs(f) >= grad_noise_floor:
+                flag = " AD_ZERO !" 
             elif rel > 0.05:
                 flag = "  !"
             else:
                 flag = ""
+                all_rel.append(rel)
 
             label = f"{r_name}/{x_name}"
             eps_i = float(eps_used[r, m])
             xs_val = float(xs_np[r, m])
-            print(f"  {label:<22} {xs_val:>10.3e} {eps_i:>10.2e} {a:>12.4e} {f:>12.4e} {rel:>10.2e}{flag}")
+            print(f"  {label:<22} {xs_val:>10.3e} {eps_i:>10.2e} {a:>12.3e} {f:>12.3e} {rel:>10.2e}{flag}")
 
     print(f"  {'-'*70}")
     if all_rel:
@@ -1275,7 +1268,7 @@ if __name__ == "__main__":
 
     # ── Hyperparameters (from config_experiment.py / config_model.py) ─────
     HP = dict(
-        filepath      = "../data/highfidelity/NT_smallMCrun.npz",  # adjust path as needed
+        filepath      = "../data/highfidelity/MCruns.npz",  # adjust path as needed
         train_size    = train_size,
         test_size     = test_size,
         batch_size    = batch_size,
