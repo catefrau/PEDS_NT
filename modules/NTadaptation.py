@@ -48,10 +48,18 @@ from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import diffusion_setup, r
 # ─────────────────────────────────────────────
 # SECTION 0: variables initiation and global constants
 # ─────────────────────────────────────────────
-train_size    = 30
-test_size     = 5
-batch_size    = 10
-epochs        = 12
+train_size    = 300
+test_size     = 50
+batch_size    = 50
+epochs        = 50
+N_WORKERS = int(os.environ.get("SLURM_CPUS_PER_TASK", 4))
+
+# Redirect all print output to a log file
+loggy_file = open("training_log.txt", "w", buffering=1)  # buffering=1 = write every line immediately
+sys.stdout = loggy_file
+sys.stderr = loggy_file
+print("JAX devices:", jax.devices())
+print("Backend:", jax.default_backend())
 
 # predict the XS with the polynomial reg built in the other code
 # acts as a first guess???
@@ -59,7 +67,6 @@ epochs        = 12
 XS_BASELINE = get_xs_basedon_geo(GEO)  # HERE I WILL ADD THE NN CONTRIB
 XS_BASELINE = jnp.array(XS_BASELINE, dtype=jnp.float32)   # convert to JAX
 # ----------------------
-
 GEO_DATA = precompute_geometry(GEO)
 # Side channel to store the geometry information for each run — indexed by sample position in batch
 _GEO_DATA_CACHE = {}
@@ -144,6 +151,179 @@ def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
     return np.float32(k), phi_fwd_flat.astype(np.float32), \
            phi_adj_flat.astype(np.float32)
 
+
+# this is the function that runs when gradients are being computed
+def _NTdiff_fwd(xs_tensor, params_raw_single, sample_id):
+    """Forward pass: run the solver and save the residuals (input, output) for the backward.
+    Args:
+        XS_tensor: [batch, num_regions x M] neutron cross-sections (NN prediction), 
+        to be assigned to specific cells in A,F matrixes 
+    Returns:
+        k_fwd: scalar, dominant eigenvalue from forward solve
+        phi: [batch, N]  — steady-state neutron flux evolution over space
+    """
+    geo_i    = update_geo(GEO, np.array(params_raw_single))
+
+    R      = geo_i.boundaries[-1].radius
+    I      = int(R / geo_i.mesh_size)
+
+    N_flat = geo_i.G * (I + 1)   # total size of flux vector
+
+    keff, phi_fwd, phi_adj = jax.pure_callback(
+        _run_NT_solver,
+        (
+            jax.ShapeDtypeStruct((),        jnp.float32),
+            jax.ShapeDtypeStruct((N_flat,), jnp.float32),
+            jax.ShapeDtypeStruct((N_flat,), jnp.float32),
+        ),
+        xs_tensor,  params_raw_single, sample_id
+    )  
+    
+    geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
+    _, Fphi = Aphi_Fphi_scan(xs_tensor, geo_data, SLAY, phi_fwd)
+
+    residuals = (xs_tensor, keff, phi_fwd, phi_adj, Fphi, sample_id)        
+    # primal must match exactly what NTdiff_solver returns
+    return keff, residuals
+
+
+def _NTdiff_bwd(residuals, g):
+    """
+    Custom backward pass.
+    Args:
+        residuals: the residuals saved by _NTdiff_fwd
+        g:   scalar, dL/dk arriving from the loss function
+             (= k - k_ref  when loss is MSE)
+    Returns:
+        dL/d(xs_tensor), shape [batch, M]
+    """
+    xs_tensor, k, phi_fwd, phi_adj, Fphi, sample_id = residuals
+    geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
+    dL_dk = g  
+
+    # --- define the two matrix-vector functions ---
+    # TODO phi_fwd is captured from outer scope (treated as constant)    
+    def AF_phi(xs):
+        with timer("  (Matrixes building part)", verbose=False):
+            return Aphi_Fphi_scan(xs, geo_data, SLAY, phi_fwd)  # returns (Aphi, Fphi)
+        
+    with timer("  bwd: vjp A@phi, F@phi", verbose=False):
+        _, vjp_fn = jax.vjp(AF_phi, xs_tensor)
+        numerator, = vjp_fn((phi_adj, -(1.0 / k) * phi_adj))
+
+    with timer("  bwd: denominator", verbose=False):
+        phiadj_F_phi = phi_adj @ Fphi  # this is a scalar (dot product of two vectors)
+        denominator =  (1/k**2) * phiadj_F_phi
+    
+    dk_dp = - numerator / denominator
+    dL_dxs_tensor = dL_dk * dk_dp
+
+    return (dL_dxs_tensor, None, None)  # only return gradients for xs_tensor; the other two inputs have no gradients
+
+# this function represents what the solver does when called outside of differentiation context.
+@jax.custom_vjp
+def NTdiff_solver(xs_tensor, params_raw_single, sample_id):
+    keff, _ = _NTdiff_fwd(xs_tensor, params_raw_single, sample_id) 
+    return keff    
+
+NTdiff_solver.defvjp(_NTdiff_fwd, _NTdiff_bwd)
+
+# ─────────────────────────────────────────────
+# SECTION 2: Utils: timings, geometry updates, sanity checks
+# ─────────────────────────────────────────────
+
+# Global registry — stores all measured times
+_TIMINGS = defaultdict(list)
+
+@contextmanager
+def timer(label: str, verbose: bool = True):
+    """
+    Context manager that measures wall time and stores it.
+    Usage:  with timer("forward pass"):
+                result = model(x)
+    """
+    start = time.perf_counter()
+    yield
+    elapsed = time.perf_counter() - start
+    _TIMINGS[label].append(elapsed)
+    if verbose:
+        print(f"  ⏱  {label:<35s} {elapsed*1000:.1f} ms")
+
+def print_timing_report():
+    """Print a summary of all measured times after training."""
+    print("\n" + "="*60)
+    print(f"{'TIMING REPORT':^60}")
+    print("="*60)
+    print(f"{'Step':<35s} {'calls':>6s} {'total(s)':>10s} {'mean(ms)':>10s} {'min(ms)':>10s}")
+    print("-"*60)
+    for label, times in sorted(_TIMINGS.items()):
+        total   = sum(times)
+        mean_ms = (total / len(times)) * 1000
+        min_ms  = min(times) * 1000
+        print(f"{label:<35s} {len(times):>6d} {total:>10.2f} {mean_ms:>10.1f} {min_ms:>10.1f}")
+    print("="*60)
+
+
+def compute_batch_baselines(params_raw: np.ndarray, geo: GeometryConfig) -> jnp.ndarray:
+    """
+    params_raw: [batch, 6] — un-normalized geometry parameters
+    Returns: [batch, 3, 12] — regression-predicted XS for each sample
+    """
+    baselines = []
+    for i in range(params_raw.shape[0]):
+        # Build a modified GEO for this sample's raw parameters vector
+        geo_i = update_geo(geo, params_raw[i]) #
+        xs_i  = predict_xs(geo_i)        # regression function
+        baselines.append(xs_i)
+
+    return jnp.array(np.stack(baselines), dtype=jnp.float32)  # [batch, 3, 12]
+
+def update_geo(geo: GeometryConfig, params_raw: np.ndarray) -> GeometryConfig:
+    """
+    Build a new GeometryConfig from a single raw parameter vector.
+    params_raw: [6] — [b4c_outer_r, cr_fraction, fuel_outer_r, enrichment, f_mod, water_outer_r]
+    """
+    new_boundaries = (
+        BoundarySpec(name='CR_outer',         radius=float(params_raw[0])),
+        BoundarySpec(name='core_outer',       radius=float(params_raw[2])),
+        BoundarySpec(name='moderator_outer',  radius=float(params_raw[5])),
+    )
+    new_mat = MatProperties(
+        cr_fraction = float(params_raw[1]),
+        enrichment  = float(params_raw[3]),
+        f_mod       = float(params_raw[4]),
+    )
+    return GeometryConfig(
+        G              = geo.G,
+        regions        = geo.regions,
+        boundaries     = new_boundaries,
+        geometry       = geo.geometry,
+        mat_properties = new_mat,
+        bc             = geo.bc,
+        mesh_size      = geo.mesh_size,
+    )
+
+def physics_sanity_check(xs_baseline, params_raw_single, sample_id):
+    """
+    Check gradient signs against physical intuition.
+    Run these BEFORE finite differences — they're faster to interpret.
+    """
+    xs = jnp.array(xs_baseline, dtype=jnp.float32)
+    _, vjp_fn = jax.vjp(NTdiff_solver, xs, params_raw_single, sample_id)
+    grad = np.array(vjp_fn(jnp.ones(()))[0])   # shape (3, 12)
+
+    lay = xs_layout(2)   # G=2
+    print("=== Physics Sanity Check ===")
+
+    for reg_idx, reg_name in enumerate(['b4c_rod', 'fuel_annulus', 'water']):
+        d_keff_d_D      = grad[reg_idx, lay['D']]
+        d_keff_d_Siga   = grad[reg_idx, lay['Sigma_a']]
+        d_keff_d_nuSigf = grad[reg_idx, lay['nuSigma_f']]
+
+        print(f"\nRegion: {reg_name}")
+        print(f"  ∂keff/∂D         = {d_keff_d_D}")
+        print(f"  ∂keff/∂Σ_a       = {d_keff_d_Siga}")
+        print(f"  ∂keff/∂νΣ_f      = {d_keff_d_nuSigf}")
 
 def check_eigenvalue_residual_vs_solver(xs_tensor, geo_i, phi_fwd_flat, k):
     """
@@ -564,7 +744,7 @@ def diagnose_full_vjp(xs_tensor, params_raw_single, sample_id, rel_eps=1e-2, abs
     # --- Step 3: finite difference on NTdiffsolver directly ---
     # We call the solver as a scalar function: xs -> k
     def scalar_fn1(xs_in):
-        Aphi, Fphi = Aphi_Fphi_scan(xs_in, geodata, SLAY, phifwd_frozen)
+        Aphi, Fphi = Aphi_Fphi_scan(xs_in, geodata, SLAY, phi_fwd_frozen)
         return float(jnp.dot(phiadj_frozen, Aphi - (1.0 / k_frozen) * Fphi))
 
     _, Fphi_frozen = Aphi_Fphi_scan(xs, geodata, SLAY, phi_fwd_frozen)
@@ -639,179 +819,6 @@ def diagnose_full_vjp(xs_tensor, params_raw_single, sample_id, rel_eps=1e-2, abs
             print("    → Check: denominator (phiadj·F·phi), dAterm/dFterm chain, sign of numerator")
     print("=" * 65)
 
-# this is the function that runs when gradients are being computed
-def _NTdiff_fwd(xs_tensor, params_raw_single, sample_id):
-    """Forward pass: run the solver and save the residuals (input, output) for the backward.
-    Args:
-        XS_tensor: [batch, num_regions x M] neutron cross-sections (NN prediction), 
-        to be assigned to specific cells in A,F matrixes 
-    Returns:
-        k_fwd: scalar, dominant eigenvalue from forward solve
-        phi: [batch, N]  — steady-state neutron flux evolution over space
-    """
-    geo_i    = update_geo(GEO, np.array(params_raw_single))
-
-    R      = geo_i.boundaries[-1].radius
-    I      = int(R / geo_i.mesh_size)
-
-    N_flat = geo_i.G * (I + 1)   # total size of flux vector
-
-    keff, phi_fwd, phi_adj = jax.pure_callback(
-        _run_NT_solver,
-        (
-            jax.ShapeDtypeStruct((),        jnp.float32),
-            jax.ShapeDtypeStruct((N_flat,), jnp.float32),
-            jax.ShapeDtypeStruct((N_flat,), jnp.float32),
-        ),
-        xs_tensor,  params_raw_single, sample_id
-    )  
-    
-    geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
-    _, Fphi = Aphi_Fphi_scan(xs_tensor, geo_data, SLAY, phi_fwd)
-
-    residuals = (xs_tensor, keff, phi_fwd, phi_adj, Fphi, sample_id)        
-    # primal must match exactly what NTdiff_solver returns
-    return keff, residuals
-
-
-def _NTdiff_bwd(residuals, g):
-    """
-    Custom backward pass.
-    Args:
-        residuals: the residuals saved by _NTdiff_fwd
-        g:   scalar, dL/dk arriving from the loss function
-             (= k - k_ref  when loss is MSE)
-    Returns:
-        dL/d(xs_tensor), shape [batch, M]
-    """
-    xs_tensor, k, phi_fwd, phi_adj, Fphi, sample_id = residuals
-    geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
-    dL_dk = g  
-
-    # --- define the two matrix-vector functions ---
-    # TODO phi_fwd is captured from outer scope (treated as constant)    
-    def AF_phi(xs):
-        with timer("  (Matrixes building part)", verbose=False):
-            return Aphi_Fphi_scan(xs, geo_data, SLAY, phi_fwd)  # returns (Aphi, Fphi)
-        
-    with timer("  bwd: vjp A@phi, F@phi", verbose=False):
-        _, vjp_fn = jax.vjp(AF_phi, xs_tensor)
-        numerator, = vjp_fn((phi_adj, -(1.0 / k) * phi_adj))
-
-    with timer("  bwd: denominator", verbose=False):
-        phiadj_F_phi = phi_adj @ Fphi  # this is a scalar (dot product of two vectors)
-        denominator =  (1/k**2) * phiadj_F_phi
-    
-    dk_dp = - numerator / denominator
-    dL_dxs_tensor = dL_dk * dk_dp
-
-    return (dL_dxs_tensor, None, None)  # only return gradients for xs_tensor; the other two inputs have no gradients
-
-# this function represents what the solver does when called outside of differentiation context.
-@jax.custom_vjp
-def NTdiff_solver(xs_tensor, params_raw_single, sample_id):
-    keff, _ = _NTdiff_fwd(xs_tensor, params_raw_single, sample_id) 
-    return keff    
-
-NTdiff_solver.defvjp(_NTdiff_fwd, _NTdiff_bwd)
-
-# ─────────────────────────────────────────────
-# SECTION 2: Utils: timings, geometry updates, sanity checks
-# ─────────────────────────────────────────────
-
-# Global registry — stores all measured times
-_TIMINGS = defaultdict(list)
-
-@contextmanager
-def timer(label: str, verbose: bool = True):
-    """
-    Context manager that measures wall time and stores it.
-    Usage:  with timer("forward pass"):
-                result = model(x)
-    """
-    start = time.perf_counter()
-    yield
-    elapsed = time.perf_counter() - start
-    _TIMINGS[label].append(elapsed)
-    if verbose:
-        print(f"  ⏱  {label:<35s} {elapsed*1000:.1f} ms")
-
-def print_timing_report():
-    """Print a summary of all measured times after training."""
-    print("\n" + "="*60)
-    print(f"{'TIMING REPORT':^60}")
-    print("="*60)
-    print(f"{'Step':<35s} {'calls':>6s} {'total(s)':>10s} {'mean(ms)':>10s} {'min(ms)':>10s}")
-    print("-"*60)
-    for label, times in sorted(_TIMINGS.items()):
-        total   = sum(times)
-        mean_ms = (total / len(times)) * 1000
-        min_ms  = min(times) * 1000
-        print(f"{label:<35s} {len(times):>6d} {total:>10.2f} {mean_ms:>10.1f} {min_ms:>10.1f}")
-    print("="*60)
-
-
-def compute_batch_baselines(params_raw: np.ndarray, geo: GeometryConfig) -> jnp.ndarray:
-    """
-    params_raw: [batch, 6] — un-normalized geometry parameters
-    Returns: [batch, 3, 12] — regression-predicted XS for each sample
-    """
-    baselines = []
-    for i in range(params_raw.shape[0]):
-        # Build a modified GEO for this sample's raw parameters vector
-        geo_i = update_geo(geo, params_raw[i]) #
-        xs_i  = predict_xs(geo_i)        # regression function
-        baselines.append(xs_i)
-
-    return jnp.array(np.stack(baselines), dtype=jnp.float32)  # [batch, 3, 12]
-
-def update_geo(geo: GeometryConfig, params_raw: np.ndarray) -> GeometryConfig:
-    """
-    Build a new GeometryConfig from a single raw parameter vector.
-    params_raw: [6] — [b4c_outer_r, cr_fraction, fuel_outer_r, enrichment, f_mod, water_outer_r]
-    """
-    new_boundaries = (
-        BoundarySpec(name='CR_outer',         radius=float(params_raw[0])),
-        BoundarySpec(name='core_outer',       radius=float(params_raw[2])),
-        BoundarySpec(name='moderator_outer',  radius=float(params_raw[5])),
-    )
-    new_mat = MatProperties(
-        cr_fraction = float(params_raw[1]),
-        enrichment  = float(params_raw[3]),
-        f_mod       = float(params_raw[4]),
-    )
-    return GeometryConfig(
-        G              = geo.G,
-        regions        = geo.regions,
-        boundaries     = new_boundaries,
-        geometry       = geo.geometry,
-        mat_properties = new_mat,
-        bc             = geo.bc,
-        mesh_size      = geo.mesh_size,
-    )
-
-def physics_sanity_check(xs_baseline, params_raw_single, sample_id):
-    """
-    Check gradient signs against physical intuition.
-    Run these BEFORE finite differences — they're faster to interpret.
-    """
-    xs = jnp.array(xs_baseline, dtype=jnp.float32)
-    _, vjp_fn = jax.vjp(NTdiff_solver, xs, params_raw_single, sample_id)
-    grad = np.array(vjp_fn(jnp.ones(()))[0])   # shape (3, 12)
-
-    lay = xs_layout(2)   # G=2
-    print("=== Physics Sanity Check ===")
-
-    for reg_idx, reg_name in enumerate(['b4c_rod', 'fuel_annulus', 'water']):
-        d_keff_d_D      = grad[reg_idx, lay['D']]
-        d_keff_d_Siga   = grad[reg_idx, lay['Sigma_a']]
-        d_keff_d_nuSigf = grad[reg_idx, lay['nuSigma_f']]
-
-        print(f"\nRegion: {reg_name}")
-        print(f"  ∂keff/∂D         = {d_keff_d_D}")
-        print(f"  ∂keff/∂Σ_a       = {d_keff_d_Siga}")
-        print(f"  ∂keff/∂νΣ_f      = {d_keff_d_nuSigf}")
-        
 # ─────────────────────────────────────────────
 # SECTION 2: Neural Network (Generator)
 # ─────────────────────────────────────────────
@@ -860,7 +867,7 @@ class GeneratorNN(nnx.Module):
 
         # Build layers as a plain Python list — nnx.Module discovers them
         # automatically via its attribute-scanning mechanism.
-        self.layers = [
+        self.layers = nnx.List([
             nnx.Linear(
                 in_features=layer_sizes[i],
                 out_features=layer_sizes[i + 1],
@@ -869,7 +876,7 @@ class GeneratorNN(nnx.Module):
                 rngs=rngs,          # rngs is passed here so each Linear gets
             )                        # its own unique initialisation key
             for i in range(len(layer_sizes) - 1)
-        ]
+        ])
         #  THE OUTPUT OF THE NN IS THE XS_TENSOR, WHICH HAS SIZE (N_regions, XS_per_region)
         self.n_regions    = n_regions     # 3  (b4c_rod, fuel_annulus, water)
         self.xs_per_region = xs_per_region  # 12  (4*G + G² for G=2)
@@ -967,13 +974,7 @@ class PEDSModel(nnx.Module):
                     jnp.array([i + sample_id_offset], dtype=jnp.int32), )         # (1,)   sample ID)   # pass (3, 12) slice
                 keffs.append(keff_i)
             keffs = jnp.stack(keffs)   # [batch]
-        """ keffs = jnp.stack([
-            NTdiff_solver_with_geo(xs_final[i], ALL_GEO_DATAS[sample_indices[i]])
-            for i in range(batch_size)
-        ]) """
 
-        #print(f"are these all the keffs together? {keffs}, its size is {keffs.size}") 
-        # same size as batch
         return keffs, xs_final
         #return keff, xs_tensor
 
@@ -1036,7 +1037,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         decay_steps=epochs,
         alpha=lr_min / lr_max,   # final lr = lr_max * alpha = lr_min
     )
-    optimizer = nnx.Optimizer(model, optax.adam(lr_schedule))     # nnx.Optimizer couples the model's parameters with an Optax update rule.
+    optimizer = nnx.Optimizer(model, optax.adam(lr_schedule), wrt=nnx.Param)     # nnx.Optimizer couples the model's parameters with an Optax update rule.
     
     # ── 5.3  Loss / gradient function ─────────────────────────────────────
     def loss_fn(model, geoms, keffs_true, rawparams_batch, xs_baselines_batch):
@@ -1122,7 +1123,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 #   1. Passes grads through the Optax chain (Adam moment updates, LR scaling)
                 #   2. Applies the resulting parameter updates in-place on the model.
                 with timer("train step: optimizer update"):
-                    optimizer.update(grads)
+                    optimizer.update(model, grads)
             
             # still inside the epoch loop 
             # ── Collect heatmap snapshot every HEATMAP_INTERVAL epochs ────────
@@ -1167,8 +1168,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 f"LR: {current_lr:.2e}"
             )
         # Periodically clear JAX's compilation cache to avoid memory creep
-        if (epoch + 1) % 50 == 0:
-            jax.clear_caches()
+        jax.clear_caches()
     
     print(f"the total number of iterations is {iterations}.")
     log_file.close()
