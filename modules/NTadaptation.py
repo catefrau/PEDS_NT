@@ -48,20 +48,26 @@ from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import diffusion_setup, r
 # ─────────────────────────────────────────────
 # SECTION 0: variables initiation and global constants
 # ─────────────────────────────────────────────
-train_size    = 100
-test_size     = 30
-batch_size    = train_size
-epochs        = 1
+train_size    = 30
+test_size     = 5
+batch_size    = 10
+epochs        = 12
+
 # predict the XS with the polynomial reg built in the other code
 # acts as a first guess???
 # TODO remove this and thefunction used 
 XS_BASELINE = get_xs_basedon_geo(GEO)  # HERE I WILL ADD THE NN CONTRIB
 XS_BASELINE = jnp.array(XS_BASELINE, dtype=jnp.float32)   # convert to JAX
+# ----------------------
 
 GEO_DATA = precompute_geometry(GEO)
 # Side channel to store the geometry information for each run — indexed by sample position in batch
 _GEO_DATA_CACHE = {}
 SLAY      = xs_layout(GEO.G) # Index slices for each XS type, given G groups
+
+# Fixed reference scale for the NN output — computed ONCE from the default geometry.
+# The NN learns log-ratio offsets relative to this scale; exp(0) * XS_SCALE = XS_SCALE at init.
+XS_SCALE = jnp.array(get_xs_basedon_geo(GEO), dtype=jnp.float32)  # shape (3, 12), constant
 
 _XS_CACHE: dict = {}
 HEATMAP_INTERVAL = 2
@@ -70,6 +76,20 @@ XS_HEATMAP_LABELS = []
 _xs_baseline_ref = [None]        # list-box so inner assignment doesn't shadow
 _snap_final      = None
 
+from collections import OrderedDict
+
+MAX_CACHE_SIZE = 256   # tune based on your RAM
+
+class LRUCache(OrderedDict):
+    def __init__(self, maxsize):
+        super().__init__()
+        self.maxsize = maxsize
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if len(self) > self.maxsize:
+            self.popitem(last=False)   # evict oldest entry
+
+_GEO_DATA_CACHE = LRUCache(maxsize=MAX_CACHE_SIZE)
 # ─────────────────────────────────────────────
 # SECTION 1: Physics Solver
 # ─────────────────────────────────────────────
@@ -803,6 +823,14 @@ def _hardtanh_correction(x):
     """
     return 0.5 * jnp.tanh(x)  # it only influences the output for 50%
 
+def _xs_log_scale_activation(x):
+    """Maps NN raw output to a log-ratio multiplier.
+    exp(0) = 1.0  →  XS_SCALE * 1.0 at init (identity start).
+    exp(+2) ≈ 7.4 →  up to ~7x the reference scale.
+    exp(-2) ≈ 0.14 → down to ~14% of the reference scale.
+    Always positive — no clipping needed; exp() is strictly > 0.
+    """
+    return x  # raw output; exp() is applied in PEDSModel.__call__
 
 class GeneratorNN(nnx.Module):
     """MLP that maps a flat geometry vector → a 2D conductivity field.
@@ -868,8 +896,10 @@ class GeneratorNN(nnx.Module):
         # Apply ReLU on all but the final layer
         for layer in self.layers[:-1]:
             x = nnx.relu(layer(x))        # nnx.relu is just jax.nn.relu, re-exported
-        x = self.layers[-1](x)  # Final layer: linear projection → clip to physical range
-        x = _hardtanh_correction(x)  # ensures κ > 0 everywhere; could have used softplus(x)
+        
+        x = self.layers[-1](x)  # Final layer: linear projection → raw log-ratio output
+        # No activation here! exp() is applied in PEDSModel.__call__ after multiplying by XS_SCALE.
+        # The NN just outputs unconstrained values; exp() in the caller guarantees positivity.
 
         # Reshape flat vector [batch, 6] → spatial grid [batch,6]
         batch_size = geoms.shape[0]
@@ -901,7 +931,7 @@ class PEDSModel(nnx.Module):
         self.n_regions = n_regions
         self.G = G
         
-    def __call__(self, geoms: jnp.ndarray, params_raw: np.ndarray, training: bool = False):
+    def __call__(self, geoms: jnp.ndarray, params_raw, xs_baselines, training: bool = False, sample_id_offset=0):
         """
         Args:
             geoms: [batch,6] binary pore geometry (flattened inside)
@@ -913,15 +943,11 @@ class PEDSModel(nnx.Module):
         batch_size = geoms.shape[0]
         geoms_flat = jnp.reshape(geoms, (batch_size, 6))  # flatten spatial dims
 
-        # Per-sample baselines from regression (NumPy, not traced by JAX)
-        with timer("forward: regression baselines", verbose=False):        
-            xs_baselines = compute_batch_baselines(params_raw, GEO)  # [batch, 3, 12]
-        
-        # NN learns corrections on top of each sample's own baseline
+        # NN outputs log-ratios relative to XS_SCALE (the fixed default-geometry reference).
+        # exp(0) * XS_SCALE = XS_SCALE at init; the NN freely learns any multiplier during training.
         with timer("forward: NN generated XS", verbose=False):
-            xs_corrections = self.generator(geoms_flat, training)  # [batch, 3, 12]
-        #print(f"example of this tensor {xs_tensor}")  
-        xs_final = xs_baselines * (1.0 + xs_corrections) # final mix
+            xs_log_ratios = self.generator(geoms_flat, training)       # [batch, 3, 12], values near 0 at init
+            xs_final = jnp.exp(xs_log_ratios) * xs_baselines              # [batch, 3, 12], always positive
         
         #print("RUNNING a gradients physics check ")
         #physics_sanity_check(xs_baselines[0])        
@@ -931,11 +957,14 @@ class PEDSModel(nnx.Module):
         with timer("forward: solver loop (all samples)", verbose=False):
             keffs = [] # runs a calc for each of the 10 and then stores
             for i in range(batch_size):
-                #print(f"the XS prediction for this geom is {xs_final[i]}")
-                #print(f"where the baseline is {XS_BASELINE} \n and the NN gen is {xs_corrections[i]}")
+                if i == 2:  # print the XS for the first sample in the batch as a sanity check
+                    print(f"the LOG RATIOS computed by the NN for this geom are {xs_log_ratios[i]}")
+                    print(f"\n AND THE XS PREDICTIONNNNNNNNN for this geom is {xs_final[i]}")
+                    print(f"for the id number {i}, the offset is {sample_id_offset}")
+
                 keff_i = NTdiff_solver(xs_final[i], 
                     jnp.array(params_raw[i], dtype=jnp.float32),       # (6,)   raw geometry
-                    jnp.array([i], dtype=jnp.int32), )         # (1,)   sample ID)   # pass (3, 12) slice
+                    jnp.array([i + sample_id_offset], dtype=jnp.int32), )         # (1,)   sample ID)   # pass (3, 12) slice
                 keffs.append(keff_i)
             keffs = jnp.stack(keffs)   # [batch]
         """ keffs = jnp.stack([
@@ -993,7 +1022,9 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         filepath, train_size, test_size, seed
     )   # train_geoms is a numpy array of shape (train_size, 6), while train_keffs is a numpy array of shape (train_size,) 
     print(f"  Train: {train_geoms.shape}  Test: {test_geoms.shape}")
-    
+    print(" THE NEW PRINTINGGGGGGGGG")
+    print(f"Train keff range: {train_keffs.min():.3f} – {train_keffs.max():.3f}")
+    print(f"Test  keff range: {test_keffs.min():.3f}  – {test_keffs.max():.3f}")
     # ── 5.2  Model & Optimiser ─────────────────────────────────────────────
     # nnx.Rngs(seed) creates a named-key container to get a fresh, unique PRNGKey.
     rngs  = nnx.Rngs(seed)
@@ -1007,15 +1038,13 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     )
     optimizer = nnx.Optimizer(model, optax.adam(lr_schedule))     # nnx.Optimizer couples the model's parameters with an Optax update rule.
     
-    # TODO move the call in a safer place
-    print(f"an example of a raw param set is {train_rawparams[0]}")
-
     # ── 5.3  Loss / gradient function ─────────────────────────────────────
-    def loss_fn(model, geoms, keffs_true, rawparams_batch):
+    def loss_fn(model, geoms, keffs_true, rawparams_batch, xs_baselines_batch):
         # model is passed explicitly so nnx.value_and_grad knows which pytree to differentiate with respect to.
-        keff_pred, _ = model(geoms, rawparams_batch, training=True) # keff predicted by PEDS model
-        print(f"the prediction gives a keff of {keff_pred.primal} (size {keff_pred.size}), compared to {keffs_true} (size {keffs_true.size})")
+        keff_pred, _ = model(geoms, rawparams_batch, xs_baselines_batch, training=True) # keff predicted by PEDS model
+        print(f"the prediction gives a keff of {keff_pred.primal} (size {keff_pred.size}), \n compared to {keffs_true} (size {keffs_true.size})")
         residuals = keff_pred - keffs_true # keff from the data batch
+        print(f"the residuals (pred - true) for this batch are {residuals}")
         return jnp.sum(residuals ** 2)   # Sum (not mean) MSE — consistent with original training.py
     # nnx.value_and_grad is the Flax-nnx analogue of jax.value_and_grad.
     # It differentiates `loss_fn` with respect to its FIRST argument (the model),
@@ -1030,9 +1059,12 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         total_pct = 0.0
         all_keff_pred = []
         all_keff_ref  = []
-        for batch_idx, (batch_geoms, batch_keffs, batch_rawparams) in enumerate(data_loader(geoms_np, keffs_np, rawparams_np, batch_size=batch_size)):
+        for batch_idx, (batch_geoms, batch_keffs, batch_rawparams, batch_xs_baselines) in enumerate(data_loader(geoms_np, keffs_np, rawparams_np, test_xs_baselines, batch_size=batch_size)):
             # the batch index is always 0 because the test set is smaller than the batch size, so we only have one batch containing the whole test set.
-            keff_pred, _ = model(jnp.array(batch_geoms), batch_rawparams, training=False)   # no training=True → no stochasticity
+            global_start = batch_idx * batch_size
+
+            keff_pred, _ = model(jnp.array(batch_geoms), batch_rawparams, 
+            xs_baselines=test_xs_baselines, training=False, sample_id_offset=global_start)   # no training=True → no stochasticity
             sq_err  = jnp.sum((keff_pred - batch_keffs) ** 2) # squared error
             pct_err = jnp.sum(jnp.abs(keff_pred - batch_keffs) / jnp.abs(batch_keffs) * 100.0) # percent error
             total_sq  += float(sq_err)
@@ -1042,6 +1074,11 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         n = len(keffs_np)
         return total_sq / n, total_pct / n, all_keff_pred, all_keff_ref   
         # mean over all test samples
+
+    print("Precomputing XS baselines for all samples (done once)...")
+    train_xs_baselines = compute_batch_baselines(train_rawparams, GEO)  # [train_size, 3, 12]
+    test_xs_baselines  = compute_batch_baselines(test_rawparams, GEO)   # [test_size,  3, 12]
+    print("Done.")
 
     # ── 5.5  Epoch loop ────────────────────────────────────────────────────
     train_losses   = []
@@ -1059,15 +1096,17 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     for epoch in range(epochs):
         epoch_loss = 0.0
         # these are the parameters used for the training loop
-        for batch_geoms, batch_keffs, batch_rawparams_tr in data_loader(train_geoms, train_keffs, train_rawparams, batch_size=batch_size):
+        for batch_geoms, batch_keffs, batch_rawparams_tr, batch_baselines in data_loader(
+            train_geoms, train_keffs, train_rawparams, train_xs_baselines, batch_size=batch_size):
             bp = jnp.array(batch_geoms) # Convert NumPy → JAX arrays once per batch 
             bk = jnp.array(batch_keffs)
+            bxs = jnp.array(batch_baselines)   
             print("Running forward pass + AD \n ")
             # Part of training: forward pass + automatic differentiation in one call.
             # `loss` is a scalar; `grads` is a pytree mirroring model's parameter tree.
             with timer("train step: forward+backward+update"):
                 with timer("train step: forward+loss+grad"):
-                    loss, grads = grad_fn(model, bp, bk, batch_rawparams_tr) # model is the call to PEDS 
+                    loss, grads = grad_fn(model, bp, bk, batch_rawparams_tr, bxs) # model is the call to PEDS 
                 if epoch % 2 == 0:
                     print(f"for this epoch {epoch}, the loss is {loss}, while the grads pytree structure is presented as follow:")
                     for i, leaf in enumerate(jax.tree.leaves(grads)):
@@ -1092,16 +1131,12 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 _snap_baseline    = np.array(predict_xs(_snap_geo_i))            # (3, 12) guaranteed
 
                 _snap_geom_flat   = jnp.array(train_geoms[0:1])                  # (1, 6)
-                _snap_corrections = np.array(
-                    model.generator(_snap_geom_flat, training=False)[0]          # (3, 12)
+                _snap_log_ratios = np.array(
+                    model.generator(_snap_geom_flat, training=False)[0]  # (3, 12), log-ratios
                 )
-                _snap_final = _snap_baseline * (1.0 + _snap_corrections)         # (3, 12)
+                _snap_final = np.exp(_snap_log_ratios) * np.array(XS_SCALE)  # (3, 12), absolute XS
 
-                # Freeze baseline reference on the very first snapshot
-                if _xs_baseline_ref[0] is None:
-                    _xs_baseline_ref[0] = _snap_baseline.copy()
-
-                XS_HEATMAP_SNAPSHOTS.append(_snap_corrections.copy())
+                XS_HEATMAP_SNAPSHOTS.append(_snap_log_ratios.copy())  # store log-ratios for heatmap
                 XS_HEATMAP_LABELS.append(f"Epoch {epoch + 1}")
 
         # Normalise by dataset size (matches `avg_loss` in training.py)
@@ -1143,7 +1178,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     print(f"[xs_heatmap] baseline ref is None: {_xs_baseline_ref[0] is None}")
     print(f"[xs_heatmap] number of snapshots collected: {len(XS_HEATMAP_SNAPSHOTS)}")
     print(f"[xs_heatmap] snapshot labels: {XS_HEATMAP_LABELS}")
-
+    print(f"CHECKING IF THE PLOT IS RUNNIG WITH {_xs_baseline_ref[0]} as the baseline and {_snap_final} as the final xs to plot")
     if _xs_baseline_ref[0] is not None and len(XS_HEATMAP_SNAPSHOTS) > 0:
         print(f"\nGenerating XS heatmap with {len(XS_HEATMAP_SNAPSHOTS)} snapshots …")
         print(f"saving it to ")
@@ -1273,8 +1308,8 @@ if __name__ == "__main__":
         test_size     = test_size,
         batch_size    = batch_size,
         epochs        = epochs,
-        lr_max        = 5e-4,   # cosine schedule peak learning rate
-        lr_min        = 5e-5,   # cosine schedule floor learning rate
+        lr_max        = 1e-3,   # cosine schedule peak learning rate
+        lr_min        = 1e-4,   # cosine schedule floor learning rate
         hidden_sizes  = [64, 32],  # matches model config m1
         n_regions    = 3,    # b4c_rod, fuel_annulus, water
         G            = 2,    # energy groups
@@ -1284,12 +1319,10 @@ if __name__ == "__main__":
     # ══════════════════════════════════════════════════════════
     # DEBUG BLOCK 
     # ══════════════════════════════════════════════════════════
-    print("Running gradient check BEFORE training...")
-    
+    """ print("Running gradient check BEFORE training...")
     # Load just one sample to test with
     (train_geoms, train_keffs, train_rawparams), _ = load_data(
-        HP["filepath"], HP["train_size"], HP["test_size"], seed=42
-    )
+        HP["filepath"], HP["train_size"], HP["test_size"], seed=42)
     
     xs_check     = jnp.array(XS_BASELINE, dtype=jnp.float32)
     params_check = jnp.array(train_rawparams[0], dtype=jnp.float32)
@@ -1304,7 +1337,6 @@ if __name__ == "__main__":
     # ── Step 1: Eigenvalue residual (math foundation) ─────────────────────
     print("\n--- Step 1: Eigenvalue Residual Check ---")
 
-    #############
     geo_i_check = update_geo(GEO, np.array(train_rawparams[0]))
     I_check = int(geo_i_check.boundaries[-1].radius / geo_i_check.mesh_size)
 
@@ -1373,7 +1405,7 @@ if __name__ == "__main__":
         jnp.array(phifwd_check), jnp.array(phiadj_check), k_check)
     
     print("--- Step 4: Full Custom VJP Check ---")
-    diagnose_full_vjp(xs_check, params_check, id_check)
+    diagnose_full_vjp(xs_check, params_check, id_check) """
         
     # ══════════════════════════════════════════════════════════
 

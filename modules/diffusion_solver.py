@@ -655,18 +655,16 @@ def get_xs_basedon_geo(geo: GeometryConfig,):
     BC_coeffs     = bc_to_coeffs(geo.bc)
 
     # r_div passed to legacy solver: first boundary if hetero, else R (homogeneous)
-    print(f"THE CONTENT OF THE BOUNDARIES IN GEO IS {geo.boundaries[:-1]}")
     #r_div = geo.boundaries[0].radius if not is_homogeneous(geo) else R
     # up to [-1] because the last radius is R and is already stored 
     r_divisions = [b.radius for b in geo.boundaries[:-1]] if not is_homogeneous(geo) else []
-    print(f"R DIVISIONS NOW ARE {r_divisions}")
 
     # ── 3. Predict XS ─────────────────────────────────────────────────────────
-    print("  Predicting XS via polynomial regression for the baseline …")
+    #print("  Predicting XS via polynomial regression for the baseline …")
     xs_tensor = predict_xs(geo)  # HERE I WILL ADD THE NN CONTRIB
-    print(f"  Predicted XS tensor shape: {xs_tensor.shape}  (N_regions={len(geo.regions)}, XS_per_region={xs_tensor.shape[1]})")
-    print(f"  XS layout (index slices): {xs_layout(geo.G)}")
-    print(f"the tensor is {xs_tensor}")
+    #print(f"  Predicted XS tensor shape: {xs_tensor.shape}  (N_regions={len(geo.regions)}, XS_per_region={xs_tensor.shape[1]})")
+    #rint(f"  XS layout (index slices): {xs_layout(geo.G)}")
+    #print(f"the tensor is {xs_tensor}")
     # NN_xs_tensor = NN(geo) -> add weighted contribution to xs_tensor
     #_print_xs_summary(xs_tensor, geo)
     return xs_tensor
