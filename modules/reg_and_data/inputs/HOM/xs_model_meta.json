@@ -1,0 +1,36 @@
+{
+  "geometry": "spherical",
+  "G": 2,
+  "input_cols": [
+    "dim_inner",
+    "enrichment",
+    "f_mod"
+  ],
+  "fixed_cols": [
+    "mode",
+    "geometry_type",
+    "G"
+  ],
+  "chi_cols": [
+    "mix_chi_g1",
+    "mix_chi_g2"
+  ],
+  "exclude_cols": [
+    "keff",
+    "keff_std"
+  ],
+  "xs_cols": [
+    "mix_diffusion-coefficient_g1",
+    "mix_diffusion-coefficient_g2",
+    "mix_absorption_g1",
+    "mix_absorption_g2",
+    "mix_nu-fission_g1",
+    "mix_nu-fission_g2",
+    "mix_scatter matrix_g1",
+    "mix_scatter matrix_g2",
+    "mix_scatter matrix_g3",
+    "mix_scatter matrix_g4",
+    "mix_chi_g1",
+    "mix_chi_g2"
+  ]
+}

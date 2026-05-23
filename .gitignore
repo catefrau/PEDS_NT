@@ -30,7 +30,8 @@ modules/NThelper.py
 modules/LOGS/plots_tokeep
 modules/LOGS/fluxes_plots
 modules/LOGS/geometry_plots
-reg_and_data
+reg_and_data/inputs/heter_regre_files/
+reg_and_data/inputs/HOM/
 gradient_fd_check.py
 grad_check_output.txt
 checkTrainingdata.ipynb
