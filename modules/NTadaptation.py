@@ -44,23 +44,27 @@ import multiprocessing as mp
 ctx = mp.get_context("spawn")   # explicit spawn context
 
 import functools
+import threading
+_csv_lock = threading.Lock()
 
 from matrix_JAX_optimized import diffusion_setup_jax, Aphi_Fphi_scan
 from config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
 from config_run import GEO_CYL as GEO
-from diffusion_solver import get_xs_basedon_geo, run_diffusion_solver, predict_xs, precompute_geometry, xs_layout, build_xs_callables
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from plot_functions.xs_heatmap import plot_xs_heatmap, plot_xs_subplots
 from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import diffusion_setup, region_index
+from solvers.NTdiffusion.diffusion_solver import (get_xs_basedon_geo, run_diffusion_solver, is_homogeneous,
+    predict_xs, precompute_geometry, xs_layout, build_xs_callables, fn_xs_per_region, bc_to_coeffs, GEOMETRY_CODE)
+
 
 # ─────────────────────────────────────────────
 # SECTION 0: variables initiation and global constants
 # ─────────────────────────────────────────────
 train_size    = 30
 test_size     = 5
-batch_size    = 10
-epochs        = 4
+batch_size    = 30
+epochs        = 40
 N_WORKERS = min(
     int(os.environ.get("SLURM_CPUS_PER_TASK", 4)),
     batch_size   # no point having more workers than samples to solve
@@ -71,7 +75,7 @@ print(f"SLURM_CPUS_PER_TASK = {os.environ.get('SLURM_CPUS_PER_TASK', 'NOT SET')}
 
 
 # Redirect all print output to a log file
-loggy_file = open("training_log.txt", "w", buffering=1)  # buffering=1 = write every line immediately
+loggy_file = open("training_log2.txt", "a", buffering=1)  # buffering=1 = write every line immediately
 sys.stdout = loggy_file
 sys.stderr = loggy_file
 #print("JAX devices:", jax.devices())
@@ -137,7 +141,7 @@ def _solve_sample_worker(args):
         np.array([sample_id_int])
     )
     elapsed = time.perf_counter() - t0
-    print(f"  worker pid={pid} sample={i} took {elapsed:.2f}s", flush=True)
+    #print(f"  worker pid={pid} sample={i} took {elapsed:.2f}s", flush=True)
     return i, k, phi_fwd, phi_adj, geo_data, epoch
 
 
@@ -181,10 +185,11 @@ def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
     geo_data = precompute_geometry(geo_i)       # per-sample geometry
     
     sid = int(sample_id[0])
-    cache_key = sid
-    if cache_key in _PRESOLVE_CACHE:
-        k, phi_fwd, phi_adj, geo_data = _PRESOLVE_CACHE.pop(cache_key)
-        _GEO_DATA_CACHE[sid] = geo_data
+    _GEO_DATA_CACHE[sid] = geo_data
+
+    if sid in _PRESOLVE_CACHE:
+        k, phi_fwd, phi_adj, geo_data_pre = _PRESOLVE_CACHE.pop(sid)
+        _GEO_DATA_CACHE[sid] = geo_data_pre
         return k, phi_fwd, phi_adj
 
     R      = geo_i.boundaries[-1].radius
@@ -208,7 +213,6 @@ def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
     # ── Biorthonormalization ──────────────────────────────────────────
     # Enforce ⟨φ†, F·φ⟩ = k²  so the VJP denominator = 1.0 exactly.
     # This removes the arbitrary scaling ambiguity from inverse_power.
-    from diffusion_solver import build_xs_callables, GEOMETRY_CODE, bc_to_coeffs, is_homogeneous
 
     r_divisions   = [b.radius for b in geo_i.boundaries[:-1]] \
                     if not is_homogeneous(geo_i) else []
@@ -409,7 +413,6 @@ def check_eigenvalue_residual_vs_solver(xs_tensor, geo_i, phi_fwd_flat, k):
     Build A and B using the REAL diffusion_setup from MG1D_eigenvalue_nregions,
     then check if Aphi_Fphi_scan gives the same result.
     """
-    from diffusion_solver import build_xs_callables, bc_to_coeffs, GEOMETRY_CODE
 
     R = geo_i.boundaries[-1].radius
     I = int(R / geo_i.mesh_size)
@@ -473,7 +476,6 @@ def diagnose_scan_vs_real_cellwise(xs_tensor, geo_i, phi_fwd_flat, k):
     into which term is responsible: diagonal, left off-diag, right off-diag,
     scatter-in, or scatter-out.
     """
-    from diffusion_solver import build_xs_callables, GEOMETRY_CODE, bc_to_coeffs
     from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import diffusion_setup, create_grid
 
     R = geo_i.boundaries[-1].radius
@@ -898,6 +900,41 @@ def diagnose_full_vjp(xs_tensor, params_raw_single, sample_id, rel_eps=1e-2, abs
             print("    → Check: denominator (phiadj·F·phi), dAterm/dFterm chain, sign of numerator")
     print("=" * 65)
 
+def log_keff_batch(writer, filehandle, epoch, keff_preds, keff_refs, avg_train_loss, avg_val_loss, sample_id_offset=0):
+    """Log per-sample keff predictions vs OpenMC reference to a CSV."""
+    with _csv_lock:                          # ← protect the whole loop
+        for sidx, (kref, kpred) in enumerate(zip(keff_refs, keff_preds)):
+            delta_rho_pcm = abs(kpred - kref) / (kpred * kref) * 1e5
+            writer.writerow([epoch + 1, sidx + sample_id_offset, f"{kref:.6f}", 
+                f"{kpred:.6f}", f"{delta_rho_pcm:.1f}", avg_train_loss, avg_val_loss])
+        filehandle.flush()
+
+val_log_path   = "./LOGS/keff_epoch_log_val.csv"
+train_log_path = "./LOGS/keff_epoch_log_train.csv"
+
+val_logfile   = open(val_log_path, "w", newline="", buffering=1)
+train_logfile = open(train_log_path, "w", newline="", buffering=1)
+
+val_writer   = csv.writer(val_logfile)
+train_writer = csv.writer(train_logfile)
+
+header = ["epoch", "sample_idx", "keff_openmc", "keff_peds", "delta_rho_pcm", "train_loss", "val_loss"]
+val_writer.writerow(header)
+train_writer.writerow(header)
+
+# Save trunk weights at the epoch when validation loss first improves significantly
+# (once, not every epoch):
+def save_ewc_anchor(model, fisher_n_samples=10):
+    """Compute Fisher diagonal and save current trunk weights as anchor."""
+    params_anchor = {
+        name: jnp.array(p) 
+        for name, p in nnx.state(model.generator).items()
+        if 'layers' in name   # trunk only, not heads
+    }
+    # Fisher diagonal = squared gradient magnitude (importance estimate)
+    fisher = {k: jnp.zeros_like(v) for k, v in params_anchor.items()}
+    return params_anchor, fisher
+
 # ─────────────────────────────────────────────
 # SECTION 2: Neural Network (Generator)
 # ─────────────────────────────────────────────
@@ -942,11 +979,42 @@ class GeneratorNN(nnx.Module):
         # He (Kaiming) initialisation is recommended for ReLU networks because
         # it keeps activation variance constant across layers.
         he_init = nnx.initializers.kaiming_normal()
-        bias_init = nnx.initializers.constant(0.0)
+        #bias_init = nnx.initializers.constant(0.0)
+        zero_init = nnx.initializers.zeros
+
+        # Shared trunk — ALL layers get He init, ALL get ReLU in __call__
+        # layer_sizes is now [6, 128, 128, 64], no output dim here
+        self.layers = nnx.List([
+            nnx.Linear(
+                in_features=layer_sizes[i],
+                out_features=layer_sizes[i + 1],
+                kernel_init=he_init,
+                bias_init=nnx.initializers.constant(0.0),
+                rngs=rngs,
+            )
+            for i in range(len(layer_sizes) - 1)
+        ])
+
+        trunk_out = layer_sizes[-1]  # 64
+
+        # One independent head per physical region.
+        # Zero init → exp(0)*baseline = baseline at epoch 0, same as before.
+        # Each head has its own 64×12 weight matrix — gradients for b4c
+        # no longer interfere with gradients for fuel or water.
+        self.heads = nnx.List([
+            nnx.Linear(
+                in_features=trunk_out,
+                out_features=xs_per_region,   # 12
+                kernel_init=zero_init,
+                bias_init=zero_init,
+                rngs=rngs,
+            )
+            for _ in range(n_regions)         # 3 heads: b4c, fuel, water
+        ])
 
         # Build layers as a plain Python list — nnx.Module discovers them
         # automatically via its attribute-scanning mechanism.
-        self.layers = nnx.List([
+        """ self.layers = nnx.List([
             nnx.Linear(
                 in_features=layer_sizes[i],
                 out_features=layer_sizes[i + 1],
@@ -955,19 +1023,19 @@ class GeneratorNN(nnx.Module):
                 rngs=rngs,          # rngs is passed here so each Linear gets
             )                        # its own unique initialisation key
             for i in range(len(layer_sizes) - 1)
-        ])
+        ]) """
         #  THE OUTPUT OF THE NN IS THE XS_TENSOR, WHICH HAS SIZE (N_regions, XS_per_region)
         self.n_regions    = n_regions     # 3  (b4c_rod, fuel_annulus, water)
         self.xs_per_region = xs_per_region  # 12  (4*G + G² for G=2)
         # self.resolution = int(layer_sizes[-1] ** 0.5)  # output side-length (5)
 
-        self.layers[-1] = nnx.Linear(
+        """ self.layers[-1] = nnx.Linear(
             in_features=layer_sizes[-2],
             out_features=layer_sizes[-1],
             kernel_init=nnx.initializers.zeros,   # ← zero init
             bias_init=nnx.initializers.zeros,
             rngs=rngs,
-        )
+        ) """
 
     def __call__(self, geoms: jnp.ndarray, training: bool = False) -> jnp.ndarray:
         """
@@ -980,17 +1048,22 @@ class GeneratorNN(nnx.Module):
         """
         x = geoms
         # Apply ReLU on all but the final layer
-        for layer in self.layers[:-1]:
-            x = nnx.relu(layer(x))        # nnx.relu is just jax.nn.relu, re-exported
-        
-        x = self.layers[-1](x)  # Final layer: linear projection → raw log-ratio output
+        """ for layer in self.layers[:-1]:
+            x = nnx.relu(layer(x))        # nnx.relu is just jax.nn.relu, re-exported """
+        for layer in self.layers:          # ALL trunk layers get ReLU now
+            x = nnx.relu(layer(x))         # x shape stays [batch, 64] after last layer
+
+        #x = self.layers[-1](x)  # Final layer: linear projection → raw log-ratio output
         # No activation here! exp() is applied in PEDSModel.__ call__ after multiplying by XS_SCALE.
         # The NN just outputs unconstrained values; exp() in the caller guarantees positivity.
 
         # Reshape flat vector [batch, 6] → spatial grid [batch,6]
-        batch_size = geoms.shape[0]
+        #batch_size = geoms.shape[0]
+        region_outputs = [head(x) for head in self.heads]   # list of 3 × [batch, 12]
         # print(f"The last layer is {x}, the size of the batch being {batch_size} with a resolution of {self.resolution}")
-        return jnp.reshape(x, (batch_size, self.n_regions, self.xs_per_region))
+        #return jnp.reshape(x, (batch_size, self.n_regions, self.xs_per_region))
+        return jnp.stack(region_outputs, axis=1)             # [batch, 3, 12]
+
 
 
 # ─────────────────────────────────────────────
@@ -1006,10 +1079,9 @@ class PEDSModel(nnx.Module):
 
     def __init__(self, hidden_sizes: list, n_regions: int, G:int, rngs: nnx.Rngs):
         super().__init__()
-        from diffusion_solver import xs_per_region   # already built for other things
-        xs_region = xs_per_region(G)            # = 12 for G=2
+        xs_region = fn_xs_per_region(G)            # = 12 for G=2
         output_size = n_regions * xs_region     # = 3 * 12 = 36        
-        layer_sizes = [6] + hidden_sizes + [output_size]  # 6 geometry inputs → 36 XS outputs
+        layer_sizes = [6] + hidden_sizes #+ [output_size]  # 6 geometry inputs → 36 XS outputs
     
         # rngs is stored by nnx and thread through all sub-modules that need it
         self.generator = GeneratorNN(layer_sizes=layer_sizes, n_regions=n_regions,
@@ -1051,10 +1123,11 @@ class PEDSModel(nnx.Module):
         with timer("forward: solver loop (all samples)", verbose=False):
             keffs = [] # runs a calc for each of the 10 and then stores
             for i in range(batch_size):
-                #if i == 2:  # print the XS for the first sample in the batch as a sanity check
-                    #print(f"\nthe LOG RATIOS computed by the NN for this geom are {xs_log_ratios[i]}")
-                    #print(f"\n AND THE XS PREDICTIONNNNNNNNN for this geom is {xs_final[i]}")
-                    #print(f"for the id number {i}, the offset is {sample_id_offset}")
+                """ if i == 2:  # print the XS for the first sample in the batch as a sanity check
+                    print(f"\nthe LOG RATIOS computed by the NN for this geom are {xs_log_ratios[i]}")
+                    print(f"\n AND THE XS PREDICTIONNNNNNNNN for this geom is {xs_final[i]}")
+                    print(f"the baseline starting point XS tensor was {xs_baselines[i]}")
+                    #print(f"for the id number {i}, the offset is {sample_id_offset}") """
 
                 keff_i = NTdiff_solver(xs_final[i], 
                     jnp.array(params_raw[i], dtype=jnp.float32),       # (6,)   raw geometry
@@ -1104,27 +1177,44 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     hidden_sizes, n_regions, G, seed):
     if hidden_sizes is None:
         hidden_sizes = [32, 32]   # matches config m1 in the original codebase
+    
     # ── 5.1  Data ──────────────────────────────────────────────────────────
     print("Loading data …")
     (train_geoms, train_keffs, train_rawparams), (test_geoms, test_keffs, test_rawparams) = load_data(
         filepath, train_size, test_size, seed
     )   # train_geoms is a numpy array of shape (train_size, 6), while train_keffs is a numpy array of shape (train_size,) 
     
+    # Print dataset statistics for sanity check
+    print("GEOMS STATSSSSSSSSSSS:")
+    print(f"  mean: {train_geoms.mean(0)}")
+    print(f"  std:  {train_geoms.std(0)}")
+    print(f"  min:  {train_geoms.min(0)}")
+    print(f"  max:  {train_geoms.max(0)}")
+
     print(f"  Train: {train_geoms.shape}  Test: {test_geoms.shape}")
     print(" THE NEW PRINTINGGGGGGGGG")
     print(f"Train keff range: {train_keffs.min():.3f} – {train_keffs.max():.3f}")
     print(f"Test  keff range: {test_keffs.min():.3f}  – {test_keffs.max():.3f}")
+    
+# ── Initialize EWC state before the epoch loop ──────────────────────
+    best_val_loss = float('inf')
+    ewc_anchor_flat = None
+    ewc_fisher_flat = None
+    ewc_saved = False  # Track if the anchor is saved yet
     # ── 5.2  Model & Optimiser ─────────────────────────────────────────────
     # nnx.Rngs(seed) creates a named-key container to get a fresh, unique PRNGKey.
     rngs  = nnx.Rngs(seed)
     model = PEDSModel(hidden_sizes=hidden_sizes, n_regions=n_regions, G=G, rngs=rngs)
     # Cosine decay schedule: learning rate anneals smoothly from lr_max → lr_min.
     # `alpha` is the ratio min/max, so the schedule bottoms out at lr_min.
-    lr_schedule = optax.cosine_decay_schedule(
-        init_value=lr_max,
-        decay_steps=epochs,
-        alpha=lr_min / lr_max,   # final lr = lr_max * alpha = lr_min
+    lr_schedule = optax.join_schedules(
+        schedules=[
+            optax.linear_schedule(0.0, lr_max, transition_steps=5),
+            optax.cosine_decay_schedule(init_value=lr_max, decay_steps=epochs - 5, alpha=lr_min / lr_max),
+        ],
+        boundaries=[5]
     )
+
     #optimizer = nnx.Optimizer(model, optax.adam(lr_schedule), wrt=nnx.Param)     # nnx.Optimizer couples the model's parameters with an Optax update rule.
     optimizer = nnx.Optimizer(model,
         optax.chain(
@@ -1139,15 +1229,45 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         with timer("loss_fn forward pass", verbose=False):
             keff_pred, _ = model(geoms, rawparams_batch, xs_baselines_batch, training=True) # keff predicted by PEDS model
             print(f"the prediction gives a keff of {keff_pred.primal} (size {keff_pred.size}), \n compared to {keffs_true} (size {keffs_true.size})")
+        
         reactivity_residuals = (keff_pred - keffs_true) / (keff_pred * keffs_true) 
         residuals = keff_pred - keffs_true
-        #print(f"the residuals (pred - true) for this batch are {reactivity_residuals}")
-        BETA_EFF = 650e-5  # ~650 pcm in delta-rho units
-        penalising_weight = jnp.where(jnp.abs(reactivity_residuals) > BETA_EFF, 3.0, 1.0)
-        return jnp.mean( penalising_weight * reactivity_residuals ** 2)   # Sum (not mean) MSE — consistent with original training.py
+        BETA_EFF = 650e-5  # pcm 
+        
+        # Dynamic weight: quadratic in how much the error exceeds β_eff.
+        normalized_err = jnp.abs(reactivity_residuals) / BETA_EFF
+        #penalising_weight = jnp.maximum(1.0, normalized_err ** 2)
+        #weight = jnp.minimum(jnp.maximum(1.0, normalized_err), 4.0)  # linear, capped at 4×
+        weight = jnp.where(
+            normalized_err <= 1.0,
+            0.3,                                    # try to anchor samples that already have low error 
+            jnp.minimum(normalized_err, 4.0)             # capped linear for hard samples
+        )
+        #penalising_weight = jnp.where(jnp.abs(reactivity_residuals) > BETA_EFF, 3.0, 1.0)
+        loss_value = jnp.mean(weight * reactivity_residuals ** 2)  
+        
+        if ewc_saved and ewc_anchor_flat is not None:   
+            ewc_lam = 0.05  # Start with 0.05, tune between 0.01-0.1
+            # Get current trunk state and flatten it the same way
+            full_state = nnx.state(model.generator)
+            trunk_state = nnx.State({
+                k: v for k, v in full_state.items() 
+                if 'layers' in k and 'heads' not in k
+            })
+            current_flat, _ = jax.tree_util.tree_flatten(trunk_state)
+            
+            # Compute L2 penalty between current and anchor
+            penalty = sum(
+                jnp.sum(fisher * (curr - anchor) ** 2)
+                for curr, anchor, fisher in zip(current_flat, ewc_anchor_flat, ewc_fisher_flat)
+            )
+            loss_value = loss_value + ewc_lam * penalty
+
+        return loss_value, keff_pred
+    
     # nnx.value_and_grad is the Flax-nnx analogue of jax.value_and_grad.
     # It differentiates `loss_fn` with respect to its FIRST argument (the model),
-    grad_fn = nnx.value_and_grad(loss_fn)  # returning (loss_value, grad_pytree_of_model_params)
+    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)  # returning (loss_value, grad_pytree_of_model_params)
 
     # ── 5.4  Validation helper ─────────────────────────────────────────────
     def validation_step(geoms_np, keffs_np, rawparams_np):
@@ -1188,6 +1308,15 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         return total_sq / n, total_pct / n, all_keff_pred, all_keff_ref   
         # mean over all test samples
 
+    sample_weights = np.ones(train_size, dtype=np.float32)  # uniform initially
+
+    def weighted_data_loader(arrays, batch_size, weights):
+        """Sample batches with probability proportional to weights."""
+        n = arrays[0].shape[0]
+        probs = weights / weights.sum()
+        indices = np.random.choice(n, size=batch_size, replace=False, p=probs)
+        return tuple(arr[indices] for arr in arrays), indices
+
     print("Precomputing XS baselines for all samples (done once)...")
     train_xs_baselines = compute_batch_baselines(train_rawparams, GEO)  # [train_size, 3, 12]
     test_xs_baselines  = compute_batch_baselines(test_rawparams, GEO)   # [test_size,  3, 12]
@@ -1204,18 +1333,15 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     print(f"\nTraining for {epochs} epochs …")
 
         # ── Open keff log file ────────────────────────────────────────────────
-    log_path = "./LOGS/keff_epoch_log.csv"
-    log_file  = open(log_path, "w", newline="")
-    log_writer = csv.writer(log_file)
-    log_writer.writerow(["epoch", "sample_idx", "keff_openmc", "keff_peds", "delta_rho_pcm",  "epoch_train_loss", "epoch_val_loss"])
+
     count = 0
     for epoch in range(epochs):
         count += 1
         print(f"entering the epoch loop, at epoch {epoch} which is")
         epoch_loss = 0.0
         # these are the parameters used for the training loop
-        for batch_geoms, batch_keffs, batch_rawparams_tr, batch_baselines in data_loader(
-            train_geoms, train_keffs, train_rawparams, train_xs_baselines, batch_size=batch_size):
+        for batch_idx, (batch_geoms, batch_keffs, batch_rawparams_tr, batch_baselines) in enumerate(data_loader(
+            train_geoms, train_keffs, train_rawparams, train_xs_baselines, batch_size=batch_size)):
             
             bp = jnp.array(batch_geoms) # Convert NumPy → JAX arrays once per batch 
             bk = jnp.array(batch_keffs)
@@ -1234,11 +1360,19 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 _PRESOLVE_CACHE[i] = (k, phi_fwd, phi_adj, geo_data)
 
             # Step 3: grad_fn traces normally — pure_callback reads from cache
-            with timer("train step: forward+backward+update"):
+            with timer("train step: forward+backward+optiupd"):
                 with timer("train step: forward+loss+grad"):    
-                    loss, grads = grad_fn(model, bp, bk, batch_rawparams_tr, bxs)
+                    (loss, keff_preds_batch), grads = grad_fn(model, bp, bk, batch_rawparams_tr, bxs)
+
             with timer("train step: optimizer update"):            
                 optimizer.update(model, grads)
+            
+            log_keff_batch(
+                train_writer, train_logfile, epoch,
+                np.array(keff_preds_batch), np.array(bk),
+                float(loss), 0.0,
+                sample_id_offset=batch_idx * batch_size
+            )
             epoch_loss += float(loss)
 
             print("Running forward pass + AD \n ")
@@ -1278,19 +1412,42 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
                 XS_HEATMAP_SNAPSHOTS.append(_snap_log_ratios.copy())  # store log-ratios for heatmap
                 XS_HEATMAP_LABELS.append(f"Epoch {epoch + 1}")
+                
+                if _xs_baseline_ref[0] is None:
+                    _xs_baseline_ref[0] = _snap_baseline
 
         # Normalise by dataset size (matches `avg_loss` in training.py)
         avg_train_loss = epoch_loss / train_size
         # Validation (no gradient tracking needed)
         with timer("validation step"):
             avg_val_loss, avg_pct_err, keff_preds, keff_refs = validation_step(test_geoms, test_keffs, test_rawparams)
-        
+    
+        # Check if validation improved AND we haven't saved the anchor yet
+        if avg_val_loss < best_val_loss and not ewc_saved:
+            best_val_loss = avg_val_loss
+            print(f"Saving EWC anchor at epoch {epoch} with val_loss={avg_val_loss:.4f}")
+            
+            # Get all trainable parameters from the trunk (flatten to get actual arrays)
+            full_state = nnx.state(model.generator)
+            # Filter for trunk parameters only
+            trunk_state = nnx.State({
+                k: v for k, v in full_state.items() 
+                if 'layers' in k and 'heads' not in k
+            })
+            
+            # Flatten to get actual JAX arrays
+            ewc_anchor_flat, ewc_tree_def = jax.tree_util.tree_flatten(trunk_state)
+            ewc_fisher_flat = [jnp.ones_like(arr) for arr in ewc_anchor_flat]
+            
+            print(f"  Saved {len(ewc_anchor_flat)} trunk parameter arrays")
+            for i, arr in enumerate(ewc_anchor_flat[:3]):  # Show first 3
+                print(f"    Array {i}: shape={arr.shape}")
+            
+            ewc_saved = True
+
         # ── Write per-sample keff values to the log file ─────────────────────
-        for s_idx, (k_ref, k_pred) in enumerate(zip(keff_refs, keff_preds)):
-            delta_rho_pcm = abs((k_pred - k_ref) / (k_pred * k_ref)) * 1e5   # ✅ correct
-            log_writer.writerow([epoch + 1, s_idx, f"{k_ref:.6f}", f"{k_pred:.6f}", f"{delta_rho_pcm:.1f}", avg_train_loss, avg_val_loss])
-        log_file.flush()   # write to disk immediately, so you can tail the file during a long run
-                
+        log_keff_batch(val_writer, val_logfile, epoch, keff_preds, keff_refs, avg_train_loss, avg_val_loss)
+   
         print(f"this is batch iteration {iterations + 1} with the average train loss {avg_train_loss:.4f}, the average validation loss {avg_val_loss:.4f} and the average percentage error {avg_pct_err:.4f} \n")
         iterations = iterations+1
         train_losses.append(avg_train_loss)
@@ -1310,17 +1467,41 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         jax.clear_caches()
         iterations = 0
     
+    final_errors = []
+    for i in range(len(keff_refs)):
+        k_pred = float(keff_preds[i])   # keff from PEDS at final epoch
+        k_ref  = float(keff_refs[i])    # keff from OpenMC
+        delta_rho = abs(k_pred - k_ref) / (k_pred * k_ref) * 1e5
+        final_errors.append(delta_rho)
+
+    final_errors = np.array(final_errors)
+
+    # final_errors: [50] array of pcm values at last epoch for test set
+    param_names = ['b4c_r', 'cr_frac', 'fuel_r', 'enrichment', 'f_mod', 'water_r']
+    for j, name in enumerate(param_names):
+        corr = np.corrcoef(test_rawparams[:, j], final_errors)[0, 1]
+        print(f"  {name:12s}: correlation with error = {corr:+.3f}")
+        
     print(f"the total number of iterations is {iterations}.")
-    print(f"\n keff log saved to: {log_path}")
+    print(f"\n keff log saved to: {val_log_path}")
 
     # ─────────────────────────────────────────────────────────────
     # check the geometry of the badly converged samples
     # ─────────────────────────────────────────────────────────────
-    """ df = pd.read_csv(log_path, 
-                 names=['epoch', 'sample_idx', 'keff_openmc', 'keff_peds', 'delta_rho_pcm', 'train_loss', 'val_loss'])
+    df = pd.read_csv(val_log_path, header=0)
+    # This reads the header properly, columns named automatically
+    # Then cast types explicitly:
+    df['epoch'] = df['epoch'].astype(int)
+    df['delta_rho_pcm'] = df['delta_rho_pcm'].astype(float)
+    df['sample_idx'] = df['sample_idx'].astype(int)
     # Get the LAST epoch only (final converged state)
     last_epoch = df['epoch'].max()
+    print(f"df shape: {df.shape}")
+    print(f"df dtypes:\n{df.dtypes}")
+    print(f"df head:\n{df.head()}")
+    print(f"last epoch = {last_epoch}, type = {type(last_epoch)}")
     df_final = df[df['epoch'] == last_epoch]
+    print(f"df final shape: {df_final.shape}")
     # Sort by worst discrepancy
     df_final_sorted = df_final.sort_values('delta_rho_pcm', ascending=False)
     print("=== TOP 10 WORST SAMPLES AT FINAL EPOCH ===")
@@ -1340,7 +1521,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         for i, name in enumerate(feat_names):
             print(f"    {name}: normalized={geom[i]:.3f}  raw={raw[i]:.4f}")
 
-    log_file.close() """
+    loggy_file.close()
 
     # ── Generate XS heatmap ───────────────────────────────────────────
     print(f"[xs_heatmap] baseline ref is None: {_xs_baseline_ref[0] is None}")
@@ -1476,8 +1657,8 @@ if __name__ == "__main__":
         test_size     = test_size,
         batch_size    = batch_size,
         epochs        = epochs,
-        lr_max        = 5e-4,   # cosine schedule peak learning rate
-        lr_min        = 1e-5,   # cosine schedule floor learning rate
+        lr_max        = 5e-5,   # cosine schedule peak learning rate
+        lr_min        = 1e-6,   # cosine schedule floor learning rate
         hidden_sizes  = [128, 128, 64],  # matches model config m1
         n_regions    = 3,    # b4c_rod, fuel_annulus, water
         G            = 2,    # energy groups

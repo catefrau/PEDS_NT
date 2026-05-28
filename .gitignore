@@ -18,6 +18,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.md
+*.log
+*.txt
+*.sh
 
 # Generated experiment outputs
 experiments/coding/figures/
@@ -30,6 +33,7 @@ modules/NThelper.py
 modules/LOGS/plots_tokeep
 modules/LOGS/fluxes_plots
 modules/LOGS/geometry_plots
+modules/LOGS/
 reg_and_data/inputs/heter_regre_files/
 reg_and_data/inputs/HOM/
 gradient_fd_check.py

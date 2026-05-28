@@ -1,4 +1,4 @@
-# LF_solver.py
+# diffusion_solver.py
 # Solver entry-point: takes a GeometryConfig, predicts XS, runs the MG diffusion
 # eigenvalue problem, and prints/plots results.
 #
@@ -15,10 +15,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import DiffusionEigenvalue_MG, DiffusionEigenvalue_MG_adjoint
-from config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
-from config_run import GEO_CYL as GEO
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from .core.MG1D_eigenvalue_nregions import DiffusionEigenvalue_MG, DiffusionEigenvalue_MG_adjoint
+from modules.config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
+from modules.config_run import GEO_CYL as GEO
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  PATHS DEFINITION  
@@ -212,7 +212,7 @@ def xs_layout(G: int) -> dict:
         'chi':       slice(3*G + G**2,  4*G + G**2),
     }
 
-def xs_per_region(G: int) -> int:
+def fn_xs_per_region(G: int) -> int:
     return 4*G + G**2
 
 
@@ -332,7 +332,7 @@ def predict_xs(geo: GeometryConfig) -> np.ndarray:
         Row i contains the XS vector for geo.regions[i].
     """
     G   = geo.G
-    n   = xs_per_region(G)
+    n   = fn_xs_per_region(G)
     lay = xs_layout(G)
 
     # ── Step 1: polynomial regression ─────────────────────────────────────────

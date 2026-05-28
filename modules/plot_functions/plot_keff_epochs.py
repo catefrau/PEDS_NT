@@ -4,9 +4,11 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-log_path="../LOGS/keff_epoch_log.csv"
+csv_path = "../LOGS/keff_epoch_log_val.csv"
+rhodiff_path = "../LOGS/keff_pcm_evolution_val.png"
+hist_path = "../LOGS/loss_histogram_val.png"
 
-def plot_keff_pcm(log_path, save_path="../LOGS/keff_pcm_evolution.png"):
+def plot_keff_pcm(log_path, save_path):
     import pandas as pd
     df = pd.read_csv(log_path)
     epoch_stats = df.groupby("epoch")["delta_rho_pcm"].agg(["mean","min","max"]).reset_index()
@@ -41,6 +43,7 @@ def plot_keff_pcm(log_path, save_path="../LOGS/keff_pcm_evolution.png"):
     all_epochs = sorted(df["epoch"].unique())
     ax.set_xticks(all_epochs)      
     ax.grid(True, alpha=0.15)
+    #ax.set_yscale("log")
     ax.legend(
       loc="upper left",
       bbox_to_anchor=(1.01, 1),   # places it just to the right of the plot
@@ -53,6 +56,71 @@ def plot_keff_pcm(log_path, save_path="../LOGS/keff_pcm_evolution.png"):
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"Plot saved to {save_path}")
+
+def plot_loss_histogram(
+    log_path,
+    save_path="../LOGS/loss_histogram_final_epoch.png",
+    n_bins=20
+):
+    df = pd.read_csv(log_path)
+
+    # Snapshot at the last epoch
+    final_epoch = df["epoch"].max()
+    df_final = df[df["epoch"] == final_epoch].copy()
+
+    # Use absolute value of delta_rho_pcm so bins go left (small error) to right (large)
+    df_final["abs_delta_rho"] = df_final["delta_rho_pcm"].abs()
+
+    # Color map: blue=low keff, red=high keff
+    keff_vals = df_final["keff_openmc"].values
+    norm = plt.Normalize(vmin=keff_vals.min(), vmax=keff_vals.max())
+    cmap = plt.cm.get_cmap("coolwarm")
+
+    # Build bins manually so we can color each sample individually
+    bin_edges = np.linspace(df_final["abs_delta_rho"].min(),
+                            df_final["abs_delta_rho"].max(), n_bins + 1)
+    df_final["bin"] = pd.cut(df_final["abs_delta_rho"], bins=bin_edges, include_lowest=True)
+
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+
+    # For each bin, stack one rectangle per sample inside it
+    for bin_interval, group in df_final.groupby("bin", observed=True):
+        # Sort by keff so colors are ordered nicely within the stack
+        group = group.sort_values("keff_openmc")
+        x_center = (bin_interval.left + bin_interval.right) / 2
+        bar_width = (bin_edges[1] - bin_edges[0]) * 0.85
+
+        for stack_pos, (_, row) in enumerate(group.iterrows()):
+            color = cmap(norm(row["keff_openmc"]))
+            ax.bar(x_center, 1, bottom=stack_pos,
+                   width=bar_width, color=color,
+                   edgecolor="white", linewidth=0.4, alpha=0.88)
+            # Label sample index inside the bar if bar is tall enough
+            ax.text(x_center, stack_pos + 0.5, f"S{int(row['sample_idx'])}",
+                    ha="center", va="center", fontsize=5.5, color="white", fontweight="bold")
+
+    # Colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax, pad=0.01)
+    cbar.set_label("k_eff (OpenMC)", fontsize=11)
+
+    # β_eff reference line (convert to pcm on x axis)
+    beta_eff_pcm = 650
+    ax.axvline(x=beta_eff_pcm, color="#00008B", linewidth=1.8,
+               linestyle=(0, (5, 3)), label=f"β_eff = {beta_eff_pcm} pcm")
+
+    ax.set_xlabel("|Δρ| at Final Epoch (pcm)", fontsize=12)
+    ax.set_ylabel("Number of Samples", fontsize=12)
+    ax.set_title(f"Distribution of Reactivity Error at Final Epoch ({final_epoch})", fontsize=13)
+    ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    ax.grid(True, alpha=0.15, axis="x")
+    ax.legend(fontsize=10, framealpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Histogram saved to {save_path}")
 
 
 def plot_loss_from_csv(
@@ -104,5 +172,6 @@ def plot_loss_from_csv(
 #==========================================
 
 print("Generating keff evolution plot...")
-plot_keff_pcm(log_path)
-plot_loss_from_csv(log_path)
+plot_keff_pcm(csv_path, rhodiff_path)
+#plot_loss_from_csv(log_path)
+plot_loss_histogram(csv_path, hist_path)
