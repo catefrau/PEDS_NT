@@ -61,25 +61,26 @@ from solvers.NTdiffusion.diffusion_solver import (get_xs_basedon_geo, run_diffus
 # ─────────────────────────────────────────────
 # SECTION 0: variables initiation and global constants
 # ─────────────────────────────────────────────
-train_size    = 30
-test_size     = 5
-batch_size    = 30
-epochs        = 40
+train_size    = 100
+test_size     = 20
+batch_size    = 50
+epochs        = 30
 N_WORKERS = min(
-    int(os.environ.get("SLURM_CPUS_PER_TASK", 4)),
-    batch_size   # no point having more workers than samples to solve
+    int(os.environ.get("SLURM_CPUS_PER_TASK", 16)),
+    batch_size 
 )
 print(f"Using {N_WORKERS} parallel workers for solver")
 executor = ProcessPoolExecutor(max_workers=N_WORKERS, mp_context=ctx)
 print(f"SLURM_CPUS_PER_TASK = {os.environ.get('SLURM_CPUS_PER_TASK', 'NOT SET')}", flush=True)
 
-
+val_log_path   = "./LOGS/keff_epoch_log_val.csv"
+train_log_path = "./LOGS/keff_epoch_log_train.csv"
 # Redirect all print output to a log file
-loggy_file = open("training_log2.txt", "a", buffering=1)  # buffering=1 = write every line immediately
+loggy_file = open("training_log.txt", "a", buffering=1)  # buffering=1 = write every line immediately
 sys.stdout = loggy_file
 sys.stderr = loggy_file
-#print("JAX devices:", jax.devices())
-#print("Backend:", jax.default_backend())
+print("JAX devices:", jax.devices())
+print("Backend:", jax.default_backend())
 
 # predict the XS with the polynomial reg built in the other code
 # acts as a first guess???
@@ -909,8 +910,6 @@ def log_keff_batch(writer, filehandle, epoch, keff_preds, keff_refs, avg_train_l
                 f"{kpred:.6f}", f"{delta_rho_pcm:.1f}", avg_train_loss, avg_val_loss])
         filehandle.flush()
 
-val_log_path   = "./LOGS/keff_epoch_log_val.csv"
-train_log_path = "./LOGS/keff_epoch_log_train.csv"
 
 val_logfile   = open(val_log_path, "w", newline="", buffering=1)
 train_logfile = open(train_log_path, "w", newline="", buffering=1)
@@ -921,19 +920,6 @@ train_writer = csv.writer(train_logfile)
 header = ["epoch", "sample_idx", "keff_openmc", "keff_peds", "delta_rho_pcm", "train_loss", "val_loss"]
 val_writer.writerow(header)
 train_writer.writerow(header)
-
-# Save trunk weights at the epoch when validation loss first improves significantly
-# (once, not every epoch):
-def save_ewc_anchor(model, fisher_n_samples=10):
-    """Compute Fisher diagonal and save current trunk weights as anchor."""
-    params_anchor = {
-        name: jnp.array(p) 
-        for name, p in nnx.state(model.generator).items()
-        if 'layers' in name   # trunk only, not heads
-    }
-    # Fisher diagonal = squared gradient magnitude (importance estimate)
-    fisher = {k: jnp.zeros_like(v) for k, v in params_anchor.items()}
-    return params_anchor, fisher
 
 # ─────────────────────────────────────────────
 # SECTION 2: Neural Network (Generator)
@@ -1054,11 +1040,15 @@ class GeneratorNN(nnx.Module):
             x = nnx.relu(layer(x))         # x shape stays [batch, 64] after last layer
 
         #x = self.layers[-1](x)  # Final layer: linear projection → raw log-ratio output
-        # No activation here! exp() is applied in PEDSModel.__ call__ after multiplying by XS_SCALE.
-        # The NN just outputs unconstrained values; exp() in the caller guarantees positivity.
 
-        # Reshape flat vector [batch, 6] → spatial grid [batch,6]
-        #batch_size = geoms.shape[0]
+        region_outputs = []
+        for r, head in enumerate(self.heads):
+            # Concatenate trunk features WITH the log-baseline for this region
+            region_feat = jnp.concatenate(
+                [x, xs_baselines_log[:, r, :]], axis=-1   # [batch, trunk_out + 12]
+            )
+            region_outputs.append(head(region_feat))  # head now takes trunk_out+12 input
+
         region_outputs = [head(x) for head in self.heads]   # list of 3 × [batch, 12]
         # print(f"The last layer is {x}, the size of the batch being {batch_size} with a resolution of {self.resolution}")
         #return jnp.reshape(x, (batch_size, self.n_regions, self.xs_per_region))
@@ -1093,6 +1083,7 @@ class PEDSModel(nnx.Module):
         """Pure NN forward — called OUTSIDE jax.grad, returns concrete numpy."""
         batch_size = geoms.shape[0]
         geoms_flat = jnp.reshape(geoms, (batch_size, 6))
+        print(f"the geometry input to the NN is {geoms_flat[0]}!!!!!")
         xs_log_ratios = self.generator(geoms_flat, training=False)
         xs_final = jnp.exp(xs_log_ratios) * xs_baselines
         return np.array(xs_final)   # ← concrete numpy, exits JAX world
@@ -1196,15 +1187,11 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     print(f"Train keff range: {train_keffs.min():.3f} – {train_keffs.max():.3f}")
     print(f"Test  keff range: {test_keffs.min():.3f}  – {test_keffs.max():.3f}")
     
-# ── Initialize EWC state before the epoch loop ──────────────────────
-    best_val_loss = float('inf')
-    ewc_anchor_flat = None
-    ewc_fisher_flat = None
-    ewc_saved = False  # Track if the anchor is saved yet
     # ── 5.2  Model & Optimiser ─────────────────────────────────────────────
     # nnx.Rngs(seed) creates a named-key container to get a fresh, unique PRNGKey.
     rngs  = nnx.Rngs(seed)
     model = PEDSModel(hidden_sizes=hidden_sizes, n_regions=n_regions, G=G, rngs=rngs)
+
     # Cosine decay schedule: learning rate anneals smoothly from lr_max → lr_min.
     # `alpha` is the ratio min/max, so the schedule bottoms out at lr_min.
     lr_schedule = optax.join_schedules(
@@ -1228,40 +1215,18 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         # model is passed explicitly so nnx.value_and_grad knows which pytree to differentiate with respect to.
         with timer("loss_fn forward pass", verbose=False):
             keff_pred, _ = model(geoms, rawparams_batch, xs_baselines_batch, training=True) # keff predicted by PEDS model
-            print(f"the prediction gives a keff of {keff_pred.primal} (size {keff_pred.size}), \n compared to {keffs_true} (size {keffs_true.size})")
+            print(f"the prediction gives a keff of {keff_pred} (size {keff_pred.size}), \n compared to {keffs_true} (size {keffs_true.size})")
         
         reactivity_residuals = (keff_pred - keffs_true) / (keff_pred * keffs_true) 
-        residuals = keff_pred - keffs_true
+        #residuals = keff_pred - keffs_true
         BETA_EFF = 650e-5  # pcm 
         
         # Dynamic weight: quadratic in how much the error exceeds β_eff.
         normalized_err = jnp.abs(reactivity_residuals) / BETA_EFF
         #penalising_weight = jnp.maximum(1.0, normalized_err ** 2)
-        #weight = jnp.minimum(jnp.maximum(1.0, normalized_err), 4.0)  # linear, capped at 4×
-        weight = jnp.where(
-            normalized_err <= 1.0,
-            0.3,                                    # try to anchor samples that already have low error 
-            jnp.minimum(normalized_err, 4.0)             # capped linear for hard samples
-        )
-        #penalising_weight = jnp.where(jnp.abs(reactivity_residuals) > BETA_EFF, 3.0, 1.0)
-        loss_value = jnp.mean(weight * reactivity_residuals ** 2)  
+        weight = jnp.minimum(jnp.maximum(1.0, normalized_err), 4.0)  # linear, capped at 4×
         
-        if ewc_saved and ewc_anchor_flat is not None:   
-            ewc_lam = 0.05  # Start with 0.05, tune between 0.01-0.1
-            # Get current trunk state and flatten it the same way
-            full_state = nnx.state(model.generator)
-            trunk_state = nnx.State({
-                k: v for k, v in full_state.items() 
-                if 'layers' in k and 'heads' not in k
-            })
-            current_flat, _ = jax.tree_util.tree_flatten(trunk_state)
-            
-            # Compute L2 penalty between current and anchor
-            penalty = sum(
-                jnp.sum(fisher * (curr - anchor) ** 2)
-                for curr, anchor, fisher in zip(current_flat, ewc_anchor_flat, ewc_fisher_flat)
-            )
-            loss_value = loss_value + ewc_lam * penalty
+        loss_value = jnp.mean(weight * reactivity_residuals ** 2)  
 
         return loss_value, keff_pred
     
@@ -1310,13 +1275,6 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
     sample_weights = np.ones(train_size, dtype=np.float32)  # uniform initially
 
-    def weighted_data_loader(arrays, batch_size, weights):
-        """Sample batches with probability proportional to weights."""
-        n = arrays[0].shape[0]
-        probs = weights / weights.sum()
-        indices = np.random.choice(n, size=batch_size, replace=False, p=probs)
-        return tuple(arr[indices] for arr in arrays), indices
-
     print("Precomputing XS baselines for all samples (done once)...")
     train_xs_baselines = compute_batch_baselines(train_rawparams, GEO)  # [train_size, 3, 12]
     test_xs_baselines  = compute_batch_baselines(test_rawparams, GEO)   # [test_size,  3, 12]
@@ -1335,6 +1293,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         # ── Open keff log file ────────────────────────────────────────────────
 
     count = 0
+
     for epoch in range(epochs):
         count += 1
         print(f"entering the epoch loop, at epoch {epoch} which is")
@@ -1421,29 +1380,6 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         # Validation (no gradient tracking needed)
         with timer("validation step"):
             avg_val_loss, avg_pct_err, keff_preds, keff_refs = validation_step(test_geoms, test_keffs, test_rawparams)
-    
-        # Check if validation improved AND we haven't saved the anchor yet
-        if avg_val_loss < best_val_loss and not ewc_saved:
-            best_val_loss = avg_val_loss
-            print(f"Saving EWC anchor at epoch {epoch} with val_loss={avg_val_loss:.4f}")
-            
-            # Get all trainable parameters from the trunk (flatten to get actual arrays)
-            full_state = nnx.state(model.generator)
-            # Filter for trunk parameters only
-            trunk_state = nnx.State({
-                k: v for k, v in full_state.items() 
-                if 'layers' in k and 'heads' not in k
-            })
-            
-            # Flatten to get actual JAX arrays
-            ewc_anchor_flat, ewc_tree_def = jax.tree_util.tree_flatten(trunk_state)
-            ewc_fisher_flat = [jnp.ones_like(arr) for arr in ewc_anchor_flat]
-            
-            print(f"  Saved {len(ewc_anchor_flat)} trunk parameter arrays")
-            for i, arr in enumerate(ewc_anchor_flat[:3]):  # Show first 3
-                print(f"    Array {i}: shape={arr.shape}")
-            
-            ewc_saved = True
 
         # ── Write per-sample keff values to the log file ─────────────────────
         log_keff_batch(val_writer, val_logfile, epoch, keff_preds, keff_refs, avg_train_loss, avg_val_loss)
@@ -1642,6 +1578,76 @@ def visualise_results(
     plt.close()
     print(f"\nFigure saved to: {save_path}")
 
+def solver_floor_check(train_rawparams, train_keffs, n_samples=20):
+    """
+    Bypasses the NN entirely. Directly optimizes XS to match OpenMC k.
+    Tells you: what is the best the diffusion solver can ever achieve?
+    """
+    print("\n" + "="*60)
+    print("=== SOLVER FLOOR CHECK ===")
+    print("="*60)
+
+    # Use a unique sample_id slot that won't collide with training
+    # (training uses IDs 0..train_size-1, we use 9999 here)
+    SENTINEL_ID = 9999
+    sid = jnp.array([SENTINEL_ID], dtype=jnp.int32)
+
+    results = []
+    for i in range(min(n_samples, len(train_rawparams))):
+        geo_i    = update_geo(GEO, train_rawparams[i])
+        k_mc     = float(train_keffs[i])
+        params_i = jnp.array(train_rawparams[i], dtype=jnp.float32)
+
+        # Start from the regression baseline XS for this geometry
+        xs = jnp.array(predict_xs(geo_i), dtype=jnp.float32)
+        print(f"before optimization, sample {i} has starting k = {float(NTdiff_solver(xs, params_i, sid)):.4f} vs k_mc = {k_mc:.4f} \n with a set of baseline xs = {predict_xs(geo_i)}")
+        # Warm up the cache for this sample using the sentinel ID
+        _ = NTdiff_solver(xs, params_i, sid)
+
+        # Simple gradient descent directly on XS — no NN
+        lr = 1e-4   # conservative: XS values are ~O(1), reactivity ~O(1e-4)
+        k_history = []
+
+        for step in range(30):
+            # get gradient dk/dXS via the custom VJP
+            _, vjp_fn = jax.vjp(NTdiff_solver, xs, params_i, sid)
+            k_diff    = float(NTdiff_solver(xs, params_i, sid))
+            k_history.append(k_diff)
+
+            # reactivity residual dL/dk  (derivative of MSE loss w.r.t. k)
+            rho_residual = (k_diff - k_mc) / (k_diff * k_mc)   # in 1/pcm units
+            dL_dk        = 2.0 * rho_residual / (k_diff * k_mc)
+
+            grad_xs = vjp_fn(jnp.array(dL_dk))[0]
+            xs      = xs - lr * grad_xs
+            if step == 1 or step ==10 or step == 20 or step == 29:
+                print(f"the xs after the gradient opti are {xs} with the gradient {grad_xs} and the reactivity residual {rho_residual*1e5} at step {step}")
+
+            # enforce physical positivity — XS cannot be negative
+            xs = jnp.clip(xs, 1e-6, None)
+
+        k_final    = float(NTdiff_solver(xs, params_i, sid))
+        delta_rho  = abs(k_final - k_mc) / (k_final * k_mc) * 1e5
+        k_baseline = float(NTdiff_solver(
+            jnp.array(predict_xs(geo_i), dtype=jnp.float32), params_i, sid))
+        delta_rho_baseline = abs(k_baseline - k_mc) / (k_baseline * k_mc) * 1e5
+
+        log_ratios = jnp.log(xs / jnp.array(predict_xs(geo_i)))
+        print(f"  log_ratio range: [{float(log_ratios.min()):.2f}, {float(log_ratios.max()):.2f}]")
+        print(f"  XS changed by factors: [{float(jnp.exp(log_ratios.min())):.2f}, {float(jnp.exp(log_ratios.max())):.2f}]")
+
+        flag = " ← SOLVER FLOOR (diffusion limit)" if delta_rho > 650 else " ✓ reachable"
+        print(f"  S{i:3d}  k_mc={k_mc:.4f}  "
+              f"baseline_err={delta_rho_baseline:.0f} pcm  "
+              f"optimized_err={delta_rho:.0f} pcm{flag}")
+        results.append(delta_rho)
+
+    results = np.array(results)
+    print(f"\n  Mean optimized error : {results.mean():.0f} pcm")
+    print(f"  Samples above 650 pcm: {(results > 650).sum()} / {len(results)}  "
+          f"(these are diffusion-limited)")
+    print("="*60 + "\n")
+    return results
 
 # ─────────────────────────────────────────────
 # MAIN
@@ -1657,8 +1663,8 @@ if __name__ == "__main__":
         test_size     = test_size,
         batch_size    = batch_size,
         epochs        = epochs,
-        lr_max        = 5e-5,   # cosine schedule peak learning rate
-        lr_min        = 1e-6,   # cosine schedule floor learning rate
+        lr_max        = 5e-4,   # cosine schedule peak learning rate
+        lr_min        = 5e-6,   # cosine schedule floor learning rate
         hidden_sizes  = [128, 128, 64],  # matches model config m1
         n_regions    = 3,    # b4c_rod, fuel_annulus, water
         G            = 2,    # energy groups
@@ -1668,12 +1674,14 @@ if __name__ == "__main__":
     # ══════════════════════════════════════════════════════════
     # DEBUG BLOCK 
     # ══════════════════════════════════════════════════════════
-    """ print("Running gradient check BEFORE training...")
+    print("Running gradient check BEFORE training...")
     # Load just one sample to test with
     (train_geoms, train_keffs, train_rawparams), _ = load_data(
         HP["filepath"], HP["train_size"], HP["test_size"], seed=42)
     
-    xs_check     = jnp.array(XS_BASELINE, dtype=jnp.float32)
+    #solver_floor_check(train_rawparams, train_keffs, n_samples=20)
+
+    """ xs_check     = jnp.array(XS_BASELINE, dtype=jnp.float32)
     params_check = jnp.array(train_rawparams[0], dtype=jnp.float32)
     id_check     = jnp.array([0], dtype=jnp.int32)
 
