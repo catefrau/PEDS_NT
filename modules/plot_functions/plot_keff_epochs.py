@@ -4,9 +4,16 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-csv_path = "../LOGS/keff_epoch_log_val.csv"
-rhodiff_path = "../LOGS/keff_pcm_evolution_val.png"
-hist_path = "../LOGS/loss_histogram_val.png"
+project_name = "4jun3pm_noweight"
+csv_path_val = f"../LOGS/{project_name}/keff_epoch_log_val.csv"
+rhodiff_path_val = f"../LOGS/{project_name}/keff_pcm_evolution_val.png"
+hist_path_val = f"../LOGS/{project_name}/loss_histogram_val.png"
+scatt_path_val = f"../LOGS/{project_name}/keff_scatter_val.png"
+
+csv_path_train = f"../LOGS/{project_name}/keff_epoch_log_train.csv"
+rhodiff_path_train = f"../LOGS/{project_name}/keff_pcm_evolution_train.png"
+hist_path_train = f"../LOGS/{project_name}/loss_histogram_train.png"
+scatt_path_train = f"../LOGS/{project_name}/keff_scatter_train.png"
 
 def plot_keff_pcm(log_path, save_path):
     import pandas as pd
@@ -17,7 +24,26 @@ def plot_keff_pcm(log_path, save_path):
     print(f"Samples number: {len(samples)}")
     plt.style.use("default")
     colors = ["#4C9EFF","#FF6B6B","#6BCB77","#FFD166","#C77DFF"]
-    fig, ax = plt.subplots(figsize=(10, 5.5))
+
+    n_legend_rows = int(np.ceil(len(samples) / 10))   # 10 columns in legend
+    legend_row_height = 0.22                           # inches per legend row
+    legend_height = n_legend_rows * legend_row_height + 0.4  # total legend area in inches
+
+    plot_w   = 18.0    # fixed plot width  (inches)
+    plot_h   = 7.0     # fixed plot height (inches) — NEVER changes
+    fig_h    = plot_h + legend_height   # figure grows downward
+
+    fig = plt.figure(figsize=(plot_w, fig_h))
+
+    # Place the axes at the top, with a fixed height in figure-fraction units
+    top_margin   = 0.08               # fraction of fig height for title
+    plot_frac    = plot_h / fig_h     # fraction the plot occupies
+
+    ax = fig.add_axes([0.06,                         # left
+                    legend_height / fig_h + 0.05, # bottom — above the legend zone
+                    0.91,                          # width
+                    plot_frac - top_margin])       # height
+
     cmap = plt.cm.get_cmap("tab10", len(samples))  # or "hsv", "Set1", "rainbow"
     for i, s in enumerate(samples):
         color = cmap(i)
@@ -27,8 +53,9 @@ def plot_keff_pcm(log_path, save_path):
 
     """ ax.fill_between(epoch_stats["epoch"], epoch_stats["min"], epoch_stats["max"],
                     color="white", alpha=0.06, label="Min-Max band") """
-    ax.plot(epoch_stats["epoch"], epoch_stats["mean"], color="black",
-            linewidth=2.8, linestyle="--", marker="D", markersize=7, label="Mean")
+    final_mean_rho = epoch_stats["mean"].iloc[-1]   # value at the last epoch
+    ax.plot(epoch_stats["epoch"], epoch_stats["mean"], color="black", linewidth=2.8,
+            linestyle="--", marker="D", markersize=7, label=f"Mean (final: {final_mean_rho:.1f} pcm)")
     # ── β_eff reference line ───────────────────────────────────────────────
     beta_eff_pcm = 650   # pcm — typical U-235 LWR value; replace with your own!
     ax.axhline(y=beta_eff_pcm, color="#00008B", linewidth=1.8,
@@ -39,20 +66,20 @@ def plot_keff_pcm(log_path, save_path):
             color="#00008B", fontsize=9, ha="right")
     ax.set_xlabel("Epoch", fontsize=12)
     ax.set_ylabel("Delta-rho (pcm)", fontsize=12)
-    ax.set_title("Reactivity Error (pcm) — PEDS vs. OpenMC", fontsize=13)
+    ax.set_title(f"Reactivity Error (pcm) — PEDS vs. OpenMC - {project_name}", fontsize=13)
     all_epochs = sorted(df["epoch"].unique())
     ax.set_xticks(all_epochs)      
     ax.grid(True, alpha=0.15)
     #ax.set_yscale("log")
     ax.legend(
-      loc="upper left",
-      bbox_to_anchor=(1.01, 1),   # places it just to the right of the plot
-      borderaxespad=0,
-      fontsize=8,
-      framealpha=0.3,
-      ncol = 2
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.12),  # centered, below the x-axis
+        borderaxespad=0,
+        fontsize=7,
+        framealpha=0.3,
+        ncol=10                        # 10 columns so it stays compact horizontally
     )
-    plt.tight_layout()  # make sure this is called AFTER the legend    plt.tight_layout()
+    plt.tight_layout()  # make sure this is called AFTER the legend    
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"Plot saved to {save_path}")
@@ -123,6 +150,67 @@ def plot_loss_histogram(
     print(f"Histogram saved to {save_path}")
 
 
+def plot_keff_scatter(
+    log_path,
+    save_path="../LOGS/keff_scatter_final_epoch.png",
+    beta_eff_pcm=650
+):
+    df = pd.read_csv(log_path)
+
+    # Snapshot at the last epoch
+    final_epoch = df["epoch"].max()
+    df_final = df[df["epoch"] == final_epoch].copy()
+    df_final["abs_delta_rho"] = df_final["delta_rho_pcm"].abs()
+
+    # Color: blue = below beta_eff threshold, red = above
+    colors = ["#4C9EFF" if v <= beta_eff_pcm else "#FF4444"
+              for v in df_final["abs_delta_rho"]]
+
+    fig, ax = plt.subplots(figsize=(7, 5.5))
+
+    ax.scatter(
+        df_final["keff_openmc"],
+        df_final["abs_delta_rho"],
+        c=colors,
+        s=80,           # dot size
+        alpha=0.80,
+        edgecolors="white",
+        linewidths=0.5
+    )
+
+    # β_eff reference line
+    ax.axhline(y=beta_eff_pcm, color="#CC0000", linewidth=1.8,
+               linestyle="--", label=f"β_eff = {beta_eff_pcm} pcm")
+
+    # Optional: label outliers with their sample index
+    threshold = df_final["abs_delta_rho"].quantile(0.90)  # top 10% get labeled
+    for _, row in df_final[df_final["abs_delta_rho"] >= threshold].iterrows():
+        ax.annotate(f"S{int(row['sample_idx'])}",
+                    xy=(row["keff_openmc"], row["abs_delta_rho"]),
+                    xytext=(4, 4), textcoords="offset points",
+                    fontsize=7.5, color="#333333")
+
+    ax.set_xlabel("k_eff (OpenMC)", fontsize=12)
+    ax.set_ylabel("|Δρ| (pcm)", fontsize=12)
+    ax.set_title(f"Final Epoch Error vs. k_eff  [epoch {final_epoch}]", fontsize=13)
+    ax.grid(True, alpha=0.15)
+    ax.legend(fontsize=10, framealpha=0.3)
+
+    # Custom legend patches for the color meaning
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor="#4C9EFF", edgecolor="white", label=f"|Δρ| ≤ β_eff ({beta_eff_pcm} pcm)"),
+        Patch(facecolor="#FF4444", edgecolor="white", label=f"|Δρ| > β_eff ({beta_eff_pcm} pcm)"),
+        plt.Line2D([0], [0], color="#CC0000", linewidth=1.8,
+                   linestyle="--", label=f"β_eff = {beta_eff_pcm} pcm")
+    ]
+    ax.legend(handles=legend_elements, fontsize=9.5, framealpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Scatter plot saved to {save_path}")
+
 def plot_loss_from_csv(
     log_path ,
     save_path = "../LOGS/loss_evolution.png"
@@ -170,8 +258,14 @@ def plot_loss_from_csv(
 #==========================================
 #                MAIN 
 #==========================================
+if __name__ == "__main__":
+    print("Generating keff evolution plot...")
+    plot_keff_pcm(csv_path_val, rhodiff_path_val)
+    #plot_loss_from_csv(log_path)
+    plot_loss_histogram(csv_path_val, hist_path_val)
+    plot_keff_scatter(csv_path_val, scatt_path_val)
 
-print("Generating keff evolution plot...")
-plot_keff_pcm(csv_path, rhodiff_path)
-#plot_loss_from_csv(log_path)
-plot_loss_histogram(csv_path, hist_path)
+    plot_keff_pcm(csv_path_train, rhodiff_path_train)
+    #plot_loss_from_csv(log_path)
+    plot_loss_histogram(csv_path_train, hist_path_train)
+    plot_keff_scatter(csv_path_train, scatt_path_train)

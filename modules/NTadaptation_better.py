@@ -1,5 +1,4 @@
-"""
-=============================================================================
+"""==========================================================================
 PEDS Training Script
 =============================================================================
  
@@ -18,14 +17,11 @@ Architecture overview:
         ▼
   Backprop through solver into NN weights
 
-=============================================================================
-"""
+=========================================================================="""
 import multiprocessing
 import os
-
 multiprocessing.set_start_method("spawn", force=True)
 os.environ["JAX_PLATFORMS"] = "cpu"   # force CPU
-
 import jax
 import jax.numpy as jnp
 import jax.lax as lax
@@ -35,14 +31,11 @@ import optax
 from flax import nnx
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-import time
-from contextlib import contextmanager
-from collections import defaultdict
 import csv
+import time
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
 ctx = mp.get_context("spawn")   # explicit spawn context
-
 import functools
 import threading
 _csv_lock = threading.Lock()
@@ -57,15 +50,18 @@ from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import diffusion_setup, r
 from solvers.NTdiffusion.diffusion_solver import (get_xs_basedon_geo, run_diffusion_solver, is_homogeneous,
     predict_xs, precompute_geometry, xs_layout, build_xs_callables, fn_xs_per_region, bc_to_coeffs, GEOMETRY_CODE)
 
+from NTcode_destructure.timing_utils import timer, print_timing_report, _TIMINGS
+from NTcode_destructure.diagnostics import full_check, solver_floor_check
+from NTcode_destructure.visualize_notused import visualise_results
 
 # ─────────────────────────────────────────────
 # SECTION 0: variables initiation and global constants
 # ─────────────────────────────────────────────
-train_size    = 150
+train_size    = 350
 test_size     = 50
 batch_size    = 25
 epochs        = 100
-exp_name = "prova" 
+exp_name = "4jun3pm_noweight" 
 
 N_WORKERS = min(
     int(os.environ.get("SLURM_CPUS_PER_TASK", 16)),
@@ -75,6 +71,7 @@ print(f"Using {N_WORKERS} parallel workers for solver")
 executor = ProcessPoolExecutor(max_workers=N_WORKERS, mp_context=ctx)
 print(f"SLURM_CPUS_PER_TASK = {os.environ.get('SLURM_CPUS_PER_TASK', 'NOT SET')}", flush=True)
 
+os.makedirs(f"./LOGS/{exp_name}", exist_ok=True)
 val_log_path   = f"./LOGS/{exp_name}/keff_epoch_log_val.csv"
 train_log_path = f"./LOGS/{exp_name}/keff_epoch_log_train.csv"
 # Redirect all print output to a log file
@@ -261,14 +258,8 @@ def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
     phi_adj_flat *= 1.0 / biorth 
     #print(f"bwd sanity: phiadj·F·phi = {float(phi_adj_flat @ Fphi):.6f}  (should be ~1.0)")
 
-    # ── Pad to N_FLAT_MAX so XLA sees a constant shape ──────────────────
-    phi_fwd_padded = np.zeros(N_FLAT_MAX, dtype=np.float32)
-    phi_adj_padded = np.zeros(N_FLAT_MAX, dtype=np.float32)
-    phi_fwd_padded[:len(phi_fwd_flat)] = phi_fwd_flat
-    phi_adj_padded[:len(phi_adj_flat)] = phi_adj_flat
-
-    return np.float32(k), phi_fwd_padded.astype(np.float32), \
-           phi_adj_padded.astype(np.float32)
+    return np.float32(k), phi_fwd_flat.astype(np.float32), \
+           phi_adj_flat.astype(np.float32)
 
 
 # this is the function that runs when gradients are being computed
@@ -288,17 +279,15 @@ def _NTdiff_fwd(xs_tensor, params_raw_single, sample_id):
 
     N_flat = geo_i.G * (I + 1)   # total size of flux vector
 
-    keff, phi_fwd_padded, phi_adj_padded = jax.pure_callback(
+    keff, phi_fwd, phi_adj = jax.pure_callback(
         _run_NT_solver,
         (
             jax.ShapeDtypeStruct((),        jnp.float32),
-            jax.ShapeDtypeStruct((N_FLAT_MAX,), jnp.float32),
-            jax.ShapeDtypeStruct((N_FLAT_MAX,), jnp.float32),
+            jax.ShapeDtypeStruct((N_flat,), jnp.float32),
+            jax.ShapeDtypeStruct((N_flat,), jnp.float32),
         ),
         xs_tensor,  params_raw_single, sample_id
     )  
-    phi_fwd = phi_fwd_padded[:N_flat]
-    phi_adj = phi_adj_padded[:N_flat]
 
     geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
     _, Fphi = Aphi_Fphi_scan(xs_tensor, geo_data, SLAY, phi_fwd)
@@ -352,38 +341,6 @@ NTdiff_solver.defvjp(_NTdiff_fwd, _NTdiff_bwd)
 # SECTION 2: Utils: timings, geometry updates, sanity checks
 # ─────────────────────────────────────────────
 
-# Global registry — stores all measured times
-_TIMINGS = defaultdict(list)
-
-@contextmanager
-def timer(label: str, verbose: bool = True):
-    """
-    Context manager that measures wall time and stores it.
-    Usage:  with timer("forward pass"):
-                result = model(x)
-    """
-    start = time.perf_counter()
-    yield
-    elapsed = time.perf_counter() - start
-    _TIMINGS[label].append(elapsed)
-    if verbose:
-        print(f"  ⏱  {label:<35s} {elapsed*1000:.1f} ms")
-
-def print_timing_report():
-    """Print a summary of all measured times after training."""
-    print("\n" + "="*60)
-    print(f"{'TIMING REPORT':^60}")
-    print("="*60)
-    print(f"{'Step':<35s} {'calls':>6s} {'total(s)':>10s} {'mean(ms)':>10s} {'min(ms)':>10s}")
-    print("-"*60)
-    for label, times in sorted(_TIMINGS.items()):
-        total   = sum(times)
-        mean_ms = (total / len(times)) * 1000
-        min_ms  = min(times) * 1000
-        print(f"{label:<35s} {len(times):>6d} {total:>10.2f} {mean_ms:>10.1f} {min_ms:>10.1f}")
-    print("="*60)
-
-
 def compute_batch_baselines(params_raw: np.ndarray, geo: GeometryConfig) -> jnp.ndarray:
     """
     params_raw: [batch, 6] — un-normalized geometry parameters
@@ -399,520 +356,6 @@ def compute_batch_baselines(params_raw: np.ndarray, geo: GeometryConfig) -> jnp.
     return jnp.array(np.stack(baselines), dtype=jnp.float32)  # [batch, 3, 12]
 
 
-def physics_sanity_check(xs_baseline, params_raw_single, sample_id):
-    """
-    Check gradient signs against physical intuition.
-    Run these BEFORE finite differences — they're faster to interpret.
-    """
-    xs = jnp.array(xs_baseline, dtype=jnp.float32)
-    _, vjp_fn = jax.vjp(NTdiff_solver, xs, params_raw_single, sample_id)
-    grad = np.array(vjp_fn(jnp.ones(()))[0])   # shape (3, 12)
-
-    lay = xs_layout(2)   # G=2
-    print("=== Physics Sanity Check ===")
-
-    for reg_idx, reg_name in enumerate(['b4c_rod', 'fuel_annulus', 'water']):
-        d_keff_d_D      = grad[reg_idx, lay['D']]
-        d_keff_d_Siga   = grad[reg_idx, lay['Sigma_a']]
-        d_keff_d_nuSigf = grad[reg_idx, lay['nuSigma_f']]
-
-        print(f"\nRegion: {reg_name}")
-        print(f"  ∂keff/∂D         = {d_keff_d_D}")
-        print(f"  ∂keff/∂Σ_a       = {d_keff_d_Siga}")
-        print(f"  ∂keff/∂νΣ_f      = {d_keff_d_nuSigf}")
-
-def check_eigenvalue_residual_vs_solver(xs_tensor, geo_i, phi_fwd_flat, k):
-    """
-    Build A and B using the REAL diffusion_setup from MG1D_eigenvalue_nregions,
-    then check if Aphi_Fphi_scan gives the same result.
-    """
-
-    R = geo_i.boundaries[-1].radius
-    I = int(R / geo_i.mesh_size)
-    G = geo_i.G
-    BC_coeffs = bc_to_coeffs(geo_i.bc)
-    geometry_code = GEOMETRY_CODE[geo_i.geometry]
-    r_divisions = [b.radius for b in geo_i.boundaries[:-1]]
-
-    # Build XS callables the same way the solver does
-    D_fn, Sigma_a_fn, nuSigma_f_fn, Sigma_s_fn, chi_fn = \
-        build_xs_callables(np.array(xs_tensor), geo_i)
-
-    # Get the REAL A and B matrices from the solver
-    _, A_real, B_real = diffusion_setup(
-        R, I, G, r_divisions,
-        D_fn, Sigma_a_fn, nuSigma_f_fn, Sigma_s_fn, chi_fn,
-        BC_coeffs, geometry_code
-    )
-
-    phi = np.array(phi_fwd_flat)  # convert from JAX to numpy
-
-    # Reference: what the REAL solver says A·φ and F·φ are
-    Aphi_real = A_real @ phi
-    Fphi_real = B_real @ phi
-
-    # What Aphi_Fphi_scan computes
-    geo_data = _GEO_DATA_CACHE[0]
-    Aphi_scan, Fphi_scan = Aphi_Fphi_scan(xs_tensor, geo_data, SLAY, jnp.array(phi))
-
-    diff_A = np.abs(np.array(Aphi_scan) - Aphi_real)
-    diff_F = np.abs(np.array(Fphi_scan) - Fphi_real)
-
-    print("=== Scan vs Real Solver Matrix Check ===")
-    print(f"  ||A_scan·φ - A_real·φ||_inf  = {diff_A.max():.3e}  at flat idx {diff_A.argmax()}")
-    print(f"  ||F_scan·φ - F_real·φ||_inf  = {diff_F.max():.3e}  at flat idx {diff_F.argmax()}")
-
-    # Per-group breakdown
-    diff_A_2d = diff_A.reshape(G, I+1)
-    diff_F_2d = diff_F.reshape(G, I+1)
-    print("\n  Per-group A mismatch:")
-    for g in range(G):
-        i_w = int(diff_A_2d[g].argmax())
-        print(f"    Group {g+1}: max={diff_A_2d[g,i_w]:.3e} at cell i={i_w}  "
-              f"(i=0:{i_w==0}, i=I:{i_w==I})")
-
-    print("\n  Per-group F mismatch:")
-    for g in range(G):
-        i_w = int(diff_F_2d[g].argmax())
-        print(f"    Group {g+1}: max={diff_F_2d[g,i_w]:.3e} at cell i={i_w}  "
-              f"(i=0:{i_w==0}, i=I:{i_w==I})")
-
-    # Also check eigenvalue residual with the REAL matrices
-    residual_real = Aphi_real - (1.0/k) * Fphi_real
-    print(f"\n  ||A_real·φ - (1/k)·F_real·φ||_inf = {np.abs(residual_real).max():.3e}")
-    print(f"  (should be ≈ solver tolerance ~1e-8)")
-
-
-def diagnose_scan_vs_real_cellwise(xs_tensor, geo_i, phi_fwd_flat, k):
-    """
-    For each cell where A_scan·φ ≠ A_real·φ, decompose the error
-    into which term is responsible: diagonal, left off-diag, right off-diag,
-    scatter-in, or scatter-out.
-    """
-    from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import diffusion_setup, create_grid
-
-    R = geo_i.boundaries[-1].radius
-    I = int(R / geo_i.mesh_size)
-    G = geo_i.G
-    Delta_r = geo_i.mesh_size
-    BC_coeffs = bc_to_coeffs(geo_i.bc)
-    geometry_code = GEOMETRY_CODE[geo_i.geometry]
-    r_divisions = [b.radius for b in geo_i.boundaries[:-1]]
-
-    D_fn, Sa_fn, nF_fn, Ss_fn, chi_fn = build_xs_callables(np.array(xs_tensor), geo_i)
-    _, A_real, _ = diffusion_setup(R, I, G, r_divisions,
-                                    D_fn, Sa_fn, nF_fn, Ss_fn, chi_fn,
-                                    BC_coeffs, geometry_code)
-
-    phi = np.array(phi_fwd_flat)
-
-    phi2d_check = phi.reshape(G, I+1)
-    print(f"\n=== Flux Sanity Check ===")
-    print(f"  phi_fwd_flat norm       = {np.linalg.norm(phi):.6e}")
-    print(f"  phi2d[g=0, i=0:5]      = {phi2d_check[0, :5]}")
-    print(f"  phi2d[g=1, i=0:5]      = {phi2d_check[1, :5]}")
-    print(f"  phi2d[g=0, ghost i=I]  = {phi2d_check[0, I]:.6e}  (expect 0.0)")
-    print(f"  phi2d[g=1, ghost i=I]  = {phi2d_check[1, I]:.6e}  (expect 0.0)")
-    print(f"  max(phi)               = {phi.max():.6e}")
-    print(f"  min(phi)               = {phi.min():.6e}")
-
-    Aphi_real = A_real @ phi
-
-    geo_data = _GEO_DATA_CACHE[0]
-    Aphi_scan = np.array(Aphi_Fphi_scan(xs_tensor, geo_data, SLAY, jnp.array(phi))[0])
-
-    diff_2d     = (Aphi_scan - Aphi_real).reshape(G, I+1)
-    Aphi_real_2d = Aphi_real.reshape(G, I+1)
-    phi2d        = phi.reshape(G, I+1)
-
-    # Recompute geometry arrays exactly as the real solver does
-    _, centers, edges = create_grid(R, I)
-    import jax.numpy as jnp2
-    S = 2.0 * np.pi * edges          # cylindrical surface areas
-    V = np.pi * (edges[1:]**2 - edges[:-1]**2)  # cylindrical volumes
-
-    region_of_cell = geo_data['region_of_cell']
-
-    print(f"\n=== Cell-by-Cell A-matrix Decomposition ===")
-    print(f"  Showing cells where |error| > 1e-6\n")
-
-    for g in range(G):
-        print(f"\n  --- Group {g+1} ---")
-        for i in range(I):
-            err = abs(diff_2d[g, i])
-            if err < 1e-3:
-                continue
-
-            reg   = int(region_of_cell[i])
-            reg_n = int(region_of_cell[min(i+1, I-1)])
-            xs    = np.array(xs_tensor)
-
-            D_g      = float(xs[reg,   SLAY['D']][g])
-            D_g_next = float(xs[reg_n, SLAY['D']][g])
-            Dplus    = 2*D_g*D_g_next / (D_g + D_g_next + 1e-30)
-            Dminus   = 0.0
-            if i > 0:
-                reg_p = int(region_of_cell[i-1])
-                D_g_prev = float(xs[reg_p, SLAY['D']][g])
-                Dminus = 2*D_g_prev*D_g / (D_g_prev + D_g + 1e-30)
-
-            Sig_a    = float(xs[reg, SLAY['Sigma_a']][g])
-            Sig_s_mat = xs[reg, SLAY['Sigma_s']].reshape(G, G)
-            Sig_s_out = sum(Sig_s_mat[g, gp] for gp in range(G) if gp != g)
-
-            # Manual reconstruction of each term
-            diag_leak  = Dplus * S[i+1] / (Delta_r * V[i])
-            diag_total = diag_leak + Sig_a + Sig_s_out
-
-            term_diag   = diag_total * phi2d[g, i]
-            term_right  = -Dplus * S[i+1] / (Delta_r * V[i]) * phi2d[g, i+1]
-            term_left   = Dminus * S[i] / (Delta_r * V[i]) * (phi2d[g,i] - phi2d[g, i-1]) if i > 0 else 0.0
-            term_scatin = -sum(Sig_s_mat[gp, g] * phi2d[gp, i]
-                               for gp in range(G) if gp != g)
-
-            manual_sum  = term_diag + term_right + term_left + term_scatin
-
-            print(f"  cell i={i:3d}  reg={reg}  scan={Aphi_scan[g*(I+1)+i]:.6e}"
-                  f"  real={Aphi_real_2d[g,i]:.6e}  err={diff_2d[g,i]:.3e}")
-            print(f"    manual reconstruction = {manual_sum:.6e}")
-            print(f"    terms: diag={term_diag:.4e}  right={term_right:.4e}"
-                  f"  left={term_left:.4e}  scatin={term_scatin:.4e}")
-            print(f"    Dplus={Dplus:.4f}  Dminus={Dminus:.4f}"
-                  f"  S[i]={S[i]:.4f}  S[i+1]={S[i+1]:.4f}  V[i]={V[i]:.4f}")
-            print("finitooooooooooooo")
-
-
-def finite_difference_gradient_check(xs_tensor, params_raw_single, sample_id,
-                                      rel_eps=1e-3, abs_eps_floor=1e-6):
-    """
-    Gradient check with per-component relative epsilon:
-        ε_i = rel_eps * |xs_i|  (but at least abs_eps_floor)
-    
-    This keeps the perturbation at ~0.1% of each XS value,
-    avoiding both truncation error (ε too large) and
-    cancellation error (ε too small for float32).
-    """
-    # Get k, phi_fwd, phi_adj ONCE — freeze them for both analytic and FD
-    xs = jnp.array(xs_tensor, dtype=jnp.float32)
-    flat_xs = xs.flatten()
-    n = flat_xs.shape[0]        
-    _ = NTdiff_solver(xs, params_raw_single, sample_id)  # warms cache
-    geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
-
-    # Retrieve the frozen fluxes from the last solver call
-    _, (_, k_frozen, phi_fwd_frozen, phi_adj_frozen, _, _) = \
-        _NTdiff_fwd(xs, params_raw_single, sample_id)
-
-    # The same scalar function used in _NTdiff_bwd — phi frozen as constants
-    def scalar_fn(xs_):
-        Aphi, Fphi = Aphi_Fphi_scan(xs_, geo_data, SLAY, phi_fwd_frozen)
-        return jnp.dot(phi_adj_frozen, Aphi) - (1.0 / k_frozen) * jnp.dot(phi_adj_frozen, Fphi)
-
-    # --- Analytic gradient via custom VJP ---
-    _, vjp_fn = jax.vjp(NTdiff_solver, xs, params_raw_single, sample_id)
-    grad_analytic = np.array(vjp_fn(jnp.ones(()))[0]).flatten()
-
-    # --- Numerical gradient with per-component ε ---
-    grad_fd     = np.zeros(n)
-    eps_used    = np.zeros(n)  # log what ε was actually used
-    skipped     = []
-
-    for i in range(n):
-        xi = float(flat_xs[i])
-        print(f"FD grad check: component {i}/{n}, value={xi:.4e}", end="")
-
-        # Skip truly zero components (non-physical — no gradient possible)
-        if abs(xi) < 1e-10:
-            skipped.append(i)
-            continue
-
-        # Relative epsilon, floored to avoid float32 cancellation
-        eps_i = max(rel_eps * abs(xi), abs_eps_floor)
-        eps_used[i] = eps_i
-
-        xs_plus  = flat_xs.at[i].add(+eps_i).reshape(xs.shape)
-        xs_minus = flat_xs.at[i].add(-eps_i).reshape(xs.shape)
-
-        k_plus  = float(scalar_fn(xs_plus))
-        k_minus = float(scalar_fn(xs_minus))
-
-        grad_fd[i] = (k_plus - k_minus) / (2.0 * eps_i)
-
-    # --- Compare only non-skipped components ---
-    active = np.array([i for i in range(n) if i not in skipped])
-    ga = grad_analytic[active]
-    gf = grad_fd[active]
-
-    abs_err = np.abs(ga - gf)
-    rel_err = abs_err / (np.abs(gf) + 1e-30)
-
-    # --- Pretty print per-component table ---
-    lay = xs_layout(GEO.G)  # for label lookup
-    xs_names = []
-    for reg in range(xs.shape[0]):
-        for name, sl in lay.items():
-            for g in range(GEO.G):
-                xs_names.append(f"reg{reg}_{name}_g{g+1}")
-
-
-    def make_xs_label(i, xs_shape, lay, G):
-        """Convert flat index i → human-readable XS name."""
-        n_per_reg = xs_shape[1]
-        reg = i // n_per_reg
-        offset = i % n_per_reg
-        for name, sl in lay.items():
-            indices = list(range(*sl.indices(n_per_reg)))
-            if offset in indices:
-                g = indices.index(offset)
-                return f"reg{reg}_{name}_g{g+1}"
-        return f"reg{reg}_idx{offset}"
-
-    print(f"\n{'='*65}")
-    print(f"  Gradient Check — rel_eps={rel_eps:.0e}, floor={abs_eps_floor:.0e}")
-    print(f"{'='*65}")
-    print(f"  {'Component':<25} {'analytic':>12} {'FD':>12} {'|err|':>10} {'rel_err':>10}")
-    print(f"  {'-'*65}")
-    for j, i in enumerate(active):
-        ref_scale = max(abs(a), abs(f))
-        if ref_scale < 1e-8:
-            flag = ""                  # both are negligible noise — genuinely skip
-        elif abs(f) < 1e-8 and abs(a) >= 1e-8:
-            flag = " FD_UNRESOLVED"   # float32 can't resolve it — not a scan bug
-        elif abs(a) < 1e-8 and abs(f) >= 1e-8:
-            flag = " AD_ZERO !"       # AD says zero, FD disagrees — real concern
-        elif rel > 0.05:
-            flag = " !"               # normal large relative error
-        else:
-            flag = ""
-
-        label = make_xs_label(i, xs.shape, lay, GEO.G)
-        print(f"  {label:<25} {ga[j]:>12.4e} {gf[j]:>12.4e} "
-            f"{abs_err[j]:>10.2e} {rel_err[j]:>10.2e}{flag}")
-
-    print(f"\n  Skipped (zero XS): {skipped}")
-    print(f"  Max  |rel err| : {rel_err.max():.3e}")
-    print(f"  Mean |rel err| : {rel_err.mean():.3e}")
-    print(f"  Components > 5% error: {(rel_err > 0.05).sum()} / {len(active)}")
-    print(f"  (target: < 5% for float32 with converged solver)")
-
-    return grad_analytic.reshape(xs.shape), grad_fd.reshape(xs.shape), rel_err
-    
-
-def diagnose_scan_autodiff(xs_tensor, geo_data, phi_fwd, phi_adj, k):
-    """
-    FD vs vjp check on AphiFphiscan directly.
-    
-    Epsilon strategy:
-      eps_i = max(rel_eps * |xs_i|, abs_floor_factor * eps_machine)
-    
-    - rel_eps: relative step size (default 1e-2 for float32; use 1e-4 for float64)
-    - abs_floor_factor: floor = this * machine_epsilon of the array dtype.
-      Avoids the fixed 1e-6 which was too large for small XS and too small
-      relative to float32's actual noise floor.
-    """
-    print("\n" + "="*65)
-    print("=== Scan Autodiff Diagnostic (FD vs vjp on scan directly) ===")
-    print("="*65)
-
-    # --- Determine machine epsilon from array dtype ---
-    rel_eps = 1e-2
-    abs_floor_factor= 1e2
-    xs_dtype = jnp.array(xs_tensor).dtype
-    eps_machine = float(jnp.finfo(xs_dtype).eps)   # ~1.19e-7 for float32
-    grad_noise_floor = eps_machine * 1e2  # ~1.19e-5 for float32
-    abs_floor = abs_floor_factor * eps_machine       # ~1.19e-5 for float32
-
-    # The scalar function we differentiate — mirrors exactly what _NTdiff_bwd computes
-    def scalar_fn(xs):
-        Aphi, Fphi = Aphi_Fphi_scan(xs, geo_data, SLAY, phi_fwd)
-        return jnp.dot(phi_adj, Aphi) - (1.0 / k) * jnp.dot(phi_adj, Fphi)
-
-    # --- Analytic gradient via jax.grad ---
-    grad_analytic = jax.grad(scalar_fn)(xs_tensor)
-
-    # --- Finite difference gradient ---
-    xs_np = np.array(xs_tensor)
-    grad_fd = np.zeros_like(xs_np)
-    eps_used = np.zeros_like(xs_np) 
-
-    for r in range(xs_np.shape[0]):
-        for m in range(xs_np.shape[1]):
-            val = xs_np[r, m]
-            if abs(val) < abs_floor:
-                continue  # skip true zeros — FD is meaningless there
-            eps_i = max(rel_eps * abs(val), abs_floor)
-            eps_used[r, m] = eps_i       
-
-            xs_p = xs_np.copy(); xs_p[r, m] += eps_i
-            xs_m = xs_np.copy(); xs_m[r, m] -= eps_i
-            fp = float(scalar_fn(jnp.array(xs_p)))
-            fm = float(scalar_fn(jnp.array(xs_m)))
-            grad_fd[r, m] = (fp - fm) / (2 * eps_i)
-
-    grad_fd = jnp.array(grad_fd)
-
-    # --- Report ---
-    G = geo_data['G']
-    reg_names = [r['name'] for r in geo_data['regions']] if 'regions' in geo_data \
-                else [f'reg{r}' for r in range(xs_np.shape[0])]
-    xs_type_names = []
-    for name, sl in SLAY.items():
-        size = (sl.stop - sl.start) if isinstance(sl, slice) else 1
-        for g in range(size):
-            xs_type_names.append(f"{name}_g{g+1}")
-    
-    print(f"  dtype={xs_dtype}, eps_machine={eps_machine:.2e}, abs_floor={abs_floor:.2e}")
-    print(f"  rel_eps={rel_eps:.0e}")
-    print(f"\n  {'Component':<20} {'xs_val':>10s} {'eps_used':>10s} {'analytic':>12} {'FD':>12} {'rel_err':>10}")
-    print(f"  {'-'*68}")
-
-    all_rel = []
-    for r, rname in enumerate(reg_names):
-        for m, xname in enumerate(xs_type_names):
-            a = float(grad_analytic[r, m])
-            f = float(grad_fd[r, m])
-            """ if (abs(f) < 1e-6 or abs(f) == 0) or (abs(a) < 1e-6 or abs(a) == 0):
-                continue
-            if abs(xs_np[r, m]) < abs_floor:
-                continue """
-            rel = abs(a - f) / (abs(f) + 1e-30)
-            
-            ref_scale = max(abs(a), abs(f))
-            if ref_scale <= grad_noise_floor:
-                flag = "noise"  # both are float32 noise — skip
-                #continue    # <-- add this to exclude from allrel
-            elif abs(f) < grad_noise_floor or abs(f) == 0: # and abs(a) >= grad_noise_floor:
-                flag = " FD_UNRESOLVED"     # AD sees it, float32 FD cannot
-            elif abs(a) < grad_noise_floor or abs(a) == 0: # and abs(f) >= grad_noise_floor:
-                flag = " AD_ZERO !"         # AD blind to something FD finds
-            elif rel > 0.05:
-                flag = " !"
-            else:
-                flag = ""
-                all_rel.append(rel)
-
-                
-            eps_i = float(eps_used[r, m])
-            xs_val = float(xs_np[r, m])
-            print(f"  {rname+xname:20s}  {xs_val:10.3e} {eps_i:10.2e} {a:12.4e} {f:12.4e} {rel:10.2e} {flag}")
-            
-    if all_rel:
-        print(f"\n  Max rel error  : {max(all_rel):.3e}")
-        mean_re = sum(all_rel)/len(all_rel)
-        print(f"  Mean rel error : {mean_re:.3e} (target < 1e-2 in relevant)")
-        if mean_re < 1e-2:
-            print("  ✅ Scan autodiff is CORRECT — bug is elsewhere in the pipeline")
-        else:
-            print("  ❌ Scan autodiff is WRONG — bug is inside Aphi_Fphi_scan")
-    print("="*65 + "\n")
-
-
-def diagnose_full_vjp(xs_tensor, params_raw_single, sample_id, rel_eps=1e-2, abs_floor=1e-5):
-    """
-    FD vs. custom VJP check on NTdiffsolver end-to-end.
-    
-    Assumes diagnose_scan_autodiff already passed — so any failure here
-    is definitively inside NTdiffbwd (the custom VJP formula), NOT in AphiFphiscan.
-
-    Uses the same epsilon strategy as diagnose_scan_autodiff for consistency.
-    """
-    print("=" * 65)
-    print("Full Custom VJP Diagnostic — FD vs. NTdiffbwd")
-    print("=" * 65)
-
-    xs = jnp.array(xs_tensor, dtype=jnp.float32)
-    xs_np = np.array(xs)
-
-    # --- Step 1: warm up the cache and get frozen k ---
-    # NTdiffsolver uses pure_callback internally, so k comes from the cache
-    NTdiff_solver(xs, params_raw_single, sample_id)   # warm cache
-    _, (_, k_frozen, phi_fwd_frozen, phi_adj_frozen, Fphi_frozen, _) = _NTdiff_fwd(xs, params_raw_single, sample_id)
-    geodata = _GEO_DATA_CACHE[int(sample_id[0])]
-    print(f"  frozen k = {k_frozen:.6f}")
-
-    # --- Step 2: analytic gradient via custom VJP (triggers NTdiffbwd) ---
-    # jax.vjp with g=1.0 gives dL/dxs where L = k
-    _, vjp_fn = jax.vjp(NTdiff_solver, xs, params_raw_single, sample_id)
-    grad_analytic = np.array(vjp_fn(jnp.ones(()))[0])  
-
-    # --- Step 3: finite difference on NTdiffsolver directly ---
-    # We call the solver as a scalar function: xs -> k
-    def scalar_fn1(xs_in):
-        Aphi, Fphi = Aphi_Fphi_scan(xs_in, geodata, SLAY, phi_fwd_frozen)
-        return float(jnp.dot(phiadj_frozen, Aphi - (1.0 / k_frozen) * Fphi))
-
-    _, Fphi_frozen = Aphi_Fphi_scan(xs, geodata, SLAY, phi_fwd_frozen)
-    phi_adj_Fphi = jnp.dot(phi_adj_frozen, Fphi_frozen)
-    denom = (1.0 / k_frozen**2) * phi_adj_Fphi 
-    
-    def scalar_fn(xs):
-        Aphi, Fphi = Aphi_Fphi_scan(xs, geodata, SLAY, phi_fwd_frozen)
-        num = jnp.dot(phi_adj_frozen, Aphi - (1.0 / k_frozen) * Fphi)
-        return float(-num / denom) 
-        
-    grad_fd = np.zeros_like(xs_np)
-    eps_used = np.zeros_like(xs_np)
-
-    for r in range(xs_np.shape[0]):
-        for m in range(xs_np.shape[1]):
-            val = xs_np[r, m]
-            if abs(val) < abs_floor:
-                continue  # skip true zeros — FD is meaningless
-            epsi = max(rel_eps * abs(val), abs_floor)
-            eps_used[r, m] = epsi
-            xsp = xs_np.copy(); xsp[r, m] += epsi
-            xsm = xs_np.copy(); xsm[r, m] -= epsi
-            grad_fd[r, m] = (scalar_fn(jnp.array(xsp)) - scalar_fn(jnp.array(xsm))) / (2 * epsi)
-
-    # --- Step 4: report ---
-    xs_type_names = []
-    for name, sl in SLAY.items():
-        size = sl.stop - sl.start if isinstance(sl, slice) else 1
-        for g in range(size):
-            xs_type_names.append(f"{name}g{g+1}")
-
-    reg_names = [f"reg{r}" for r in range(xs_np.shape[0])]
-    grad_noise_floor = float(jnp.finfo(jnp.float32).eps) * 1e2  # ~1.19e-5
-
-    print(f"\n  {'Component':<22} {'xs val':>10} {'eps':>10} {'analytic':>12} {'FD':>12} {'rel err':>10}")
-    print(f"  {'-'*70}")
-
-    all_rel = []
-    for r, r_name in enumerate(reg_names):
-        for m, x_name in enumerate(xs_type_names):
-            a = float(grad_analytic[r, m])
-            f = float(grad_fd[r, m])
-            ref_scale = max(abs(a), abs(f))
-            rel = abs(a - f) / (abs(f) + 1e-30)
-            if ref_scale < grad_noise_floor:
-                flag = "  noise!"  
-            elif abs(f) < grad_noise_floor or abs(f) == 0 and abs(a) >= grad_noise_floor:
-                flag = " FD_UNRESOLVED"     # AD sees it, float32 FD cannot
-            elif abs(a) < grad_noise_floor or abs(a) == 0 and abs(f) >= grad_noise_floor:
-                flag = " AD_ZERO !" 
-            elif rel > 0.05:
-                flag = "  !"
-            else:
-                flag = ""
-                all_rel.append(rel)
-
-            label = f"{r_name}/{x_name}"
-            eps_i = float(eps_used[r, m])
-            xs_val = float(xs_np[r, m])
-            print(f"  {label:<22} {xs_val:>10.3e} {eps_i:>10.2e} {a:>12.3e} {f:>12.3e} {rel:>10.2e}{flag}")
-
-    print(f"  {'-'*70}")
-    if all_rel:
-        print(f"  Max rel error  : {max(all_rel):.3e}")
-        mean = sum(all_rel)/len(all_rel)
-        print(f"  Mean rel error : {mean:.3e} (target < 5e-2 for float32)")
-        if mean < 5e-2:
-            print("  ✓ Custom VJP is CORRECT — NTdiffbwd formula is valid")
-        else:
-            print("  ✗ Custom VJP is WRONG — bug is inside NTdiffbwd")
-            print("    → Check: denominator (phiadj·F·phi), dAterm/dFterm chain, sign of numerator")
-    print("=" * 65)
-
 def log_keff_batch(writer, filehandle, epoch, keff_preds, keff_refs, avg_train_loss, avg_val_loss, sample_id_offset=0):
     """Log per-sample keff predictions vs OpenMC reference to a CSV."""
     with _csv_lock:                          # ← protect the whole loop
@@ -925,10 +368,8 @@ def log_keff_batch(writer, filehandle, epoch, keff_preds, keff_refs, avg_train_l
 
 val_logfile   = open(val_log_path, "w", newline="", buffering=1)
 train_logfile = open(train_log_path, "w", newline="", buffering=1)
-
 val_writer   = csv.writer(val_logfile)
 train_writer = csv.writer(train_logfile)
-
 header = ["epoch", "sample_idx", "keff_openmc", "keff_peds", "delta_rho_pcm", "train_loss", "val_loss"]
 val_writer.writerow(header)
 train_writer.writerow(header)
@@ -995,7 +436,6 @@ class GeneratorNN(nnx.Module):
         self.skip_proj = nnx.Linear(layer_sizes[0], layer_sizes[-1], rngs=rngs)
 
         trunk_out = layer_sizes[-1]  # 64
-
         self.heads = nnx.List([
             nnx.Linear(
                 in_features=trunk_out + xs_per_region,  # 64 from trunk + 12 log-baseline for this region
@@ -1007,30 +447,9 @@ class GeneratorNN(nnx.Module):
             for _ in range(n_regions)         # 3 heads: b4c, fuel, water
         ])
 
-        # Build layers as a plain Python list — nnx.Module discovers them
-        # automatically via its attribute-scanning mechanism.
-        """ self.layers = nnx.List([
-            nnx.Linear(
-                in_features=layer_sizes[i],
-                out_features=layer_sizes[i + 1],
-                kernel_init=he_init,
-                bias_init=bias_init,
-                rngs=rngs,          # rngs is passed here so each Linear gets
-            )                        # its own unique initialisation key
-            for i in range(len(layer_sizes) - 1)
-        ]) """
-        #  THE OUTPUT OF THE NN IS THE XS_TENSOR, WHICH HAS SIZE (N_regions, XS_per_region)
         self.n_regions    = n_regions     # 3  (b4c_rod, fuel_annulus, water)
         self.xs_per_region = xs_per_region  # 12  (4*G + G² for G=2)
         # self.resolution = int(layer_sizes[-1] ** 0.5)  # output side-length (5)
-
-        """ self.layers[-1] = nnx.Linear(
-            in_features=layer_sizes[-2],
-            out_features=layer_sizes[-1],
-            kernel_init=nnx.initializers.zeros,   # ← zero init
-            bias_init=nnx.initializers.zeros,
-            rngs=rngs,
-        ) """
 
     def __call__(self, geoms: jnp.ndarray, xs_baselines_log, training: bool = False) -> jnp.ndarray:
         """
@@ -1062,7 +481,6 @@ class GeneratorNN(nnx.Module):
 
         #return jnp.reshape(x, (batch_size, self.n_regions, self.xs_per_region))
         return jnp.stack(region_outputs, axis=1)             # [batch, 3, 12]
-
 
 
 # ─────────────────────────────────────────────
@@ -1275,20 +693,11 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         ],
         boundaries=[15]
     )
-    def lr_with_warmup(step):
-        # `step` here is the optimizer step index; we map it to epochs approximately.
-        # Easiest: convert step to an epoch estimate (integer division):
-        steps_per_epoch = max(1, train_size // batch_size)
-        current_epoch = step // steps_per_epoch
-
-        # Epochs 0,1,2 → fixed 1e-4; from epoch 3 onward → cosine schedule
-        lr_fixed = 1e-4
-        return jnp.where(current_epoch < 3, lr_fixed, lr_schedule(step))
 
     #optimizer = nnx.Optimizer(model, optax.adam(lr_schedule), wrt=nnx.Param)     # nnx.Optimizer couples the model's parameters with an Optax update rule.
     optimizer = nnx.Optimizer(model,
         optax.chain(
-            optax.clip_by_global_norm(0.2),   # ← clips any gradient explosion
+            optax.clip_by_global_norm(0.1),   # ← clips any gradient explosion
             optax.adam(lr_schedule)
         ),
         wrt=nnx.Param
@@ -1432,27 +841,6 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             epoch_loss += float(loss)
 
             print("Running forward pass + AD \n ")
-            """ # Part of training: forward pass + automatic differentiation in one call.
-            # `loss` is a scalar; `grads` is a pytree mirroring model's parameter tree.
-            with timer("train step: forward+backward+update"):
-                with timer("train step: forward+loss+grad"):
-                    loss, grads = grad_fn(model, bp, bk, batch_rawparams_tr, bxs) # model is the call to PEDS 
-                if epoch % 2 == 0:
-                    print(f"for this epoch {epoch}, the loss is {loss}, while the grads pytree structure is presented as follow:")
-                    for i, leaf in enumerate(jax.tree.leaves(grads)):
-                        print(
-                            f"Param {i:2d} | shape: {leaf.shape} | "
-                            f"mean grad: {float(jnp.mean(jnp.abs(leaf))):.2e} | "
-                            f"max grad : {float(jnp.max(jnp.abs(leaf))):.2e}"
-                        ) # this pytree is where the weights and biases are stored 
-                        
-                grad_state = nnx.state(grads) # print this to visualise the full dict
-                epoch_loss += float(loss) 
-                Apply Adam update: grads → moment estimates → parameter delta → model update
-                #   1. Passes grads through the Optax chain (Adam moment updates, LR scaling)
-                #   2. Applies the resulting parameter updates in-place on the model.
-                with timer("train step: optimizer update"):
-                    optimizer.update(model, grads) """
             
             # still inside the epoch loop 
             # ── Collect heatmap snapshot every HEATMAP_INTERVAL epochs ────────
@@ -1489,7 +877,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         val_losses.append(avg_val_loss)
         val_pct_errors.append(avg_pct_err)
 
-        # --- every 5 epochs: update sample_weights based on latest errors ---
+        """ # --- every 5 epochs: update sample_weights based on latest errors ---
         if (epoch + 1) % 5 == 0:
             # Here you would ideally run a training_eval_step over train_geoms/train_keffs
             # For illustration, we show how to use keff_preds / keff_refs if they correspond to training.
@@ -1508,7 +896,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             sample_weights_jax = jnp.array(sample_weights)
 
             print(f"Updated sample weights at epoch {epoch+1}: "
-                f"min={sample_weights.min():.2f}, max={sample_weights.max():.2f}")
+                f"min={sample_weights.min():.2f}, max={sample_weights.max():.2f}") """
 
         if (epoch + 1) % 50 == 0:
             current_lr = float(lr_schedule(epoch))
@@ -1521,7 +909,8 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 f"LR: {current_lr:.2e}"
             )
         # Periodically clear JAX's compilation cache to avoid memory creep
-        jax.clear_caches()
+        if epoch % 50 == 0 and epoch > 0:
+            jax.clear_caches()
         iterations = 0
     
     final_errors = []
@@ -1592,14 +981,14 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             epoch_labels       = XS_HEATMAP_LABELS,
             final_xs           = _snap_final,
             G                  = G,
-            save_path          = "./LOGS/figures/xs_heatmap.png",
+            save_path          = "./LOGS/heatmaps/xs_heatmap.png",
             plot_interval_note = f"snapshot every {HEATMAP_INTERVAL} epochs",
         )
         plot_xs_subplots(
             baseline           = _xs_baseline_ref[0],
             final_xs           = _snap_final,
             G                  = G,
-            save_path          = "./LOGS/figures/xs_subplots.png",
+            save_path          = "./LOGS/heatmaps/xs_subplots.png",
         )
     else:
         print("[xs_heatmap] skipped — no snapshots collected (epochs < HEATMAP_INTERVAL?)")
@@ -1608,167 +997,6 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     return model, train_losses, val_losses, val_pct_errors
 
 
-# ─────────────────────────────────────────────
-# SECTION 6: Visualisation
-# ─────────────────────────────────────────────
-
-def visualise_results(
-    model,
-    test_geoms:   np.ndarray,
-    test_keffs:  np.ndarray,
-    train_losses: list,
-    val_losses:   list,
-    val_pct_errs: list,
-    sample_idx:   int = 0,
-    save_path:    str = "./experiments/coding/figures/MYNT_results.png",
-):
-    """Four-panel figure:
-       (a) pore geometry for one test sample
-       (b) generated conductivity field for that sample
-       (c) training vs validation MSE loss curve
-       (d) validation percentage-error curve
-    """
-    # ── Run one sample through the model ──────────────────────────────────
-    pore_sample   = jnp.array(test_geoms[sample_idx:sample_idx + 1])   # [1,6]
-    kappa_true    = float(test_keffs[sample_idx])
-
-    keff_pred_arr, cond_field = model(pore_sample)
-    keff_pred  = float(keff_pred_arr[0])
-    cond_np     = np.array(cond_field[0])   # [5, 5]
-    pore_np     = np.array(test_geoms[sample_idx])  # [5, 5]
-    pore_np = pore_np.reshape(5, 5)             # force to (5, 5) for imshow
-
-    pct_err = abs(keff_pred - kappa_true) / abs(kappa_true) * 100
-
-    # ── Layout ────────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(16, 10))
-    gs  = gridspec.GridSpec(2, 2, figure=fig, hspace=0.4, wspace=0.35)
-
-    # ── Panel (a): Pore geometry ──────────────────────────────────────────
-    ax_pore = fig.add_subplot(gs[0, 0])
-    im_p = ax_pore.imshow(pore_np, cmap="gray_r", interpolation="nearest",
-                          vmin=0, vmax=1)
-    ax_pore.set_title(f"(a) Pore Geometry (sample {sample_idx})", fontsize=12)
-    ax_pore.set_xlabel("x");  ax_pore.set_ylabel("y")
-    for i in range(pore_np.shape[0]):
-        for j in range(pore_np.shape[1]):
-            ax_pore.text(j, i, f"{int(pore_np[i,j])}", ha="center", va="center",
-                         color="red", fontsize=9)
-    fig.colorbar(im_p, ax=ax_pore, fraction=0.046, pad=0.04, label="Pore (1=solid)")
-
-    # ── Panel (b): Generated conductivity field ───────────────────────────
-    ax_cond = fig.add_subplot(gs[0, 1])
-    im_c = ax_cond.imshow(cond_np, cmap="viridis", interpolation="nearest")
-    ax_cond.set_title(
-        f"(b) Generated Conductivity Field\n"
-        f"κ_pred = {keff_pred:.2f}  |  κ_true = {kappa_true:.2f}  |  err = {pct_err:.1f}%",
-        fontsize=11,
-    )
-    ax_cond.set_xlabel("x");  ax_cond.set_ylabel("y")
-    for i in range(cond_np.shape[0]):
-        for j in range(cond_np.shape[1]):
-            ax_cond.text(j, i, f"{cond_np[i,j]:.1f}", ha="center", va="center",
-                         color="white", fontsize=8)
-    fig.colorbar(im_c, ax=ax_cond, fraction=0.046, pad=0.04, label="Conductivity")
-
-    epochs_range = np.arange(1, len(train_losses) + 1)
-
-    # ── Panel (c): MSE loss curves ────────────────────────────────────────
-    ax_loss = fig.add_subplot(gs[1, 0])
-    ax_loss.plot(epochs_range, train_losses, "b-",  lw=1.5, label="Train MSE")
-    ax_loss.plot(epochs_range, val_losses,   "r--", lw=1.5, label="Val MSE")
-    ax_loss.set_xlabel("Epoch", fontsize=11)
-    ax_loss.set_ylabel("Mean Squared Loss", fontsize=11)
-    ax_loss.set_title("(c) Training & Validation MSE", fontsize=12)
-    ax_loss.set_yscale("log")
-    ax_loss.legend()
-    ax_loss.grid(True, alpha=0.3)
-
-    # ── Panel (d): Validation percentage error ────────────────────────────
-    ax_pct = fig.add_subplot(gs[1, 1])
-    ax_pct.plot(epochs_range, val_pct_errs, "g-", lw=1.5, label="Val % Error")
-    ax_pct.axhline(5.0, color="gray", linestyle="--", lw=1, label="5% target")
-    ax_pct.set_xlabel("Epoch", fontsize=11)
-    ax_pct.set_ylabel("Mean |κ_pred - κ_true| / |κ_true| × 100%", fontsize=10)
-    ax_pct.set_title("(d) Validation Percentage Error", fontsize=12)
-    ax_pct.legend()
-    ax_pct.grid(True, alpha=0.3)
-
-    plt.suptitle("PEDS Run — Single Device, No MPI", fontsize=14, y=1.01)
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"\nFigure saved to: {save_path}")
-
-def solver_floor_check(train_rawparams, train_keffs, n_samples=20):
-    """
-    Bypasses the NN entirely. Directly optimizes XS to match OpenMC k.
-    Tells you: what is the best the diffusion solver can ever achieve?
-    """
-    print("\n" + "="*60)
-    print("=== SOLVER FLOOR CHECK ===")
-    print("="*60)
-
-    # Use a unique sample_id slot that won't collide with training
-    # (training uses IDs 0..train_size-1, we use 9999 here)
-    SENTINEL_ID = 9999
-    sid = jnp.array([SENTINEL_ID], dtype=jnp.int32)
-
-    results = []
-    for i in range(min(n_samples, len(train_rawparams))):
-        geo_i    = update_geo(GEO, train_rawparams[i])
-        k_mc     = float(train_keffs[i])
-        params_i = jnp.array(train_rawparams[i], dtype=jnp.float32)
-
-        # Start from the regression baseline XS for this geometry
-        xs = jnp.array(predict_xs(geo_i), dtype=jnp.float32)
-        print(f"before optimization, sample {i} has starting k = {float(NTdiff_solver(xs, params_i, sid)):.4f} vs k_mc = {k_mc:.4f} \n with a set of baseline xs = {predict_xs(geo_i)}")
-        # Warm up the cache for this sample using the sentinel ID
-        _ = NTdiff_solver(xs, params_i, sid)
-
-        # Simple gradient descent directly on XS — no NN
-        lr = 1e-4   # conservative: XS values are ~O(1), reactivity ~O(1e-4)
-        k_history = []
-
-        for step in range(30):
-            # get gradient dk/dXS via the custom VJP
-            _, vjp_fn = jax.vjp(NTdiff_solver, xs, params_i, sid)
-            k_diff    = float(NTdiff_solver(xs, params_i, sid))
-            k_history.append(k_diff)
-
-            # reactivity residual dL/dk  (derivative of MSE loss w.r.t. k)
-            rho_residual = (k_diff - k_mc) / (k_diff * k_mc)   # in 1/pcm units
-            dL_dk        = 2.0 * rho_residual / (k_diff * k_mc)
-
-            grad_xs = vjp_fn(jnp.array(dL_dk))[0]
-            xs      = xs - lr * grad_xs
-            if step == 1 or step ==10 or step == 20 or step == 29:
-                print(f"the xs after the gradient opti are {xs} with the gradient {grad_xs} and the reactivity residual {rho_residual*1e5} at step {step}")
-
-            # enforce physical positivity — XS cannot be negative
-            xs = jnp.clip(xs, 1e-6, None)
-
-        k_final    = float(NTdiff_solver(xs, params_i, sid))
-        delta_rho  = abs(k_final - k_mc) / (k_final * k_mc) * 1e5
-        k_baseline = float(NTdiff_solver(
-            jnp.array(predict_xs(geo_i), dtype=jnp.float32), params_i, sid))
-        delta_rho_baseline = abs(k_baseline - k_mc) / (k_baseline * k_mc) * 1e5
-
-        log_ratios = jnp.log(xs / jnp.array(predict_xs(geo_i)))
-        print(f"  log_ratio range: [{float(log_ratios.min()):.2f}, {float(log_ratios.max()):.2f}]")
-        print(f"  XS changed by factors: [{float(jnp.exp(log_ratios.min())):.2f}, {float(jnp.exp(log_ratios.max())):.2f}]")
-
-        flag = " ← SOLVER FLOOR (diffusion limit)" if delta_rho > 650 else " ✓ reachable"
-        print(f"  S{i:3d}  k_mc={k_mc:.4f}  "
-              f"baseline_err={delta_rho_baseline:.0f} pcm  "
-              f"optimized_err={delta_rho:.0f} pcm{flag}")
-        results.append(delta_rho)
-
-    results = np.array(results)
-    print(f"\n  Mean optimized error : {results.mean():.0f} pcm")
-    print(f"  Samples above 650 pcm: {(results > 650).sum()} / {len(results)}  "
-          f"(these are diffusion-limited)")
-    print("="*60 + "\n")
-    return results
 
 # ─────────────────────────────────────────────
 # MAIN
@@ -1785,117 +1013,41 @@ if __name__ == "__main__":
         batch_size    = batch_size,
         epochs        = epochs,
         lr_max        = 5e-4,   # cosine schedule peak learning rate
-        lr_min        = 1e-7,   # cosine schedule floor learning rate
+        lr_min        = 5e-6,   # cosine schedule floor learning rate
         hidden_sizes  = [128, 128, 64],  # matches model config m1
         n_regions    = 3,    # b4c_rod, fuel_annulus, water
         G            = 2,    # energy groups
         seed          = 42,
     )
 
-    # ══════════════════════════════════════════════════════════
-    # DEBUG BLOCK 
-    # ══════════════════════════════════════════════════════════
-    #print("Running gradient check BEFORE training...")
-    # Load just one sample to test with
     (train_geoms, train_keffs, train_rawparams), _ = load_data(
         HP["filepath"], HP["train_size"], HP["test_size"], seed=42)
     
-    #solver_floor_check(train_rawparams, train_keffs, n_samples=20)
-
-    """ xs_check     = jnp.array(XS_BASELINE, dtype=jnp.float32)
-    params_check = jnp.array(train_rawparams[0], dtype=jnp.float32)
-    id_check     = jnp.array([0], dtype=jnp.int32)
-
-    print("Warming up solver cache for sample 0...")
-    _ = NTdiff_solver(xs_check, params_check, id_check)   # populates _GEO_DATA_CACHE[0]
-
-    # Now the cache has the geo_data for sample 0
-    geo_data_check = _GEO_DATA_CACHE[0]
-
-    # ── Step 1: Eigenvalue residual (math foundation) ─────────────────────
-    print("\n--- Step 1: Eigenvalue Residual Check ---")
-
-    geo_i_check = update_geo(GEO, np.array(train_rawparams[0]))
-    I_check = int(geo_i_check.boundaries[-1].radius / geo_i_check.mesh_size)
-
-    # Level 1: what does the raw solver return?
-    k_check, phi_fwd_raw, phi_adj_raw = run_diffusion_solver(
-        np.array(xs_check), geo_i_check
+    # ── checks ─────────────────────────────────────────────────────────
+    """ print("Performing a check ....")
+    solver_floor_check(
+        train_rawparams = train_rawparams,
+        train_keffs     = train_keffs,
+        GEO             = GEO,
+        NTdiff_solver   = NTdiff_solver,
+        update_geo      = update_geo,
+        predict_xs      = predict_xs,
+        n_samples       = 10,
     )
-    print(f"\n=== Raw Solver Output (direct call) ===")
-    print(f"  k                        = {k_check:.6f}")
-    print(f"  ||phi_fwd_raw||          = {np.linalg.norm(phi_fwd_raw):.6e}")
-    print(f"  phi_fwd_raw[g=0, i=0:5] = {phi_fwd_raw[0, :5]}")
-    print(f"  phi_fwd_raw[g=1, i=0:5] = {phi_fwd_raw[1, :5]}")
 
-    # Level 2: flatten it yourself (no normalization)
-    N_flat = geo_i_check.G * (I_check + 1)
-    phi_fwd_check_flat = np.zeros(N_flat, dtype=np.float32)
-    for g in range(geo_i_check.G):
-        phi_fwd_check_flat[g*(I_check+1) : g*(I_check+1)+I_check] = phi_fwd_raw[g, :]
-
-    print(f"\n=== After Manual Flattening ===")
-    print(f"  ||phi_fwd_flat||         = {np.linalg.norm(phi_fwd_check_flat):.6e}")
-    print(f"  ghost cell g=0 (i=I)    = {phi_fwd_check_flat[I_check]:.6e}  (expect 0.0)")
-
-    # Level 3: also call _run_NT_solver to see if it matches
-    _ = NTdiff_solver(xs_check, params_check, id_check)  # warm up cache
-    k_nt, phi_nt_flat, _ = _run_NT_solver(np.array(xs_check), params_check, id_check)
-    print(f"\n=== _run_NT_solver Output (for comparison) ===")
-    print(f"  ||phi_nt_flat||          = {np.linalg.norm(phi_nt_flat):.6e}")
-    print(f"  phi_nt_flat[0:5]        = {phi_nt_flat[:5]}")
-    print(f"  Match raw flat?         = {np.allclose(phi_fwd_check_flat, phi_nt_flat, atol=1e-5)}")
-
-    ############
-
-    # Then flatten manually for the diagnostic
-    N_flat = geo_i_check.G * (I_check + 1)
-    phi_fwd_check_flat = np.zeros(N_flat, dtype=np.float32)
-    for g in range(geo_i_check.G):
-        phi_fwd_check_flat[g*(I_check+1) : g*(I_check+1)+I_check] = phi_fwd_raw[g, :]
-
-    print(f"\n=== After Flattening ===")
-    print(f"  ||phi_fwd_flat|| = {np.linalg.norm(phi_fwd_check_flat):.6e}")
-    print(f"  Same values at i=0:5? {np.allclose(phi_fwd_raw[0,:5], phi_fwd_check_flat[:5])}")
-        
-    phi_fwd_jax = jnp.array(phi_fwd_check_flat)
-    # After the cache warmup, pass geo_i (not geo_data)
-    geo_i_check = update_geo(GEO, np.array(train_rawparams[0]))
-    check_eigenvalue_residual_vs_solver(xs_check, geo_i_check, phi_fwd_check_flat, k_check)
-
-    # ── Step 2: Physics sanity check (gradient signs) ─────────────────────
-    print("\n--- Step 2: Physics Sanity Check ---")
-    #physics_sanity_check(xs_check, params_check, id_check)  # already handles its own vjp call internally
-
-    # ── Step 3: Finite difference gradient check ──────────────────────────
-    print("\n--- Step 3.1: check cells assignments ---")
-    diagnose_scan_vs_real_cellwise(xs_check, geo_i_check, phi_fwd_check_flat, k_check)
-
-    # ---- for the gradients check -------
-    print("\n--- Step 3.2: finite difference gradient check ---")
-    check_xs = jnp.array(XS_BASELINE, dtype=jnp.float32)
-    check_sample_id = jnp.array([0], dtype=jnp.int32)
-    k_check, phifwd_check, phiadj_check = _run_NT_solver(
-        check_xs, train_rawparams[0], check_sample_id
-    )
-    geodata_check = _GEO_DATA_CACHE[0]
-    diagnose_scan_autodiff(check_xs, geodata_check,
-        jnp.array(phifwd_check), jnp.array(phiadj_check), k_check)
-    
-    print("--- Step 4: Full Custom VJP Check ---")
-    diagnose_full_vjp(xs_check, params_check, id_check)  """
-        
-    # ══════════════════════════════════════════════════════════
-    print("Checking N_flat distribution across training samples...")
-    n_flats = set()
-    for i in range(len(train_rawparams)):
-        geo_i = update_geo(GEO, train_rawparams[i])
-        R = geo_i.boundaries[-1].radius
-        I = int(R / geo_i.mesh_size)
-        n_flats.add(geo_i.G * (I + 1))
-    print(f"  Unique N_flat values: {sorted(n_flats)}")
-    print(f"  Count: {len(n_flats)}")
+    full_check(
+        train_rawparams = train_rawparams,
+        XS_BASELINE     = XS_BASELINE,
+        GEO             = GEO,
+        NTdiff_solver   = NTdiff_solver,
+        _NTdiff_fwd     = _NTdiff_fwd,
+        _run_NT_solver  = _run_NT_solver,
+        _GEO_DATA_CACHE = _GEO_DATA_CACHE,
+        SLAY            = SLAY,
+        update_geo      = update_geo,
+    ) """
     # ── Train ─────────────────────────────────────────────────────────────
+    
     print("starting the training process... \n")
     model, train_losses, val_losses, val_pct_errs = train(**HP)
     print_timing_report()
