@@ -80,8 +80,8 @@ if __name__ == "__main__":
     ]
 
     csv_to_npz(
-        csv_path="FILES/LHS_full_dataset.csv",
+        csv_path="FILES/LHS_filtered_dataset.csv",
         param_cols=PARAM_COLUMNS,
         keff_col="keff",
-        output_path="FILES/MCruns.npz",
+        output_path="FILES/MCruns_filtered.npz",
     )
