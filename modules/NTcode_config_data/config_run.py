@@ -1,7 +1,7 @@
 # run_config.py
 # definition of specific problems
 
-from config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
+from NTcode_config_data.config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
 
 # TODO create sets of p vectors with general names that can be changed in the loops
 

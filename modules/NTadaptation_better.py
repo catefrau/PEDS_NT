@@ -48,8 +48,8 @@ import threading
 _csv_lock = threading.Lock()
 
 from matrix_JAX_optimized import diffusion_setup_jax, Aphi_Fphi_scan
-from config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
-from config_run import GEO_CYL as GEO
+from NTcode_config_data.config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
+from NTcode_config_data.config_run import GEO_CYL as GEO
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from plot_functions.xs_heatmap import plot_xs_heatmap, plot_xs_subplots
@@ -61,11 +61,11 @@ from solvers.NTdiffusion.diffusion_solver import (get_xs_basedon_geo, run_diffus
 # ─────────────────────────────────────────────
 # SECTION 0: variables initiation and global constants
 # ─────────────────────────────────────────────
-train_size    = 100
-test_size     = 10
+train_size    = 150
+test_size     = 50
 batch_size    = 25
-epochs        = 120
-exp_name = "test" 
+epochs        = 100
+exp_name = "prova" 
 
 N_WORKERS = min(
     int(os.environ.get("SLURM_CPUS_PER_TASK", 16)),
@@ -78,15 +78,13 @@ print(f"SLURM_CPUS_PER_TASK = {os.environ.get('SLURM_CPUS_PER_TASK', 'NOT SET')}
 val_log_path   = f"./LOGS/{exp_name}/keff_epoch_log_val.csv"
 train_log_path = f"./LOGS/{exp_name}/keff_epoch_log_train.csv"
 # Redirect all print output to a log file
-loggy_file = open(f"training_log_{exp_name}.txt", "a", buffering=1)  # buffering=1 = write every line immediately
+loggy_file = open(f"train_log_{exp_name}.txt", "a", buffering=1)  # buffering=1 = write every line immediately
 sys.stdout = loggy_file
 sys.stderr = loggy_file
 print("JAX devices:", jax.devices())
 print("Backend:", jax.default_backend())
 
 # predict the XS with the polynomial reg built in the other code
-# acts as a first guess???
-# TODO remove this and thefunction used 
 XS_BASELINE = get_xs_basedon_geo(GEO)  # HERE I WILL ADD THE NN CONTRIB
 XS_BASELINE = jnp.array(XS_BASELINE, dtype=jnp.float32)   # convert to JAX
 # ----------------------
@@ -204,32 +202,6 @@ def _solve_sample_worker(args):
 
 _EXECUTOR = ProcessPoolExecutor(max_workers=N_WORKERS)
 
-def _run_one_sample(args):
-    """Top-level (picklable) wrapper for one sample."""
-    xs_np, params_np, sample_id_int = args
-    k, phi_fwd, phi_adj = _run_NT_solver(
-        xs_np,
-        jnp.array(params_np),
-        jnp.array([sample_id_int])
-    )
-    return k, phi_fwd, phi_adj
-
-def _run_batch_parallel(xs_batch_np, params_batch_np, batch_size):
-    """Run all samples in the batch concurrently."""
-    args = [
-        (xs_batch_np[i], params_batch_np[i], i)
-        for i in range(batch_size)
-    ]
-    results = list(_EXECUTOR.map(_run_one_sample, args))
-    return results
-
-def _run_batch_parallel_callback(xs_batch, params_batch):
-    # xs_batch and params_batch are NOW real numpy arrays (not tracers!)
-    batch_size = xs_batch.shape[0]
-    args = [(i, xs_batch[i], params_batch[i], i) for i in range(batch_size)]
-    results = list(EXECUTOR.map(solve_sample_worker, args))
-    keffs = np.array([r[1] for r in results], dtype=np.float32)
-    return keffs
 
 # ─────────────────────────────────────────────
 # SECTION 1: Physics Solver
@@ -1335,7 +1307,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         lambda_reg = 1e-3
         #reg = lambda_reg * jnp.mean(xs_log_ratios ** 2)
         xs_log_ratios_clamped = jnp.tanh(xs_log_ratios) * 3.0  # matches your call() method
-        reg = jnp.mean(xs_log_ratios_clamped ** 2)
+        reg = jnp.mean(xs_log_ratios_clamped ** 2) * lambda_reg
         loss_value = loss_core + reg
         return loss_value, keff_pred
     
@@ -1419,7 +1391,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
         # these are the parameters used for the training loop
         for batch_idx, (batch_geoms, batch_keffs, batch_rawparams_tr, batch_baselines) in enumerate(data_loader(
-            train_geoms, train_keffs, train_rawparams, train_xs_baselines, batch_size=batch_size)):
+            train_geoms_shuffled, train_keffs_shuffled, train_rawparams_shuffled, train_xs_baselines_shuffled, batch_size=batch_size)):
             
             bp = jnp.array(batch_geoms) # Convert NumPy → JAX arrays once per batch 
             bk = jnp.array(batch_keffs)
