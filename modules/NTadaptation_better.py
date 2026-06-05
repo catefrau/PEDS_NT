@@ -20,6 +20,10 @@ Architecture overview:
 =========================================================================="""
 import multiprocessing
 import os
+os.environ["JAX_PLATFORMS"] = "cpu"
+os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=1"
+os.environ["XLA_CPU_ENABLE_FAST_MATH"] = "false"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 multiprocessing.set_start_method("spawn", force=True)
 os.environ["JAX_PLATFORMS"] = "cpu"   # force CPU
 import jax
@@ -39,6 +43,9 @@ ctx = mp.get_context("spawn")   # explicit spawn context
 import functools
 import threading
 _csv_lock = threading.Lock()
+import resource
+soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+print(f"Memory limit: soft={soft/1e9:.1f}GB hard={hard/1e9:.1f}GB")
 
 from matrix_JAX_optimized import diffusion_setup_jax, Aphi_Fphi_scan
 from NTcode_config_data.config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
@@ -57,16 +64,18 @@ from NTcode_destructure.visualize_notused import visualise_results
 # ─────────────────────────────────────────────
 # SECTION 0: variables initiation and global constants
 # ─────────────────────────────────────────────
-train_size    = 350
+train_size    = 200
 test_size     = 50
-batch_size    = 25
+batch_size    = 10
 epochs        = 100
-exp_name = "4jun3pm_noweight" 
+exp_name = "4jun6pm_resLearning" 
 
-N_WORKERS = min(
+N_WORKERS = 1 
+""" min(
     int(os.environ.get("SLURM_CPUS_PER_TASK", 16)),
-    batch_size 
-)
+    batch_size, 4 
+) """
+
 print(f"Using {N_WORKERS} parallel workers for solver")
 executor = ProcessPoolExecutor(max_workers=N_WORKERS, mp_context=ctx)
 print(f"SLURM_CPUS_PER_TASK = {os.environ.get('SLURM_CPUS_PER_TASK', 'NOT SET')}", flush=True)
@@ -142,9 +151,9 @@ def _compute_n_flat_max_from_file(filepath: str, geo: GeometryConfig) -> int:
         n_flat_max = max(n_flat_max, geo_i.G * (I + 1))
     return n_flat_max
 
-_DATA_FILEPATH = "../data/highfidelity/MCruns_filtered.npz"
-N_FLAT_MAX = _compute_n_flat_max_from_file(_DATA_FILEPATH, GEO)
-print(f"N_FLAT_MAX computed at module load: {N_FLAT_MAX}")
+#_DATA_FILEPATH = "../data/highfidelity/MCruns_filtered.npz"
+#N_FLAT_MAX = _compute_n_flat_max_from_file(_DATA_FILEPATH, GEO)
+#print(f"N_FLAT_MAX computed at module load: {N_FLAT_MAX}")
 
 # ─────────────────────────────────────────────
 # SECTION 0: Solutions for better runspeed and memory efficiency
@@ -159,7 +168,7 @@ def _compute_n_flat_max(rawparams: np.ndarray) -> int:
         n_flat_max = max(n_flat_max, geo_i.G * (I + 1))
     return n_flat_max
 
-MAX_CACHE_SIZE = 256   # tune based on your RAM
+MAX_CACHE_SIZE = 50   # tune based on your RAM
 from collections import OrderedDict
 
 class LRUCache(OrderedDict):
@@ -180,6 +189,8 @@ def _solve_sample_worker(args):
     args: (i, xs_np, params_np, sample_id_int)
     Returns: (i, k, phi_fwd, phi_adj, geo_data)
     """
+    import os
+    os.environ["JAX_PLATFORMS"] = "cpu"
     t0 = time.perf_counter()
     pid = os.getpid()
 
@@ -451,17 +462,19 @@ class GeneratorNN(nnx.Module):
         self.xs_per_region = xs_per_region  # 12  (4*G + G² for G=2)
         # self.resolution = int(layer_sizes[-1] ** 0.5)  # output side-length (5)
 
-    def __call__(self, geoms: jnp.ndarray, xs_baselines_log, training: bool = False) -> jnp.ndarray:
+    def __call__(self, geoms: jnp.ndarray, xs_baselines_log, delta_k_norm: jnp.ndarray, training: bool = False) -> jnp.ndarray:
         """
         Args:
             geoms:    [batch, 6]  binary pore mask
+            xs_baselines_log: [batch, n_regions, xs_per_region]  log-baseline values
+            delta_k_norm: [batch]  normalized delta k values
             training: flag for layers like Dropout (unused here, kept for API parity)
 
         Returns:
             conductivity_field: [batch,6]  physical conductivity values
         """
-        x = geoms
-        skip = nnx.relu(self.skip_proj(geoms))   # project input to trunk-out dim
+        x = jnp.concatenate([geoms, delta_k_norm], axis=-1)      # [batch, 7]
+        skip = nnx.relu(self.skip_proj(x))   # project input to trunk-out dim
 
         # Apply ReLU on all but the final layer
         """ for layer in self.layers[:-1]:
@@ -498,7 +511,7 @@ class PEDSModel(nnx.Module):
         super().__init__()
         xs_region = fn_xs_per_region(G)            # = 12 for G=2
         output_size = n_regions * xs_region     # = 3 * 12 = 36        
-        layer_sizes = [6] + hidden_sizes #+ [output_size]  # 6 geometry inputs → 36 XS outputs
+        layer_sizes = [7] + hidden_sizes #+ [output_size]  # 6 geometry inputs + delta k residual → 36 XS outputs
     
         # rngs is stored by nnx and thread through all sub-modules that need it
         self.generator = GeneratorNN(layer_sizes=layer_sizes, n_regions=n_regions,
@@ -506,34 +519,29 @@ class PEDSModel(nnx.Module):
         self.n_regions = n_regions
         self.G = G
 
-    def compute_xs(self, geoms, xs_baselines, epoch):
+    def compute_xs(self, geoms, xs_baselines, clip_lo, clip_hi, warmup_scale, delta_k_norm):
         """Pure NN forward — called OUTSIDE jax.grad, returns concrete numpy."""
         batch_size = geoms.shape[0]
-        assert xs_baselines.ndim == 3, \
-            f"xs_baselines must be [batch, n_regions, xs_per_region], got shape {xs_baselines.shape}"
+        dk = jnp.reshape(jnp.array(delta_k_norm, dtype=jnp.float32), (batch_size, 1))
         geoms_flat = jnp.reshape(geoms, (batch_size, 6))
         print(f"the geometry input to the NN is {geoms_flat[0]}!!!!!")
         xs_baselines_safe = jnp.where(xs_baselines > 1e-10, xs_baselines, jnp.ones_like(xs_baselines))
         xs_baselines_log = jnp.log(xs_baselines_safe)  # zeros become log(1)=0, not -inf
-        xs_log_ratios = self.generator(geoms_flat, xs_baselines_log, training=False)
+        xs_log_ratios = self.generator(geoms_flat, xs_baselines_log, dk, training=False)
         
-        # Same clipping as __call__
+        xs_log_ratios = xs_log_ratios * warmup_scale 
         mult = jnp.exp(xs_log_ratios)
-        if epoch is not None and epoch < 3:
-            mult = jnp.clip(mult, 0.8, 1.2)
-        elif epoch is not None and epoch < 15:
-            mult = jnp.clip(mult, 0.5, 2.0)
-        else:
-            mult = jnp.clip(mult, 0.3, 3.0)
-        
+        mult = jnp.clip(mult, clip_lo, clip_hi)
+
         xs_final = mult * xs_baselines
         
         return np.array(xs_final)   # ← concrete numpy, exits JAX world
 
-    def __call__(self, geoms: jnp.ndarray, params_raw, xs_baselines, epoch, training: bool = False, sample_id_offset=0):
+    def __call__(self, geoms: jnp.ndarray, params_raw, xs_baselines, clip_lo, clip_hi, warmup_scale, delta_k_norm, training: bool = False, sample_id_offset=0):
         """
         Args:
             geoms: [batch,6] binary pore geometry (flattened inside)
+            delta_k_norm: [batch]  normalized delta k values 
 
         Returns:
             keff:               [batch]    effective thermal conductivity
@@ -541,6 +549,8 @@ class PEDSModel(nnx.Module):
         """
         batch_size = geoms.shape[0]
         geoms_flat = jnp.reshape(geoms, (batch_size, 6))  # flatten spatial dims
+        dk = jnp.reshape(delta_k_norm, (batch_size, 1))          # ensure [batch, 1]
+
 
         # NN outputs log-ratios relative to XS_SCALE (the fixed default-geometry reference).
         # exp(0) * XS_SCALE = XS_SCALE at init; the NN freely learns any multiplier during training.
@@ -548,8 +558,8 @@ class PEDSModel(nnx.Module):
             xs_baselines_safe = jnp.where(xs_baselines > 1e-10, xs_baselines, jnp.ones_like(xs_baselines))
             xs_baselines_log = jnp.log(xs_baselines_safe)  # zeros become log(1)=0, not -inf
 
-            xs_log_ratios = self.generator(geoms_flat, xs_baselines_log, training)       # [batch, 3, 12], values near 0 at init
-            warmup_scale = jnp.clip(epoch / 10.0, 0.0, 1.0) if epoch is not None else 1.0
+            xs_log_ratios = self.generator(geoms_flat, xs_baselines_log, dk, training)       # [batch, 3, 12], values near 0 at init
+            #warmup_scale = jnp.clip(epoch / 10.0, 0.0, 1.0) if epoch is not None else 1.0
             xs_log_ratios = xs_log_ratios * warmup_scale
         
         #xs_log_ratios_clamped = jnp.tanh(xs_log_ratios) * 3.0  # restricts to (-2, +2) → factors of (0.14x, 7.4x)
@@ -557,15 +567,8 @@ class PEDSModel(nnx.Module):
         
         #xs_final = jnp.exp(xs_log_ratios) * xs_baselines              # [batch, 3, 12], always positive
         mult = jnp.exp(xs_log_ratios)           # [b,3,12]
-        if epoch is not None:
-            if epoch < 3:
-                mult = jnp.clip(mult, 0.8, 1.2)   # very gentle at start
-            elif epoch < 15:
-                mult = jnp.clip(mult, 0.5, 2.0)   # as now
-            else:
-                mult = jnp.clip(mult, 0.3, 3.0)   # allow stronger moves late
-        else:
-            mult = jnp.clip(mult, 0.5, 2.0)
+        mult = jnp.clip(mult, clip_lo, clip_hi)
+
         xs_final = mult * xs_baselines
         #print("RUNNING a gradients physics check ")
         #physics_sanity_check(xs_baselines[0])        
@@ -601,6 +604,18 @@ def data_loader(*arrays, batch_size: int):
     n_samples = arrays[0].shape[0]
     for start in range(0, n_samples, batch_size):
         yield tuple(arr[start:start + batch_size] for arr in arrays)
+
+def compute_k_reg_batch(rawparams: np.ndarray) -> np.ndarray:
+    """Run the baseline solver (no NN) for every sample. Returns k_reg array [N]."""
+    k_regs = []     # the k eff produced from the polinomial regression
+    for i, p in enumerate(rawparams):
+        geo_i  = update_geo(GEO, p)
+        xs_i   = np.array(predict_xs(geo_i), dtype=np.float32)   # baseline XS, no NN
+        k, _, _ = _run_NT_solver(xs_i, p, np.array([i], dtype=np.int32))
+        k_regs.append(float(k))
+        if i % 20 == 0:
+            print(f"  k_reg precompute {i}/{len(rawparams)}", flush=True)
+    return np.array(k_regs, dtype=np.float32)
 
 
 def load_data(filepath: str, train_size: int, test_size: int, seed: int = 42):
@@ -645,8 +660,19 @@ def load_data(filepath: str, train_size: int, test_size: int, seed: int = 42):
     print(f"  Train keff mean:  {keffs[train_idx].mean():.3f}  std: {keffs[train_idx].std():.3f}")
     print(f"  Test  keff mean:  {keffs[test_idx].mean():.3f}   std: {keffs[test_idx].std():.3f}")
  
-    return (geoms[train_idx], keffs[train_idx], rawparams[train_idx]), (geoms[test_idx], keffs[test_idx], rawparams[test_idx])
+    # compute baseline keff for every sample (done once here, not inside the epoch loop)
+    print("Precomputing k from the regression baseline for all samples …")
+    all_rawparams = np.concatenate([rawparams[train_idx], rawparams[test_idx]], axis=0)
+    # keep ordering: first train_size entries = train, last test_size = test
+    k_reg_train = compute_k_reg_batch(rawparams[train_idx])
+    k_reg_test  = compute_k_reg_batch(rawparams[test_idx])
+    print(f"  k_reg_train range: {k_reg_train.min():.4f} - {k_reg_train.max():.4f}")
+    print(f"  k_reg_test  range: {k_reg_test.min():.4f}  - {k_reg_test.max():.4f}")
 
+    return (
+        (geoms[train_idx], keffs[train_idx], rawparams[train_idx], k_reg_train),
+        (geoms[test_idx],  keffs[test_idx],  rawparams[test_idx],  k_reg_test),
+    )
 # ─────────────────────────────────────────────
 # SECTION 5: Training Loop
 # ─────────────────────────────────────────────
@@ -658,7 +684,8 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     
     # ── 5.1  Data ──────────────────────────────────────────────────────────
     print("Loading data …")
-    (train_geoms, train_keffs, train_rawparams), (test_geoms, test_keffs, test_rawparams) = load_data(
+    (train_geoms, train_keffs, train_rawparams, train_k_reg), \
+    (test_geoms,  test_keffs,  test_rawparams,  test_k_reg) = load_data(
         filepath, train_size, test_size, seed
     )   # train_geoms is a numpy array of shape (train_size, 6), while train_keffs is a numpy array of shape (train_size,) 
     print(f"Data loaded: {train_geoms.shape[0]} training samples, {test_geoms.shape[0]} test samples.")
@@ -674,11 +701,23 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     print(f"Train keff range: {train_keffs.min():.3f} – {train_keffs.max():.3f}")
     print(f"Test  keff range: {test_keffs.min():.3f}  – {test_keffs.max():.3f}")
 
-    global N_FLAT_MAX
+    """ global N_FLAT_MAX
     all_rawparams = np.concatenate([train_rawparams, test_rawparams], axis=0)
     N_FLAT_MAX = _compute_n_flat_max(all_rawparams)
-    print(f"N_FLAT_MAX = {N_FLAT_MAX}  (XLA will compile one kernel variant)")
+    print(f"N_FLAT_MAX = {N_FLAT_MAX}  (XLA will compile one kernel variant)") """
     
+    # ── Δk normalization — fit on train, apply everywhere ────────────────
+    # Convert to pcm so the feature is O(100–5000) instead of O(1e-4).
+    train_delta_k_pcm = (train_keffs - train_k_reg) * 1e5        # [train_size]
+    train_dk_mean = float(train_delta_k_pcm.mean())
+    train_dk_std  = float(train_delta_k_pcm.std()) + 1e-8         # guard /0
+    print(f"Δk normalization: mean={train_dk_mean:.1f} pcm  std={train_dk_std:.1f} pcm")
+
+    # Normalized arrays — shape [N], dtype float32, O(1) magnitude
+    train_delta_k_norm = ((train_delta_k_pcm - train_dk_mean) / train_dk_std).astype(np.float32)
+    test_delta_k_norm  = (((test_keffs - test_k_reg) * 1e5 - train_dk_mean) / train_dk_std).astype(np.float32)
+    # ← test uses TRAIN stats: no data leakage
+
     # ── 5.2  Model & Optimiser ─────────────────────────────────────────────
     # nnx.Rngs(seed) creates a named-key container to get a fresh, unique PRNGKey.
     rngs  = nnx.Rngs(seed)
@@ -703,11 +742,11 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         wrt=nnx.Param
     )
     # ── 5.3  Loss / gradient function ─────────────────────────────────────
-    def loss_fn(model, geoms, keffs_true, rawparams_batch, xs_baselines_batch, batch_weights, epoch):
+    def loss_fn(model, geoms, keffs_true, rawparams_batch, xs_baselines_batch, batch_weights, clip_lo, clip_hi, warmup_scale, delta_k_norm_batch):
         # model is passed explicitly so nnx.value_and_grad knows which pytree to differentiate with respect to.
         with timer("loss_fn forward pass", verbose=False):
-            keff_pred, xs_final, xs_log_ratios = model(geoms, rawparams_batch, xs_baselines_batch, epoch, training=True) # keff predicted by PEDS model
-            print(f"the prediction gives a keff of {keff_pred} (size {keff_pred.size}), \n compared to {keffs_true} (size {keffs_true.size})")
+            keff_pred, xs_final, xs_log_ratios = model(geoms, rawparams_batch, xs_baselines_batch, clip_lo, clip_hi, warmup_scale, delta_k_norm_batch, training=True) # keff predicted by PEDS model
+            #print(f"the prediction gives a keff of {keff_pred} (size {keff_pred.size}), \n compared to {keffs_true} (size {keffs_true.size})")
         
         sq_errors = (keff_pred - keffs_true) ** 2      # [batch]
         loss_core = jnp.mean(sq_errors)               # simple MSE in k
@@ -725,7 +764,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)  # returning (loss_value, grad_pytree_of_model_params)
 
     # ── 5.4  Validation helper ─────────────────────────────────────────────
-    def validation_step(geoms_np, keffs_np, rawparams_np):
+    def validation_step(geoms_np, keffs_np, rawparams_np, delta_k_norm_np):
         """Compute mean squared loss and mean percentage error over the test set.
             Also returns per-sample keff_pred and keff_ref arrays for logging."""
 
@@ -733,15 +772,17 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         total_pct = 0.0
         all_keff_pred = []
         all_keff_ref  = []
-        for batch_idx, (batch_geoms, batch_keffs, batch_rawparams, batch_xs_baselines) in enumerate(data_loader(geoms_np, keffs_np, rawparams_np, test_xs_baselines, batch_size=batch_size)):
-            # the batch index is always 0 because the test set is smaller than the batch size, so we only have one batch containing the whole test set.
+        for batch_idx, (batch_geoms, batch_keffs, batch_rawparams, batch_xs_baselines, batch_dk_norm) in enumerate(data_loader(
+            geoms_np, keffs_np, rawparams_np, test_xs_baselines, delta_k_norm_np,
+            batch_size=batch_size)):
+
             global_start = batch_idx * batch_size
             batch_indices = jnp.arange(global_start, global_start + len(batch_geoms))
             batch_weights = sample_weights_jax[batch_indices]
             batch_geoms_jax = jnp.array(batch_geoms)
 
             # ── Pre-solve in parallel, same as training ────────────────────
-            xs_np = model.compute_xs(batch_geoms_jax, jnp.array(batch_xs_baselines), epoch=epoch)
+            xs_np = model.compute_xs(batch_geoms_jax, jnp.array(batch_xs_baselines),  j_clip_lo, j_clip_hi, j_warmup, delta_k_norm=jnp.array(batch_dk_norm))
             args_list = [
                 (i, xs_np[i], np.array(batch_rawparams[i]), i + global_start, -1)
                 for i in range(len(batch_geoms))
@@ -753,8 +794,8 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 _PRESOLVE_CACHE[i + global_start] = (k, phi_fwd, phi_adj, geo_data)
             # ──────────────────────────────────────────────────────────────
 
-            keff_pred, _, xs_log_ratios = model(batch_geoms_jax, batch_rawparams, 
-            xs_baselines=batch_xs_baselines, epoch=epoch, training=False, sample_id_offset=global_start)  
+            keff_pred, _, xs_log_ratios = model(batch_geoms_jax, batch_rawparams, xs_baselines=batch_xs_baselines, 
+                clip_lo=j_clip_lo, clip_hi=j_clip_hi, warmup_scale=j_warmup, delta_k_norm=jnp.array(batch_dk_norm), training=False, sample_id_offset=global_start)  
             sq_err  = jnp.mean((keff_pred - batch_keffs) ** 2) # squared error
             pct_err = jnp.mean(jnp.abs(keff_pred - batch_keffs) / jnp.abs(batch_keffs) * 100.0) # percent error
             total_sq  += float(sq_err)
@@ -791,22 +832,36 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         count += 1
         print(f"entering the epoch loop, at epoch {epoch} which is")
         epoch_loss = 0.0
-        
+        # ── compute concrete clip bounds once per epoch ──────────────────
+        if epoch < 3:
+            clip_lo, clip_hi = 0.8, 1.2
+        elif epoch < 15:
+            clip_lo, clip_hi = 0.5, 2.0
+        else:
+            clip_lo, clip_hi = 0.3, 3.0
+        warmup_scale = float(np.clip(epoch / 10.0, 0.0, 1.0))
+        # convert to JAX arrays so they're runtime values, not compile-time constants
+        j_clip_lo     = jnp.array(clip_lo,     dtype=jnp.float32)
+        j_clip_hi     = jnp.array(clip_hi,     dtype=jnp.float32)
+        j_warmup      = jnp.array(1.0, dtype=jnp.float32)
+
         shuffle_idx = np.random.permutation(train_size)
         train_geoms_shuffled    = train_geoms[shuffle_idx]
         train_keffs_shuffled    = train_keffs[shuffle_idx]
         train_rawparams_shuffled = train_rawparams[shuffle_idx]
         train_xs_baselines_shuffled = np.array(train_xs_baselines)[shuffle_idx]
+        train_delta_k_norm_shuffled = train_delta_k_norm[shuffle_idx]   # add this line
 
-        # these are the parameters used for the training loop
-        for batch_idx, (batch_geoms, batch_keffs, batch_rawparams_tr, batch_baselines) in enumerate(data_loader(
-            train_geoms_shuffled, train_keffs_shuffled, train_rawparams_shuffled, train_xs_baselines_shuffled, batch_size=batch_size)):
-            
+        for batch_idx, (batch_geoms, batch_keffs, batch_rawparams_tr,
+                        batch_baselines, batch_dk_norm) in enumerate(data_loader(
+            train_geoms_shuffled, train_keffs_shuffled, train_rawparams_shuffled,
+            train_xs_baselines_shuffled, train_delta_k_norm_shuffled, batch_size=batch_size)):
+
             bp = jnp.array(batch_geoms) # Convert NumPy → JAX arrays once per batch 
             bk = jnp.array(batch_keffs)
             bxs = jnp.array(batch_baselines)  
             # Step 1: get concrete xs from NN (outside trace)
-            xs_np = model.compute_xs(bp, bxs, epoch=epoch)   # concrete numpy [batch, 3, 12]
+            xs_np = model.compute_xs(bp, bxs, j_clip_lo, j_clip_hi, j_warmup, delta_k_norm=jnp.array(batch_dk_norm))   # concrete numpy [batch, 3, 12]
                 # Step 0: build batch_weights from global indices
             global_start   = batch_idx * batch_size
             batch_len      = len(batch_geoms)
@@ -827,7 +882,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             with timer("train step: forward+backward+optiupd"):
                 with timer("train step: forward+loss+grad"):    
                     (loss, keff_preds_batch), grads = grad_fn(model, bp, 
-                                bk, batch_rawparams_tr, bxs, batch_weights, epoch)
+                                bk, batch_rawparams_tr, bxs, batch_weights, j_clip_lo, j_clip_hi, j_warmup, jnp.array(batch_dk_norm))
 
             with timer("train step: optimizer update"):            
                 optimizer.update(model, grads)
@@ -849,10 +904,11 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 _snap_baseline    = np.array(predict_xs(_snap_geo_i))            # (3, 12) guaranteed
                 _snap_baselines_log = np.log(np.where(_snap_baseline > 1e-10, _snap_baseline, np.ones_like(_snap_baseline)))  # log of baseline, with safe fallback
                 _snap_baselines_log_batched = _snap_baselines_log[np.newaxis, :, :]  # (1, 3, 12) ← add batch dim
+                _snap_dk_norm = jnp.zeros((1, 1), dtype=jnp.float32)
 
                 _snap_geom_flat   = jnp.array(train_geoms[0:1])                  # (1, 6)
                 _snap_log_ratios = np.array(
-                    model.generator(_snap_geom_flat, _snap_baselines_log_batched, training=False)[0]  # (3, 12), log-ratios
+                    model.generator(_snap_geom_flat, _snap_baselines_log_batched, _snap_dk_norm,  training=False)[0]  # (3, 12), log-ratios
                 )
                 _snap_final = np.exp(_snap_log_ratios) * np.array(XS_SCALE)  # (3, 12), absolute XS
 
@@ -866,7 +922,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         avg_train_loss = epoch_loss / train_size
         # Validation (no gradient tracking needed)
         with timer("validation step"):
-            avg_val_loss, avg_pct_err, keff_preds, keff_refs = validation_step(test_geoms, test_keffs, test_rawparams)
+            avg_val_loss, avg_pct_err, keff_preds, keff_refs = validation_step(test_geoms, test_keffs, test_rawparams, test_delta_k_norm)
 
         # ── Write per-sample keff values to the log file ─────────────────────
         log_keff_batch(val_writer, val_logfile, epoch, keff_preds, keff_refs, avg_train_loss, avg_val_loss)
@@ -909,7 +965,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 f"LR: {current_lr:.2e}"
             )
         # Periodically clear JAX's compilation cache to avoid memory creep
-        if epoch % 50 == 0 and epoch > 0:
+        if epoch % 20 == 0 and epoch > 0:
             jax.clear_caches()
         iterations = 0
     
@@ -1020,8 +1076,6 @@ if __name__ == "__main__":
         seed          = 42,
     )
 
-    (train_geoms, train_keffs, train_rawparams), _ = load_data(
-        HP["filepath"], HP["train_size"], HP["test_size"], seed=42)
     
     # ── checks ─────────────────────────────────────────────────────────
     """ print("Performing a check ....")
@@ -1051,12 +1105,12 @@ if __name__ == "__main__":
     print("starting the training process... \n")
     model, train_losses, val_losses, val_pct_errs = train(**HP)
     print_timing_report()
+
     # ── Reload test set for final visualisation ───────────────────────────
-    _, (test_geoms, test_keffs, test_rawparams) = load_data(
+    """ _, (test_geoms, test_keffs, test_rawparams) = load_data(
         HP["filepath"], HP["train_size"], HP["test_size"], HP["seed"]
     )
-    executor.shutdown(wait=True)
-
+    executor.shutdown(wait=True) """
 
     # ── Visualise ─────────────────────────────────────────────────────────
  
