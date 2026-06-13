@@ -1,5 +1,5 @@
 """==========================================================================
-PEDS  —  VERSION 2: no heads, and k_reg instead of delta k as input feature
+PEDS  —  VERSION 3: gradients clipping + cosine LR schedule + no skip connection
 ==========================================================================
 
 =========================================================================="""
@@ -63,13 +63,14 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-EXP_NAME   = "v2_kreg_noskip"
+EXP_NAME   = "v3_gradclip_cosine"
 TRAIN_SIZE = 400
 TEST_SIZE  = 100
 BATCH_SIZE = 25
 EPOCHS     = 100
 
-LR         = 5e-4        # constant learning rate — no schedule in v1
+LR_max     = 5e-4   # cosine schedule peak learning rate
+LR_min     = 5e-6
 SEED       = 42
 
 # Epochs at which XS heatmap snapshots are saved.
@@ -912,7 +913,7 @@ def _save_flux_plots(
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 8: Training
 # ─────────────────────────────────────────────────────────────────────────────
-def train(filepath, train_size, test_size, batch_size, epochs, lr,
+def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
           hidden_sizes, n_regions, G, seed):
 
     # ── 8.1 Data ─────────────────────────────────────────────────────────────
@@ -931,7 +932,20 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr,
     # ── 8.2 Model — v1: plain Adam, constant LR, NO grad clip ────────────────
     rngs      = nnx.Rngs(seed)
     model     = PEDSModel(hidden_sizes=hidden_sizes, n_regions=n_regions, G=G, rngs=rngs)
-    optimizer = nnx.Optimizer(model, optax.adam(lr), wrt=nnx.Param)
+    # cosine decay schedule + grads clipping
+    lr_schedule = optax.cosine_decay_schedule(
+        init_value=lr_max,
+        decay_steps=epochs * (train_size // batch_size),
+        alpha=lr_min / lr_max,   # final lr = lr_max * alpha = lr_min
+    )
+    optimizer = nnx.Optimizer(
+        model,
+        optax.chain(
+            optax.clip_by_global_norm(1.0),   # clip before Adam sees the gradient
+            optax.adam(lr_schedule),
+        ),
+        wrt=nnx.Param,
+    )
 
     # ── 8.3 Loss — pure MSE, NO regularization ───────────────────────────────
     def loss_fn(model, geoms, keffs_true, rawparams_batch,
@@ -967,6 +981,8 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr,
         t_raw     = train_rawparams[idx]
         t_base    = np.array(train_xs_baselines)[idx]
         t_dk      = train_k_reg_norm[idx]
+        current_lr = float(lr_schedule(optimizer.step.value))
+        print(f"Epoch {epoch:4d} | LR = {current_lr:.2e}")
 
         epoch_loss = 0.0
         all_kp_train, all_kr_train = [], []
@@ -1112,7 +1128,8 @@ if __name__ == "__main__":
         test_size   = TEST_SIZE,
         batch_size  = BATCH_SIZE,
         epochs      = EPOCHS,
-        lr          = LR,
+        lr_max        = LR_max,   # cosine schedule peak learning rate
+        lr_min        = LR_min,        
         hidden_sizes= [128, 128, 64],
         n_regions   = 3,
         G           = 2,
