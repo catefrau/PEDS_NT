@@ -489,7 +489,7 @@ def _plot_fluxes(x, geo: GeometryConfig,
     interfaces = [(b.name, b.radius) for b in geo.boundaries[:-1]] if not homo else []
 
     fig, ax = plt.subplots(figsize=(9, 5))
-    every = max(1, len(x) // 14)
+    every = max(1, len(x) // 30)
 
     for g, g_label in enumerate(group_labels):
         c = _GROUP_COLORS[g % len(_GROUP_COLORS)]
@@ -506,7 +506,7 @@ def _plot_fluxes(x, geo: GeometryConfig,
 
     for name, r_int in interfaces:
         ax.axvline(r_int, color="gray", ls=":", lw=1.5,
-                   label=f"{name} @ r = {r_int} cm")
+                   label=f"{name} @ r = {r_int:.2f} cm")
 
     enrich_tag = f"  |  enrich = {enrich:.1f}%" if enrich is not None else ""
     title = (f"{group_str}  |  {homo_str}  |  {geom_str}"
