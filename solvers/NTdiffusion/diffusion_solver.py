@@ -499,7 +499,7 @@ def _plot_fluxes(x, geo: GeometryConfig,
                 label=f"Num Adj  - {g_label}  φ*")                
         if an_fwd_groups is not None:
             ax.plot(x, an_fwd_groups[g], "o", color=c[2], ms=4,
-                    markevery=(0, every), label=f"Analytic Fwd - {g_label}")
+                    markevery=(0, every), label=f"Baseline (regression) - {g_label}")  # was Analytic Fwd 
         if an_adj_groups is not None:
             ax.plot(x, an_adj_groups[g], "s", color=c[3], ms=4,
                     markevery=(every//2, every), label=f"Analytic Adj - {g_label} φ*")
