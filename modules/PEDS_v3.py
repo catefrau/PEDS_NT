@@ -63,7 +63,7 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-EXP_NAME   = "v3_gradclip_cosine"
+EXP_NAME   = "v3_moreclip"
 TRAIN_SIZE = 400
 TEST_SIZE  = 100
 BATCH_SIZE = 25
@@ -390,10 +390,11 @@ class PEDSModel(nnx.Module):
     def __call__(self, geoms, params_raw, xs_baselines, k_reg_norm,
                  training: bool = False, sample_id_offset: int = 0):
         batch_size = geoms.shape[0]
-        dk  = jnp.reshape(k_reg_norm, (batch_size, 1))
+        k_reg  = jnp.reshape(k_reg_norm, (batch_size, 1))
         log_base   = self._log_baselines(xs_baselines)
-        log_ratios = self.generator(geoms, log_base, dk, training)
-        # ── v1: NO clip, NO warmup ─────────────────────────────────────────
+        log_ratios = self.generator(geoms, log_base, k_reg, training)
+        log_ratios = jnp.clip(log_ratios, -0.7, 0.5)  # exp(±0.7) ≈ 0.5x to 2x
+
         xs_final = jnp.exp(log_ratios) * xs_baselines  # [batch, 3, 12]
 
         with timer("forward: solver loop (all samples)", verbose=False):
@@ -941,7 +942,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     optimizer = nnx.Optimizer(
         model,
         optax.chain(
-            optax.clip_by_global_norm(1.0),   # clip before Adam sees the gradient
+            optax.clip_by_global_norm(0.5),   # clip before Adam sees the gradient
             optax.adam(lr_schedule),
         ),
         wrt=nnx.Param,

@@ -47,7 +47,7 @@ import resource
 soft, hard = resource.getrlimit(resource.RLIMIT_AS)
 print(f"Memory limit: soft={soft/1e9:.1f}GB hard={hard/1e9:.1f}GB")
 
-from matrix_JAX_optimized import diffusion_setup_jax, Aphi_Fphi_scan
+from matrix_JAX_optimized import diffusion_setup_jax, Aphi_Fphi_scan, Aphi_Fphi_vjp
 from NTcode_config_data.config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
 from NTcode_config_data.config_run import GEO_CYL as GEO
 import sys
@@ -64,17 +64,16 @@ from NTcode_destructure.visualize_notused import visualise_results
 # ─────────────────────────────────────────────
 # SECTION 0: variables initiation and global constants
 # ─────────────────────────────────────────────
-train_size    = 200
-test_size     = 50
+train_size    = 400
+test_size     = 100
 batch_size    = 10
 epochs        = 100
-exp_name = "4jun6pm_resLearning" 
+exp_name = "5jun6pm_workers" 
 
-N_WORKERS = 1 
-""" min(
+N_WORKERS = min(
     int(os.environ.get("SLURM_CPUS_PER_TASK", 16)),
-    batch_size, 4 
-) """
+    batch_size 
+)
 
 print(f"Using {N_WORKERS} parallel workers for solver")
 executor = ProcessPoolExecutor(max_workers=N_WORKERS, mp_context=ctx)
@@ -151,9 +150,9 @@ def _compute_n_flat_max_from_file(filepath: str, geo: GeometryConfig) -> int:
         n_flat_max = max(n_flat_max, geo_i.G * (I + 1))
     return n_flat_max
 
-#_DATA_FILEPATH = "../data/highfidelity/MCruns_filtered.npz"
-#N_FLAT_MAX = _compute_n_flat_max_from_file(_DATA_FILEPATH, GEO)
-#print(f"N_FLAT_MAX computed at module load: {N_FLAT_MAX}")
+_DATA_FILEPATH = "../data/highfidelity/MCruns_filtered.npz"
+N_FLAT_MAX = _compute_n_flat_max_from_file(_DATA_FILEPATH, GEO)
+print(f"N_FLAT_MAX computed at module load: {N_FLAT_MAX}")
 
 # ─────────────────────────────────────────────
 # SECTION 0: Solutions for better runspeed and memory efficiency
@@ -198,7 +197,7 @@ def _solve_sample_worker(args):
     geo_i    = update_geo(GEO, params_np)
     geo_data = precompute_geometry(geo_i)
     
-    k, phi_fwd, phi_adj = _run_NT_solver(
+    k, phi_fwd, phi_adj, Fphi = _run_NT_solver(
         xs_np,
         params_np,
         np.array([sample_id_int])
@@ -208,7 +207,6 @@ def _solve_sample_worker(args):
     return i, k, phi_fwd, phi_adj, geo_data, epoch
 
 
-_EXECUTOR = ProcessPoolExecutor(max_workers=N_WORKERS)
 
 
 # ─────────────────────────────────────────────
@@ -225,9 +223,34 @@ def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
     _GEO_DATA_CACHE[sid] = geo_data
 
     if sid in _PRESOLVE_CACHE:
-        k, phi_fwd, phi_adj, geo_data_pre = _PRESOLVE_CACHE.pop(sid)
+        k, phi_fwd_padded, phi_adj_padded, geo_data_pre = _PRESOLVE_CACHE.pop(sid)
         _GEO_DATA_CACHE[sid] = geo_data_pre
-        return k, phi_fwd, phi_adj
+
+        # phi_fwd_padded and phi_adj_padded are already flat+padded (N_FLAT_MAX,)
+        # We still need Fphi, which requires rebuilding F with the NEW xs_tensor
+        geo_i = update_geo(GEO, np.array(params_raw_single))
+        R     = geo_i.boundaries[-1].radius
+        I     = int(R / geo_i.mesh_size)
+        N_flat = geo_i.G * (I + 1)
+
+        r_divisions   = [b.radius for b in geo_i.boundaries[:-1]] \
+                        if not is_homogeneous(geo_i) else []
+        BC_coeffs     = bc_to_coeffs(geo_i.bc)
+        geometry_code = GEOMETRY_CODE[geo_i.geometry]
+
+        D_fn, Sa_fn, nF_fn, Ss_fn, chi_fn = build_xs_callables(np.array(xs_tensor), geo_i)
+        _, A_real, F_real = diffusion_setup(
+            R, I, geo_i.G, r_divisions,
+            D_fn, Sa_fn, nF_fn, Ss_fn, chi_fn,
+            BC_coeffs, geometry_code
+        )
+
+        # phi_fwd_padded[:N_flat] is the unpadded portion — use it for F @ phi
+        Fphi_full = F_real @ phi_fwd_padded[:N_flat].astype(np.float64)
+        Fphi_padded = np.zeros(N_FLAT_MAX, dtype=np.float32)
+        Fphi_padded[:N_flat] = Fphi_full
+
+        return np.float32(k), phi_fwd_padded, phi_adj_padded, Fphi_padded
 
     R      = geo_i.boundaries[-1].radius
     I      = int(R / geo_i.mesh_size)
@@ -268,9 +291,16 @@ def _run_NT_solver(xs_tensor, params_raw_single, sample_id):
     # This makes denominator = (1/k²) * k² = 1.0
     phi_adj_flat *= 1.0 / biorth 
     #print(f"bwd sanity: phiadj·F·phi = {float(phi_adj_flat @ Fphi):.6f}  (should be ~1.0)")
+    
+    phi_fwd_padded = np.zeros(N_FLAT_MAX, dtype=np.float32)
+    phi_adj_padded = np.zeros(N_FLAT_MAX, dtype=np.float32)
+    phi_fwd_padded[:N_flat] = phi_fwd_flat[:N_flat]
+    phi_adj_padded[:N_flat] = phi_adj_flat[:N_flat]
+    Fphi_full = F_real @ phi_fwd_flat          # shape (N_flat,)
+    Fphi_padded = np.zeros(N_FLAT_MAX, dtype=np.float32)
+    Fphi_padded[:N_flat] = Fphi_full
 
-    return np.float32(k), phi_fwd_flat.astype(np.float32), \
-           phi_adj_flat.astype(np.float32)
+    return np.float32(k), phi_fwd_padded, phi_adj_padded, Fphi_padded
 
 
 # this is the function that runs when gradients are being computed
@@ -290,25 +320,24 @@ def _NTdiff_fwd(xs_tensor, params_raw_single, sample_id):
 
     N_flat = geo_i.G * (I + 1)   # total size of flux vector
 
-    keff, phi_fwd, phi_adj = jax.pure_callback(
+    keff, phi_fwd_padded, phi_adj_padded , Fphi_padded = jax.pure_callback(
         _run_NT_solver,
         (
             jax.ShapeDtypeStruct((),        jnp.float32),
-            jax.ShapeDtypeStruct((N_flat,), jnp.float32),
-            jax.ShapeDtypeStruct((N_flat,), jnp.float32),
+            jax.ShapeDtypeStruct((N_FLAT_MAX,), jnp.float32),
+            jax.ShapeDtypeStruct((N_FLAT_MAX,), jnp.float32),
+            jax.ShapeDtypeStruct((N_FLAT_MAX,), jnp.float32),
         ),
         xs_tensor,  params_raw_single, sample_id
     )  
 
-    geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
-    _, Fphi = Aphi_Fphi_scan(xs_tensor, geo_data, SLAY, phi_fwd)
-
-    residuals = (xs_tensor, keff, phi_fwd, phi_adj, Fphi, sample_id)        
+    # Store padded versions — fixed shape, no recompilation
+    residuals = (xs_tensor, keff, phi_fwd_padded, phi_adj_padded, Fphi_padded, params_raw_single, sample_id)        
     # primal must match exactly what NTdiff_solver returns
     return keff, residuals
 
 
-def _NTdiff_bwd(residuals, g):
+def _NTdiff_bwd_old(residuals, g):
     """
     Custom backward pass.
     Args:
@@ -318,7 +347,17 @@ def _NTdiff_bwd(residuals, g):
     Returns:
         dL/d(xs_tensor), shape [batch, M]
     """
-    xs_tensor, k, phi_fwd, phi_adj, Fphi, sample_id = residuals
+    xs_tensor, k, phi_fwd_padded, phi_adj_padded, Fphi_padded, params_raw_single,sample_id = residuals
+    
+    geo_i  = update_geo(GEO, np.array(params_raw_single))
+    R      = geo_i.boundaries[-1].radius
+    I      = int(R / geo_i.mesh_size)
+    N_flat = int(geo_i.G * (I + 1))
+
+    phi_fwd = phi_fwd_padded[:N_flat]
+    phi_adj = phi_adj_padded[:N_flat]
+    Fphi    = Fphi_padded[:N_flat]
+    
     geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
     dL_dk = g  
 
@@ -339,6 +378,36 @@ def _NTdiff_bwd(residuals, g):
     dL_dxs_tensor = dL_dk * dk_dp
 
     return (dL_dxs_tensor, None, None)  # only return gradients for xs_tensor; the other two inputs have no gradients
+
+
+def _NTdiff_bwd(residuals, g):
+    xs_tensor, k, phi_fwd_padded, phi_adj_padded, Fphi_padded, params_raw_single, sample_id = residuals
+
+    geo_i  = update_geo(GEO, np.array(params_raw_single))
+    R      = geo_i.boundaries[-1].radius
+    I      = int(R / geo_i.mesh_size)
+    N_flat = int(geo_i.G * (I + 1))
+
+    phi_fwd = phi_fwd_padded[:N_flat]
+    phi_adj = phi_adj_padded[:N_flat]
+    Fphi    = Fphi_padded[:N_flat]
+
+    geo_data = _GEO_DATA_CACHE[int(sample_id[0])]
+    dL_dk = g
+
+    # Direct VJP: no jax.vjp, no recompilation per sample
+    # cotangents: v_A = phi_adj, v_F = -(1/k)*phi_adj  (same as before)
+    v_A = phi_adj
+    v_F = -(1.0 / k) * phi_adj
+
+    numerator = Aphi_Fphi_vjp(xs_tensor, geo_data, SLAY, phi_fwd, v_A, v_F)
+
+    phiadj_F_phi = phi_adj @ Fphi
+    denominator  = (1.0 / k**2) * phiadj_F_phi
+    dk_dp        = -numerator / denominator
+    dL_dxs_tensor = dL_dk * dk_dp
+
+    return (dL_dxs_tensor, None, None)
 
 # this function represents what the solver does when called outside of differentiation context.
 @jax.custom_vjp
@@ -611,7 +680,7 @@ def compute_k_reg_batch(rawparams: np.ndarray) -> np.ndarray:
     for i, p in enumerate(rawparams):
         geo_i  = update_geo(GEO, p)
         xs_i   = np.array(predict_xs(geo_i), dtype=np.float32)   # baseline XS, no NN
-        k, _, _ = _run_NT_solver(xs_i, p, np.array([i], dtype=np.int32))
+        k, _, _, _ = _run_NT_solver(xs_i, p, np.array([i], dtype=np.int32))
         k_regs.append(float(k))
         if i % 20 == 0:
             print(f"  k_reg precompute {i}/{len(rawparams)}", flush=True)
@@ -701,11 +770,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     print(f"Train keff range: {train_keffs.min():.3f} – {train_keffs.max():.3f}")
     print(f"Test  keff range: {test_keffs.min():.3f}  – {test_keffs.max():.3f}")
 
-    """ global N_FLAT_MAX
-    all_rawparams = np.concatenate([train_rawparams, test_rawparams], axis=0)
-    N_FLAT_MAX = _compute_n_flat_max(all_rawparams)
-    print(f"N_FLAT_MAX = {N_FLAT_MAX}  (XLA will compile one kernel variant)") """
-    
+ 
     # ── Δk normalization — fit on train, apply everywhere ────────────────
     # Convert to pcm so the feature is O(100–5000) instead of O(1e-4).
     train_delta_k_pcm = (train_keffs - train_k_reg) * 1e5        # [train_size]
@@ -767,7 +832,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     def validation_step(geoms_np, keffs_np, rawparams_np, delta_k_norm_np):
         """Compute mean squared loss and mean percentage error over the test set.
             Also returns per-sample keff_pred and keff_ref arrays for logging."""
-
+        _PRESOLVE_CACHE.clear() 
         total_sq  = 0.0
         total_pct = 0.0
         all_keff_pred = []
@@ -783,8 +848,9 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
             # ── Pre-solve in parallel, same as training ────────────────────
             xs_np = model.compute_xs(batch_geoms_jax, jnp.array(batch_xs_baselines),  j_clip_lo, j_clip_hi, j_warmup, delta_k_norm=jnp.array(batch_dk_norm))
+            VAL_ID_OFFSET = train_size + 10000 
             args_list = [
-                (i, xs_np[i], np.array(batch_rawparams[i]), i + global_start, -1)
+                (i, xs_np[i], np.array(batch_rawparams[i]), VAL_ID_OFFSET +i + global_start, -1)
                 for i in range(len(batch_geoms))
             ]
             results = list(executor.map(_solve_sample_worker, args_list))
@@ -795,7 +861,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             # ──────────────────────────────────────────────────────────────
 
             keff_pred, _, xs_log_ratios = model(batch_geoms_jax, batch_rawparams, xs_baselines=batch_xs_baselines, 
-                clip_lo=j_clip_lo, clip_hi=j_clip_hi, warmup_scale=j_warmup, delta_k_norm=jnp.array(batch_dk_norm), training=False, sample_id_offset=global_start)  
+                clip_lo=j_clip_lo, clip_hi=j_clip_hi, warmup_scale=j_warmup, delta_k_norm=jnp.array(batch_dk_norm), training=False, sample_id_offset=VAL_ID_OFFSET + global_start)  
             sq_err  = jnp.mean((keff_pred - batch_keffs) ** 2) # squared error
             pct_err = jnp.mean(jnp.abs(keff_pred - batch_keffs) / jnp.abs(batch_keffs) * 100.0) # percent error
             total_sq  += float(sq_err)
@@ -805,6 +871,49 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         n = len(keffs_np)
         return total_sq / n, total_pct / n, all_keff_pred, all_keff_ref   
         # mean over all test samples
+    # ── 5.4b  Baseline-only epoch‑0 logging ────────────────────────────────
+    def log_baseline_epoch_zero(geoms_np, keffs_np, rawparams_np,
+                                xs_baselines_np, delta_k_norm_np,
+                                writer, logfile, epoch_label):
+        """
+        Log keff from pure baseline XS (no NN corrections) for the given dataset
+        into the given writer/logfile with the specified epoch index.
+        """
+        all_keff_pred = []
+        all_keff_ref  = []
+
+        for batch_idx, (batch_geoms, batch_keffs, batch_rawparams,
+                        batch_xs_baselines, batch_dk_norm) in enumerate(
+            data_loader(geoms_np, keffs_np, rawparams_np,
+                        xs_baselines_np, delta_k_norm_np,
+                        batch_size=batch_size)
+        ):
+            global_start = batch_idx * batch_size
+
+            xs_np = np.array(batch_xs_baselines, dtype=np.float32)
+
+            VAL_ID_OFFSET = train_size + 10000
+            args_list = [
+                (i, xs_np[i], np.array(batch_rawparams[i]),
+                VAL_ID_OFFSET + i + global_start, -1)
+                for i in range(len(batch_geoms))
+            ]
+            results = list(executor.map(_solve_sample_worker, args_list))
+
+            for i, k, phi_fwd, phi_adj, geo_data, _ in results:
+                all_keff_pred.append(float(k))
+                all_keff_ref.append(float(batch_keffs[i]))
+
+        log_keff_batch(
+            writer,
+            logfile,
+            epoch_label,
+            np.array(all_keff_pred),
+            np.array(all_keff_ref),
+            0.0,
+            0.0,
+            sample_id_offset=0,
+        )
 
     sample_weights = np.ones(train_size, dtype=np.float32)  # uniform initially
     sample_weights_jax = jnp.array(sample_weights)
@@ -813,6 +922,20 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     train_xs_baselines = compute_batch_baselines(train_rawparams, GEO)  # [train_size, 3, 12]
     test_xs_baselines  = compute_batch_baselines(test_rawparams, GEO)   # [test_size,  3, 12]
     print("Done.")
+    
+    # Baseline epoch 0 for TEST → goes to validation CSV
+    log_baseline_epoch_zero(
+        test_geoms, test_keffs, test_rawparams,
+        test_xs_baselines, test_delta_k_norm,
+        val_writer, val_logfile, epoch_label=0
+    )
+
+    # Baseline epoch 0 for TRAIN → goes to training CSV
+    log_baseline_epoch_zero(
+        train_geoms, train_keffs, train_rawparams,
+        train_xs_baselines, train_delta_k_norm,
+        train_writer, train_logfile, epoch_label=0
+    )
 
     # ── 5.5  Epoch loop ────────────────────────────────────────────────────
     # ── 5.5  EPOCH LOOOOOOOP ───────────────────────────────────────────────
@@ -828,7 +951,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
     count = 0
 
-    for epoch in range(epochs):
+    for epoch in range(1, epochs + 1):
         count += 1
         print(f"entering the epoch loop, at epoch {epoch} which is")
         epoch_loss = 0.0
@@ -932,27 +1055,6 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         train_losses.append(avg_train_loss)
         val_losses.append(avg_val_loss)
         val_pct_errors.append(avg_pct_err)
-
-        """ # --- every 5 epochs: update sample_weights based on latest errors ---
-        if (epoch + 1) % 5 == 0:
-            # Here you would ideally run a training_eval_step over train_geoms/train_keffs
-            # For illustration, we show how to use keff_preds / keff_refs if they correspond to training.
-            keff_preds_np = np.array(keff_preds)
-            keff_refs_np  = np.array(keff_refs)
-
-            # delta-rho in pcm
-            delta_rho = np.abs(keff_preds_np - keff_refs_np) / (keff_preds_np * keff_refs_np) * 1e5
-
-            alpha = 0.5  # tune this
-            new_weights = 1.0 + alpha * (delta_rho / 1000.0)
-            new_weights = np.clip(new_weights, 1.0, 3.0)
-
-            # Make sure new_weights has length train_size and corresponds to training ordering
-            sample_weights = new_weights.astype(np.float32)
-            sample_weights_jax = jnp.array(sample_weights)
-
-            print(f"Updated sample weights at epoch {epoch+1}: "
-                f"min={sample_weights.min():.2f}, max={sample_weights.max():.2f}") """
 
         if (epoch + 1) % 50 == 0:
             current_lr = float(lr_schedule(epoch))

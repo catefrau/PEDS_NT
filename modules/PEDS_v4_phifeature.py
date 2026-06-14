@@ -65,7 +65,7 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-EXP_NAME   = "v4_phifeat"
+EXP_NAME   = "v4_phi_adamw"
 TRAIN_SIZE = 400
 TEST_SIZE  = 100
 BATCH_SIZE = 25
@@ -339,7 +339,7 @@ class GeneratorNN(nnx.Module):
             bias_init    = zero_init,
             rngs         = rngs,
         )
-
+        
         self.n_regions     = n_regions
         self.xs_per_region = xs_per_region
 
@@ -472,11 +472,7 @@ def compute_k_reg_and_phi_features(rawparams: np.ndarray) -> tuple:
                 mask    = (centres >= r_prev) & (centres < r_reg)
 
                 if mask.any():
-                    # Volume-weighted mean: for cylindrical geometry the
-                    # volume element of shell i is proportional to r_i * dr
-                    weights      = centres[mask]
-                    phi_region   = phi_g[mask]
-                    weighted_mean = np.sum(phi_region * weights) / np.sum(weights)
+                    weighted_mean = np.mean(phi_g[mask])
                     feats.append(float(weighted_mean))
                 else:
                     # This region has no cells (e.g. CR radius < mesh_size)
@@ -1026,7 +1022,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         model,
         optax.chain(
             optax.clip_by_global_norm(0.5),   # clip before Adam sees the gradient
-            optax.adam(lr_schedule),
+            optax.adamw(lr_schedule, weight_decay=1e-4),
         ),
         wrt=nnx.Param,
     )
@@ -1252,7 +1248,7 @@ if __name__ == "__main__":
         epochs      = EPOCHS,
         lr_max        = LR_max,   # cosine schedule peak learning rate
         lr_min        = LR_min,        
-        hidden_sizes= [128, 128, 64],
+        hidden_sizes= [128, 128, 64],        
         n_regions   = 3,
         G           = 2,
         seed        = SEED,
