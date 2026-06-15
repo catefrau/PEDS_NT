@@ -65,15 +65,18 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-EXP_NAME   = "v5_small"
-TRAIN_SIZE = 50
-TEST_SIZE  = 10
+EXP_NAME   = "v5_otherclip"
+TRAIN_SIZE = 400
+TEST_SIZE  = 100
 BATCH_SIZE = 25
 EPOCHS     = 120
 
 LR_max     = 5e-4   # cosine schedule peak learning rate
 LR_min     = 5e-6
 SEED       = 42
+
+LOG_RATIO_CLIP_LO = -1.8
+LOG_RATIO_CLIP_HI = 0.8
 
 # Epochs at which XS heatmap snapshots are saved.
 # Add/remove values here to control checkpointing granularity.
@@ -296,6 +299,12 @@ def _solve_sample_worker(args):
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3: Neural Network
 # ─────────────────────────────────────────────────────────────────────────────
+
+def clip_ste(x, lo, hi):
+    clipped = jnp.clip(x, lo, hi)
+    # forward: use clipped value. backward: gradient flows as if x passed through unchanged.
+    return x + jax.lax.stop_gradient(clipped - x)
+
 class GeneratorNN(nnx.Module):
     """
     Trunk:  [batch, 7]  →  128 → 128 → 64  (ReLU)
@@ -391,15 +400,15 @@ class PEDSModel(nnx.Module):
         xs_final = jnp.exp(log_ratios) * xs_baselines
         return np.array(xs_final)  # concrete numpy, exits JAX world
         
-        def compute_log_ratios(self, geoms, xs_baselines, k_reg_norm, phi_norm):
-                """Pure NN forward, returns CLIPPED log_ratios (no solver). For diagnostics."""
-                batch_size = geoms.shape[0]
-                k_reg = jnp.reshape(jnp.array(k_reg_norm, dtype=jnp.float32), (batch_size, 1))
-                log_base = self._log_baselines(xs_baselines)
-                log_ratios = self.generator(geoms, log_base, k_reg, phi_norm, training=False)
-                log_ratios = jnp.clip(log_ratios, -0.7, 0.5)
-                return np.array(log_ratios)
-        
+    def compute_log_ratios(self, geoms, xs_baselines, k_reg_norm, phi_norm):
+            """Pure NN forward, returns CLIPPED log_ratios (no solver). For diagnostics."""
+            batch_size = geoms.shape[0]
+            k_reg = jnp.reshape(jnp.array(k_reg_norm, dtype=jnp.float32), (batch_size, 1))
+            log_base = self._log_baselines(xs_baselines)
+            log_ratios = self.generator(geoms, log_base, k_reg, phi_norm, training=False)
+            log_ratios = clip_ste(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)
+            return np.array(log_ratios)
+    
     def __call__(self, geoms, params_raw, xs_baselines, k_reg_norm, phi_norm,
                  training: bool = False, sample_id_offset: int = 0):
         batch_size = geoms.shape[0]
@@ -407,7 +416,7 @@ class PEDSModel(nnx.Module):
         log_base   = self._log_baselines(xs_baselines)
         phi = jnp.reshape(phi_norm, (batch_size, -1))
         log_ratios = self.generator(geoms, log_base, k_reg, phi, training)
-        log_ratios = jnp.clip(log_ratios, -0.7, 0.5)  # exp(±0.7) ≈ 0.5x to 2x
+        log_ratios = jnp.clip(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)  # exp(±0.7) ≈ 0.5x to 2x
 
         xs_final = jnp.exp(log_ratios) * xs_baselines  # [batch, 3, 12]
 
@@ -660,8 +669,7 @@ _LR_HEADER = ["epoch", "region", "xs_idx",
               "frac_at_lower_clip", "frac_at_upper_clip"]
 logratio_stats_writer.writerow(_LR_HEADER)
 
-LOG_RATIO_CLIP_LO = -0.7
-LOG_RATIO_CLIP_HI = 0.7
+
 _CLIP_EPS = 1e-4  # tolerance for "at the clip boundary"
 
 region_names_lr = ["CR", "Core", "Moderator"]
@@ -1095,6 +1103,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 "val_p95_pcm","val_std_pcm","val_frac_below_650"]}
 
     print(f"\nTraining for {epochs} epochs …")
+    epoch_grad_norms = []
 
     for epoch in range(1, epochs + 1):
         # ── shuffle ──────────────────────────────────────────────────────────
@@ -1136,6 +1145,8 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 (loss, keff_preds_batch), grads = grad_fn(
                     model, bp, bkj, br, bxs, bdkj, b_phi_j,
                 )
+            grad_norm = float(optax.global_norm(grads))
+            epoch_grad_norms.append(grad_norm)
             optimizer.update(model, grads)
 
             epoch_loss    += float(loss)
@@ -1149,6 +1160,10 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             )
 
         # ── validation ───────────────────────────────────────────────────────
+        gn = np.array(epoch_grad_norms)
+        print(f"  grad_norm: min={gn.min():.3f} mean={gn.mean():.3f} max={gn.max():.3f} "
+        f"frac_clipped(>0.5)={np.mean(gn > 0.5):.2%}")
+        
         _PRESOLVE_CACHE.clear()
         all_kp_val, all_kr_val = [], []
         with timer("validation step"):
