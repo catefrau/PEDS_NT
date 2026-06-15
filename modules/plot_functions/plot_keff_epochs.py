@@ -3,20 +3,24 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
 
-project_name = "4jun3pm_noweight"
+
+project_name = "v5_otherclip"
 csv_path_val = f"../LOGS/{project_name}/keff_epoch_log_val.csv"
-rhodiff_path_val = f"../LOGS/{project_name}/keff_pcm_evolution_val.png"
-hist_path_val = f"../LOGS/{project_name}/loss_histogram_val.png"
-scatt_path_val = f"../LOGS/{project_name}/keff_scatter_val.png"
+rhodiff_path_val = f"../LOGS/{project_name}/metrics_plot/keff_pcm_evolution_val.png"
+hist_path_val = f"../LOGS/{project_name}/metrics_plot/loss_histogram_val.png"
+scatt_path_val = f"../LOGS/{project_name}/metrics_plot/keff_scatter_val.png"
 
-csv_path_train = f"../LOGS/{project_name}/keff_epoch_log_train.csv"
-rhodiff_path_train = f"../LOGS/{project_name}/keff_pcm_evolution_train.png"
-hist_path_train = f"../LOGS/{project_name}/loss_histogram_train.png"
-scatt_path_train = f"../LOGS/{project_name}/keff_scatter_train.png"
+csv_path_train = f"../LOGS/{project_name}/keff_epoch_log_train_stable.csv"
+rhodiff_path_train = f"../LOGS/{project_name}/metrics_plot/keff_pcm_evolution_train.png"
+hist_path_train = f"../LOGS/{project_name}/metrics_plot/loss_histogram_train.png"
+scatt_path_train = f"../LOGS/{project_name}/metrics_plot/keff_scatter_train.png"
 
 def plot_keff_pcm(log_path, save_path):
-    import pandas as pd
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
     df = pd.read_csv(log_path)
     epoch_stats = df.groupby("epoch")["delta_rho_pcm"].agg(["mean","min","max"]).reset_index()
     samples = sorted(df["sample_idx"].unique())

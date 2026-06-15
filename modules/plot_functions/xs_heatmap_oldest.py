@@ -347,142 +347,64 @@ def plot_xs_subplots(
     G=2,
     save_path="xs_subplots.png",
     suptitle="XS: Baseline vs Final (NN corrected)",
-    epoch_label=None,
-    sample_idx=None,
-    geo_params=None,
-    param_names=None,
-    keff_ref=None,
-    keff_pred=None,
 ):
-    """
-    Portrait layout: 2 subplots per row, stacked vertically.
-    Subplot order (rows of 2):
-      D           | Sigma_a
-      nuSigma_f   | chi
-      Sigma_s g->g (self-scatter)  | Sigma_s g->g' (cross-scatter)
-
-    Each subplot shows:
-      Left  G cols : Baseline values
-      Right G cols : Final (NN-corrected) values
-                     with % change vs baseline annotated below each value
-
-    Optional metadata displayed below the suptitle:
-      epoch_label  : e.g. "Epoch 30"
-      sample_idx   : integer, shown in title and used to label saved file
-      geo_params   : array of 6 raw geometry values
-      param_names  : list of 6 strings naming each parameter
-      keff_ref     : reference k-eff (OpenMC)
-      keff_pred    : predicted k-eff (PEDS)
-    """
     n_reg   = baseline.shape[0]
     col_map = _build_col_map(G)
 
-    # ── Build active subplot list in the desired portrait order ─────────────
-    # Explicit ordering: D, Sigma_a, nuSigma_f, chi, Sigma_s_diag, Sigma_s_offdiag
-    PORTRAIT_ORDER = [
-        ("D",               "D (diffusion coeff.)",   "Blues"),
-        ("Sigma_a",         "Σ_a (absorption)",        "Oranges"),
-        ("nuSigma_f",       "νΣ_f (fission)",          "Purples"),
-        ("chi",             "χ (fission spectrum)",    "Reds"),
-        ("Sigma_s_diag",    "Σ_s g→g (self-scatter)",  "Greens"),
-        ("Sigma_s_offdiag", "Σ_s g→g' (cross-scatter)","YlGn"),
-    ]
-
     active = []
-    for xs_key, label, cmap_name in PORTRAIT_ORDER:
+    for xs_key, label, cmap_name in XS_TYPES:
         bg = _make_grid(baseline, col_map[xs_key], n_reg)
         fg = _make_grid(final_xs, col_map[xs_key], n_reg)
         if np.any(bg != 0) or np.any(fg != 0):
             active.append((xs_key, label, cmap_name, bg, fg))
 
     n_t   = len(active)
-    NCOLS = 2                           # always 2 subplots per row
-    n_row = (n_t + NCOLS - 1) // NCOLS  # ceil division
+    n_col = (n_t + 1) // 2
+    n_row = 2 if n_t > n_col else 1
 
-    # ── sizing constants ─────────────────────────────────────────────────────
-    cell_w   = 1.40   # inches per data cell
-    cell_h   = 0.78   # inches per region row
-    cb_w_in  = 0.22   # colorbar width
-    cb_pad   = 0.12   # gap between axes and colorbar
-    ylabel_w = 1.10   # left margin for region y-labels
-    xlabel_h = 0.65   # bottom margin for x-tick labels
-    title_h  = 0.80   # header zone (XS type title + half/half subtitle)
-    sp_hgap  = 0.70   # vertical gap between subplot rows
-    sp_wgap  = 1.00   # horizontal gap between subplot columns
+    # ── sizing constants ────────────────────────────────────────────────────
+    cell_w   = 1.30   # inches per data cell
+    cell_h   = 0.72   # inches per region row
+    gap_w    = 0.05   # inches for the NaN separator (thin gap)
+    cb_w_in  = 0.20   # colorbar width in inches
+    cb_pad   = 0.10   # gap between data axes and colorbar
+    ylabel_w = 1.05   # left margin for region y-labels
+    xlabel_h = 0.60   # bottom margin for x-tick labels
+    # header zone: XS type title + "Baseline" / "Final (NN)" subtitle row
+    title_h  = 0.72   # total top margin per subplot
+    sp_hgap  = 0.40   # vertical gap between subplot rows
+    sp_wgap  = 0.85   # horizontal gap between subplot columns
 
-    sp_data_w = G * cell_w * 2          # Baseline cols + Final cols (no nan gap)
+    sp_data_w = G * cell_w * 2 + gap_w
     sp_data_h = n_reg * cell_h
 
     sp_w = ylabel_w + sp_data_w + cb_pad + cb_w_in
     sp_h = title_h  + sp_data_h + xlabel_h
 
-    fig_w = NCOLS * sp_w + (NCOLS - 1) * sp_wgap + 0.4
-    fig_h = n_row  * sp_h + (n_row  - 1) * sp_hgap + 0.90  # extra at top for suptitle
-
-    # ── extra vertical space at top when metadata info box is shown ─────────────
-    has_info = any(x is not None for x in [geo_params, keff_ref, keff_pred])
-    info_h   = 0.55 if has_info else 0.0   # extra inches reserved for info line(s)
-    fig_h   += info_h
+    fig_w = n_col * sp_w + (n_col - 1) * sp_wgap + 0.3
+    fig_h = n_row * sp_h + (n_row - 1) * sp_hgap + 0.55
 
     fig = plt.figure(figsize=(fig_w, fig_h))
-
-    # ── suptitle: main title + epoch + sample annotation ─────────────────────
-    epoch_note  = f"  —  {epoch_label}"          if epoch_label  is not None else ""
-    sample_note = f"  —  Sample {sample_idx}"    if sample_idx   is not None else ""
-    fig.suptitle(
-        suptitle + epoch_note + sample_note,
-        fontsize=14, fontweight="bold",
-        y=1.0 - 0.08 / fig_h,
-    )
-
-    # ── optional metadata info box ────────────────────────────────────────────
-    if has_info:
-        parts = []
-        if keff_ref is not None and keff_pred is not None:
-            delta_rho = abs(keff_pred - keff_ref) / (keff_pred * keff_ref) * 1e5
-            parts.append(
-                f"k_ref={keff_ref:.5f}   k_pred={keff_pred:.5f}"
-                f"   Δρ={delta_rho:.0f} pcm"
-            )
-        elif keff_ref is not None:
-            parts.append(f"k_ref={keff_ref:.5f}")
-
-        if geo_params is not None:
-            names  = param_names if param_names is not None \
-                     else [f"p{j}" for j in range(len(geo_params))]
-            pairs  = "   ".join(f"{n}={float(v):.4f}" for n, v in zip(names, geo_params))
-            parts.append(pairs)
-
-        info_text = "\n".join(parts)
-        fig.text(
-            0.5, 1.0 - 0.38 / fig_h,
-            info_text,
-            ha="center", va="top",
-            fontsize=9.5,
-            color="#333333",
-            family="monospace",
-            bbox=dict(boxstyle="round,pad=0.35", facecolor="#f5f5f5",
-                      edgecolor="#bbbbbb", linewidth=0.8),
-        )
+    fig.suptitle(suptitle, fontsize=15, fontweight="bold",
+                 y=1.0 - 0.12/fig_h)
 
     for i, (xs_key, label, cmap_name, bg, fg) in enumerate(active):
-        row_i = i // NCOLS
-        col_i = i %  NCOLS
+        row_i = i // n_col
+        col_i = i %  n_col
 
-        # ── axes position in figure fractions ────────────────────────────────
-        # y=0 is figure bottom; subplots fill from top downward
+        # data axes position in figure fractions
         sp_x0_fig = (col_i * (sp_w + sp_wgap) + ylabel_w) / fig_w
-        sp_y0_fig = ((n_row - 1 - row_i) * (sp_h + sp_hgap) + xlabel_h + 0.35) / fig_h
+        sp_y0_fig = ((n_row - 1 - row_i) * (sp_h + sp_hgap) + xlabel_h + 0.3) / fig_h
         sp_w_fig  = sp_data_w / fig_w
         sp_h_fig  = sp_data_h / fig_h
 
         ax = fig.add_axes([sp_x0_fig, sp_y0_fig, sp_w_fig, sp_h_fig])
 
-        nx          = bg.shape[1]   # number of group-columns per half
-        combo       = np.concatenate([bg, fg], axis=1)   # [n_reg, 2*nx]
+        nx     = bg.shape[1]
+        #gap    = np.full((n_reg, 1), np.nan)
+        combo  = np.concatenate([bg, fg], axis=1)
         total_xcols = combo.shape[1]
 
-        # shared colorscale from all positive values in both halves
         vals = np.concatenate([bg.flatten(), fg.flatten()])
         pos  = vals[vals > 0]
         pos  = pos if len(pos) > 0 else np.array([1e-10, 1.0])
@@ -494,9 +416,7 @@ def plot_xs_subplots(
         im = ax.imshow(combo, cmap=cmap, norm=norm,
                        aspect="auto", interpolation="nearest")
 
-        # ── cell text ─────────────────────────────────────────────────────────
-        # Baseline cells: value centred
-        # Final cells:    value on upper line, % diff on lower line
+        # ── cell text ───────────────────────────────────────────────────────
         for r in range(n_reg):
             for c in range(total_xcols):
                 v = combo[r, c]
@@ -505,72 +425,58 @@ def plot_xs_subplots(
                 rgba = cmap(norm(v)) if v > 0 else cmap(0.0)
                 lum  = 0.299*rgba[0] + 0.587*rgba[1] + 0.114*rgba[2]
                 tc   = "white" if lum < 0.45 else "black"
+                ax.text(c, r, _fmt_val(v),
+                        ha="center", va="center",
+                        fontsize=11, fontweight="bold", color=tc)
 
-                is_final_col = c >= nx
-                if is_final_col:
-                    # compute % change vs the corresponding baseline cell
-                    b_v = bg[r, c - nx]
-                    pct = (v - b_v) / b_v * 100 if b_v != 0 else 0.0
-                    pct_sign = "+" if pct >= 0 else ""
-                    pct_str  = f"{pct_sign}{pct:.1f}%"
-
-                    # value slightly above centre, % diff slightly below
-                    ax.text(c, r - 0.18, _fmt_val(v),
-                            ha="center", va="center",
-                            fontsize=11, fontweight="bold", color=tc)
-                    ax.text(c, r + 0.28, pct_str,
-                            ha="center", va="center",
-                            fontsize=10, color=tc,
-                            style="italic")
-                else:
-                    ax.text(c, r, _fmt_val(v),
-                            ha="center", va="center",
-                            fontsize=11, fontweight="bold", color=tc)
-
-        # ── x-axis: group labels ──────────────────────────────────────────────
+        # ── x-axis: group labels ────────────────────────────────────────────
         gl     = _col_labels(xs_key, G)
-        xticks = list(range(nx)) + list(range(nx, 2 * nx))
+        xticks = list(range(nx)) + list(range(nx, 2*nx))
         xlbls  = [f"B {l}" for l in gl] + [f"F {l}" for l in gl]
         ax.set_xticks(xticks)
-        ax.set_xticklabels(xlbls, fontsize=11, rotation=35, ha="right")
+        ax.set_xticklabels(xlbls, fontsize=12, rotation=35, ha="right")
 
-        # ── y-axis: region names ──────────────────────────────────────────────
+        # ── y-axis: region names ────────────────────────────────────────────
         ax.set_yticks(range(n_reg))
         ax.set_yticklabels(REGION_NAMES[:n_reg], fontsize=11)
         ax.tick_params(axis="y", length=0, pad=4)
 
-        # ── header labels (placed in figure coords above the axes) ────────────
-        title_y_fig   = sp_y0_fig + sp_h_fig   # top edge of data axes in fig coords
+        # ── XS type title (above the plot) ──────────────────────────────────
+        # placed in figure coordinates so it sits cleanly above the axes
+        title_y_fig = sp_y0_fig + sp_h_fig   # top edge of data axes
 
-        mid_b_data    = (nx - 1) / 2
-        mid_b_fig     = sp_x0_fig + (mid_b_data + 0.5) / total_xcols * sp_w_fig
-        mid_f_data    = nx + (nx - 1) / 2
-        mid_f_fig     = sp_x0_fig + (mid_f_data + 0.5) / total_xcols * sp_w_fig
+        # "Baseline" label — centred over left half
+        mid_b_data  = (nx - 1) / 2
+        mid_b_fig   = sp_x0_fig + (mid_b_data + 0.5) / total_xcols * sp_w_fig
+        # "Final (NN)" label — centred over right half
+        mid_f_data  = nx + (nx - 1) / 2
+        mid_f_fig   = sp_x0_fig + (mid_f_data + 0.5) / total_xcols * sp_w_fig
 
-        subtitle_y    = title_y_fig + 0.012 / fig_h
-        xs_title_y    = title_y_fig + (title_h * 0.62) / fig_h
+        subtitle_y  = title_y_fig + 0.01 / fig_h          # just above axes top
+        xs_title_y  = title_y_fig + (title_h * 0.60) / fig_h  # higher up
 
-        fig.text(mid_b_fig, subtitle_y, "Baseline",
+        fig.text(mid_b_fig,  subtitle_y, "Baseline",
                  ha="center", va="bottom", fontsize=12,
                  color="#1a5fa8", fontweight="bold")
-        fig.text(mid_f_fig, subtitle_y, "Final (NN)  [val  Δ%]",
+        fig.text(mid_f_fig,  subtitle_y, "Final (NN)",
                  ha="center", va="bottom", fontsize=12,
                  color="#8b1a00", fontweight="bold")
 
+        # XS type label at the top of the header zone
         sp_cx_fig = sp_x0_fig + sp_w_fig / 2
         fig.text(sp_cx_fig, xs_title_y, label,
                  ha="center", va="bottom", fontsize=13, fontweight="bold")
 
-        # thin vertical separator between Baseline and Final halves
+        # thin vertical separator between halves
         ax.axvline(x=nx - 0.5, color="white", linewidth=4, zorder=3)
 
-        # ── colorbar ──────────────────────────────────────────────────────────
+        # ── colorbar ────────────────────────────────────────────────────────
         cb_x0_fig = sp_x0_fig + sp_w_fig + cb_pad / fig_w
         cax = fig.add_axes([cb_x0_fig, sp_y0_fig,
                              cb_w_in / fig_w, sp_h_fig])
-        fmt = LogFormatter(labelOnlyBase=False) if isinstance(norm, LogNorm) else "%.3g"
+        fmt = LogFormatter(labelOnlyBase=False)               if isinstance(norm, LogNorm) else "%.3g"
         cb  = fig.colorbar(im, cax=cax, format=fmt)
-        cb.ax.tick_params(labelsize=9)
+        cb.ax.tick_params(labelsize=10)
 
     dirn = os.path.dirname(save_path)
     if dirn:

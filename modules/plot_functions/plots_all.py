@@ -33,10 +33,10 @@ warnings.filterwarnings("ignore")
 # 0.  CONFIGURATION  — adjust paths here
 # ──────────────────────────────────────────────
 
-project_name = "4jun3pm_noweight"
+project_name = "v5_otherclip"
 LOG_PATH = f"../LOGS/{project_name}/keff_epoch_log_val.csv"
 
-FULL_PATH = "../FILES/LHS_filtered_dataset.csv"
+FULL_PATH = "../FILES/LHS_big_dataset.csv"
 PARALLEL_PATH = f"../LOGS/{project_name}/peds_parallel_coords.png"
 SCATTER_PATH = f"../LOGS/{project_name}/peds_keff_scatter_final.png"
 MATCH_TOL = 1e-5                        # keff tolerance for backtrace matching

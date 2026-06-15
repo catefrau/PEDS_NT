@@ -348,11 +348,6 @@ def plot_xs_subplots(
     save_path="xs_subplots.png",
     suptitle="XS: Baseline vs Final (NN corrected)",
     epoch_label=None,
-    sample_idx=None,
-    geo_params=None,
-    param_names=None,
-    keff_ref=None,
-    keff_pred=None,
 ):
     """
     Portrait layout: 2 subplots per row, stacked vertically.
@@ -366,13 +361,7 @@ def plot_xs_subplots(
       Right G cols : Final (NN-corrected) values
                      with % change vs baseline annotated below each value
 
-    Optional metadata displayed below the suptitle:
-      epoch_label  : e.g. "Epoch 30"
-      sample_idx   : integer, shown in title and used to label saved file
-      geo_params   : array of 6 raw geometry values
-      param_names  : list of 6 strings naming each parameter
-      keff_ref     : reference k-eff (OpenMC)
-      keff_pred    : predicted k-eff (PEDS)
+    epoch_label: optional string, e.g. "Epoch 30", printed in the figure subtitle.
     """
     n_reg   = baseline.shape[0]
     col_map = _build_col_map(G)
@@ -419,51 +408,15 @@ def plot_xs_subplots(
     fig_w = NCOLS * sp_w + (NCOLS - 1) * sp_wgap + 0.4
     fig_h = n_row  * sp_h + (n_row  - 1) * sp_hgap + 0.90  # extra at top for suptitle
 
-    # ── extra vertical space at top when metadata info box is shown ─────────────
-    has_info = any(x is not None for x in [geo_params, keff_ref, keff_pred])
-    info_h   = 0.55 if has_info else 0.0   # extra inches reserved for info line(s)
-    fig_h   += info_h
-
     fig = plt.figure(figsize=(fig_w, fig_h))
 
-    # ── suptitle: main title + epoch + sample annotation ─────────────────────
-    epoch_note  = f"  —  {epoch_label}"          if epoch_label  is not None else ""
-    sample_note = f"  —  Sample {sample_idx}"    if sample_idx   is not None else ""
+    # ── suptitle: main title + epoch annotation ───────────────────────────────
+    epoch_note = f"  —  {epoch_label}" if epoch_label else ""
     fig.suptitle(
-        suptitle + epoch_note + sample_note,
+        suptitle + epoch_note,
         fontsize=14, fontweight="bold",
-        y=1.0 - 0.08 / fig_h,
+        y=1.0 - 0.15 / fig_h,
     )
-
-    # ── optional metadata info box ────────────────────────────────────────────
-    if has_info:
-        parts = []
-        if keff_ref is not None and keff_pred is not None:
-            delta_rho = abs(keff_pred - keff_ref) / (keff_pred * keff_ref) * 1e5
-            parts.append(
-                f"k_ref={keff_ref:.5f}   k_pred={keff_pred:.5f}"
-                f"   Δρ={delta_rho:.0f} pcm"
-            )
-        elif keff_ref is not None:
-            parts.append(f"k_ref={keff_ref:.5f}")
-
-        if geo_params is not None:
-            names  = param_names if param_names is not None \
-                     else [f"p{j}" for j in range(len(geo_params))]
-            pairs  = "   ".join(f"{n}={float(v):.4f}" for n, v in zip(names, geo_params))
-            parts.append(pairs)
-
-        info_text = "\n".join(parts)
-        fig.text(
-            0.5, 1.0 - 0.38 / fig_h,
-            info_text,
-            ha="center", va="top",
-            fontsize=9.5,
-            color="#333333",
-            family="monospace",
-            bbox=dict(boxstyle="round,pad=0.35", facecolor="#f5f5f5",
-                      edgecolor="#bbbbbb", linewidth=0.8),
-        )
 
     for i, (xs_key, label, cmap_name, bg, fg) in enumerate(active):
         row_i = i // NCOLS
@@ -515,28 +468,28 @@ def plot_xs_subplots(
                     pct_str  = f"{pct_sign}{pct:.1f}%"
 
                     # value slightly above centre, % diff slightly below
-                    ax.text(c, r - 0.18, _fmt_val(v),
+                    ax.text(c, r - 0.17, _fmt_val(v),
                             ha="center", va="center",
-                            fontsize=11, fontweight="bold", color=tc)
-                    ax.text(c, r + 0.28, pct_str,
+                            fontsize=12, fontweight="bold", color=tc)
+                    ax.text(c, r + 0.26, pct_str,
                             ha="center", va="center",
-                            fontsize=10, color=tc,
+                            fontsize=12, color=tc,
                             style="italic")
                 else:
                     ax.text(c, r, _fmt_val(v),
                             ha="center", va="center",
-                            fontsize=11, fontweight="bold", color=tc)
+                            fontsize=12, fontweight="bold", color=tc)
 
         # ── x-axis: group labels ──────────────────────────────────────────────
         gl     = _col_labels(xs_key, G)
         xticks = list(range(nx)) + list(range(nx, 2 * nx))
         xlbls  = [f"B {l}" for l in gl] + [f"F {l}" for l in gl]
         ax.set_xticks(xticks)
-        ax.set_xticklabels(xlbls, fontsize=11, rotation=35, ha="right")
+        ax.set_xticklabels(xlbls, fontsize=12, rotation=35, ha="right")
 
         # ── y-axis: region names ──────────────────────────────────────────────
         ax.set_yticks(range(n_reg))
-        ax.set_yticklabels(REGION_NAMES[:n_reg], fontsize=11)
+        ax.set_yticklabels(REGION_NAMES[:n_reg], fontsize=12)
         ax.tick_params(axis="y", length=0, pad=4)
 
         # ── header labels (placed in figure coords above the axes) ────────────
@@ -559,7 +512,7 @@ def plot_xs_subplots(
 
         sp_cx_fig = sp_x0_fig + sp_w_fig / 2
         fig.text(sp_cx_fig, xs_title_y, label,
-                 ha="center", va="bottom", fontsize=13, fontweight="bold")
+                 ha="center", va="bottom", fontsize=14, fontweight="bold")
 
         # thin vertical separator between Baseline and Final halves
         ax.axvline(x=nx - 0.5, color="white", linewidth=4, zorder=3)
