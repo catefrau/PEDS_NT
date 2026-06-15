@@ -66,8 +66,8 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
 EXP_NAME   = "v5_otherclip"
-TRAIN_SIZE = 400
-TEST_SIZE  = 100
+TRAIN_SIZE = 800
+TEST_SIZE  = 200
 BATCH_SIZE = 25
 EPOCHS     = 120
 
@@ -90,7 +90,7 @@ SUBPLOT_SAMPLE_INDICES: list = [0, 1, 2, 3, 4]
 PARAM_NAMES: list = ['b4c_r', 'cr_frac', 'fuel_r', 'enrichment', 'f_mod', 'water_r']
 
 # ── data path — anchored to PARENT_DIR so it works from any cwd ─────────────
-_DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "MCruns_upd.npz")
+_DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "MCruns_big.npz")
 
 N_WORKERS = min(int(os.environ.get("SLURM_CPUS_PER_TASK", 16)), BATCH_SIZE)
 print(f"Using {N_WORKERS} parallel workers")
