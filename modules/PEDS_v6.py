@@ -65,9 +65,9 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-EXP_NAME   = "v5_cleanDS"
-TRAIN_SIZE = 400
-TEST_SIZE  = 80
+EXP_NAME   = "v6_ste"
+TRAIN_SIZE = 450
+TEST_SIZE  = 150
 BATCH_SIZE = 20
 EPOCHS     = 70
 
@@ -383,40 +383,54 @@ class PEDSModel(nnx.Module):
         self.n_regions   = n_regions
         self.G           = G
 
-    def _log_baselines(self, xs_baselines: jnp.ndarray) -> jnp.ndarray:
-        """Safe log: zeros → log(1) = 0 instead of -inf."""
+    def _log_baselines(self, xs_baselines: jnp.ndarray,
+                       log_xs_mean=None, log_xs_std=None) -> jnp.ndarray:
+        """Safe log of baselines, optionally z-score normalized per XS slot.
+        
+        If log_xs_mean/std are provided (jnp arrays of shape [3,12]),
+        the output is (log(xs) - mean) / std per slot.
+        Pass them during training and validation; omit only in diagnostic calls
+        that don't go through the solver (old plotting code).
+        """
         safe = jnp.where(xs_baselines > 1e-10, xs_baselines, jnp.ones_like(xs_baselines))
-        return jnp.log(safe)
+        log_xs = jnp.log(safe)
+        if log_xs_mean is not None and log_xs_std is not None:
+            log_xs = (log_xs - log_xs_mean) / log_xs_std
+        return log_xs
 
-    def compute_xs(self, geoms, xs_baselines, k_reg_norm, phi_norm):
+    def compute_xs(self, geoms, xs_baselines, k_reg_norm, phi_norm,
+                             log_xs_mean=None, log_xs_std=None):
         """Pure NN forward (no grad). Used for pre-solving and validation."""
         batch_size = geoms.shape[0]
         k_reg  = jnp.reshape(jnp.array(k_reg_norm, dtype=jnp.float32), (batch_size, 1))
         with timer("log baselines from xs first guess", verbose=False): 
-            log_base    = self._log_baselines(xs_baselines)
+            log_base    = self._log_baselines(xs_baselines,  log_xs_mean, log_xs_std)
         with timer("NN generated XS log ratios", verbose=False):
             log_ratios  = self.generator(geoms, log_base, k_reg, phi_norm, training=False)
         # ── v1: NO clip, NO warmup ─────────────────────────────────────────
+        log_ratios = clip_ste(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)  # now consistent
         xs_final = jnp.exp(log_ratios) * xs_baselines
         return np.array(xs_final)  # concrete numpy, exits JAX world
         
-    def compute_log_ratios(self, geoms, xs_baselines, k_reg_norm, phi_norm):
+    def compute_log_ratios(self, geoms, xs_baselines, k_reg_norm, phi_norm,
+                log_xs_mean=None, log_xs_std=None):
             """Pure NN forward, returns CLIPPED log_ratios (no solver). For diagnostics."""
             batch_size = geoms.shape[0]
             k_reg = jnp.reshape(jnp.array(k_reg_norm, dtype=jnp.float32), (batch_size, 1))
-            log_base = self._log_baselines(xs_baselines)
+            log_base = self._log_baselines(xs_baselines, log_xs_mean, log_xs_std)
             log_ratios = self.generator(geoms, log_base, k_reg, phi_norm, training=False)
             log_ratios = clip_ste(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)
             return np.array(log_ratios)
     
     def __call__(self, geoms, params_raw, xs_baselines, k_reg_norm, phi_norm,
-                 training: bool = False, sample_id_offset: int = 0):
+                 training: bool = False, sample_id_offset: int = 0,
+                 log_xs_mean=None, log_xs_std=None):
         batch_size = geoms.shape[0]
         k_reg  = jnp.reshape(k_reg_norm, (batch_size, 1))
-        log_base   = self._log_baselines(xs_baselines)
+        log_base   = self._log_baselines(xs_baselines, log_xs_mean, log_xs_std)
         phi = jnp.reshape(phi_norm, (batch_size, -1))
         log_ratios = self.generator(geoms, log_base, k_reg, phi, training)
-        log_ratios = jnp.clip(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)  # exp(±0.7) ≈ 0.5x to 2x
+        log_ratios = clip_ste(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)  # exp(±0.7) ≈ 0.5x to 2x
 
         xs_final = jnp.exp(log_ratios) * xs_baselines  # [batch, 3, 12]
 
@@ -574,8 +588,8 @@ def load_data_balanced_ranges(filepath, train_size, test_size, seed=2,
     rawparams = np.array(data["params_raw"], dtype=np.float32)
 
     if bin_edges is None:
-        bin_edges = np.array([0.80, 0.85, 0.90, 0.95,
-                              1.00, 1.05, 1.10, 1.15, 1.20], dtype=np.float32)
+        bin_edges = np.array([0.80, 0.90, 0.95,
+                              1.00, 1.05, 1.10, 1.20], dtype=np.float32)
 
     rng = np.random.default_rng(seed)
 
@@ -1134,7 +1148,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
           hidden_sizes, n_regions, G, seed):
 
     # ── 8.1 Data ─────────────────────────────────────────────────────────────
-    USE_BALANCED_RANGES = True
+    USE_BALANCED_RANGES = False
     print("Loading data …")
     if USE_BALANCED_RANGES: 
         (train_geoms, train_keffs, train_rawparams, train_k_reg, train_phi_features), \
@@ -1166,10 +1180,6 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     train_phi_norm = ((train_phi_features - phi_mean) / phi_std).astype(np.float32)
     test_phi_norm  = ((test_phi_features  - phi_mean) / phi_std).astype(np.float32)
 
-    # Save these for inference later (you'll need them to normalise at deployment time)
-    np.savez(os.path.join(LOG_DIR, "feature_stats.npz"),
-            k_reg_mean=k_reg_mean, k_reg_std=k_reg_std,
-            phi_mean=phi_mean, phi_std=phi_std)
     n_phi_feats = GEO.G * 3
     # ── 8.2 Model — v1: plain Adam, constant LR, NO grad clip ────────────────
     rngs      = nnx.Rngs(seed)
@@ -1196,6 +1206,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             keff_pred, _, _ = model(
                 geoms, rawparams_batch, xs_baselines_batch, k_reg_norm_batch,
                 phi_norm_batch, training=True,
+                log_xs_mean=log_xs_mean_j, log_xs_std=log_xs_std_j,  # ← add
             )
         loss = jnp.mean((keff_pred - keffs_true) ** 2)
         return loss, keff_pred
@@ -1207,6 +1218,27 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     train_xs_baselines = compute_batch_baselines(train_rawparams, GEO)
     test_xs_baselines  = compute_batch_baselines(test_rawparams,  GEO)
     print("Done.")
+     # ── Compute log-baseline normalization stats (fit on train only) ──────────
+    # We take log of the baselines the same way _log_baselines() does:
+    # zeros stay at 0 (log(1)=0), everything else gets log applied.
+    _train_xs_np = np.array(train_xs_baselines)  # [N, 3, 12]
+    _safe = np.where(_train_xs_np > 1e-10, _train_xs_np, np.ones_like(_train_xs_np))
+    _log_train = np.log(_safe)                   # [N, 3, 12]
+    log_xs_mean = _log_train.mean(axis=0).astype(np.float32)   # [3, 12]
+    log_xs_std  = (_log_train.std(axis=0) + 1e-8).astype(np.float32)  # [3, 12]
+    # Save these for inference later (you'll need them to normalise at deployment time)
+    np.savez(os.path.join(LOG_DIR, "feature_stats.npz"),
+            k_reg_mean=k_reg_mean, k_reg_std=k_reg_std,
+            phi_mean=phi_mean, phi_std=phi_std,
+            log_xs_mean=log_xs_mean, log_xs_std=log_xs_std)  # ← add these two
+
+    # Zero-valued XS slots (like chi_g2, nuSf in CR) have zero variance —
+    # their std is ~1e-8, so normalization leaves them at 0. That's correct.
+    print(f"  log_xs_mean range: [{log_xs_mean.min():.2f}, {log_xs_mean.max():.2f}]")
+    print(f"  log_xs_std  range: [{log_xs_std.min():.4f},  {log_xs_std.max():.2f}]")
+    # Convert to JAX arrays once — reused every batch
+    log_xs_mean_j = jnp.array(log_xs_mean)
+    log_xs_std_j  = jnp.array(log_xs_std)
 
     # ── 8.5 History arrays ───────────────────────────────────────────────────
     history = {k: [] for k in
@@ -1241,7 +1273,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             b_phi_j = jnp.array(bphi)
 
             # Step 1: concrete XS from NN (outside JAX trace)
-            xs_np = model.compute_xs(bp, bxs, bdkj, b_phi_j)
+            xs_np = model.compute_xs(bp, bxs, bdkj, b_phi_j, log_xs_mean_j, log_xs_std_j)
 
             # Step 2: parallel pre-solve
             args_list = [(i, xs_np[i], np.array(br[i]), i, epoch)
@@ -1285,7 +1317,8 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
                 global_start = batch_idx * batch_size
                 xs_np = model.compute_xs(
-                    jnp.array(bg), jnp.array(bb), jnp.array(bdk), jnp.array(bphi),
+                    jnp.array(bg), jnp.array(bb), jnp.array(bdk), 
+                    jnp.array(bphi), log_xs_mean_j, log_xs_std_j,
                 )
                 VAL_OFFSET = train_size + 10000
                 args_list = [(i, xs_np[i], np.array(br[i]),
@@ -1300,6 +1333,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         val_log_ratios = model.compute_log_ratios(
             jnp.array(test_geoms), jnp.array(test_xs_baselines),
             jnp.array(test_k_reg_norm), jnp.array(test_phi_norm),
+            log_xs_mean_j, log_xs_std_j,
         )
         log_logratio_saturation(epoch, val_log_ratios)
 
