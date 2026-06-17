@@ -33,12 +33,12 @@ warnings.filterwarnings("ignore")
 # 0.  CONFIGURATION  — adjust paths here
 # ──────────────────────────────────────────────
 
-project_name = "v5_otherclip"
+project_name = "v6_ste"
 LOG_PATH = f"../LOGS/{project_name}/keff_epoch_log_val.csv"
 
-FULL_PATH = "../FILES/LHS_big_dataset.csv"
-PARALLEL_PATH = f"../LOGS/{project_name}/peds_parallel_coords.png"
-SCATTER_PATH = f"../LOGS/{project_name}/peds_keff_scatter_final.png"
+FULL_PATH = "../FILES/1000_clean.csv"
+#PARALLEL_PATH = f"../LOGS/{project_name}/metrics_plot/peds_parallel_coords.png"
+#SCATTER_PATH = f"../LOGS/{project_name}/metrics_plot/peds_keff_scatter_final.png"
 MATCH_TOL = 1e-5                        # keff tolerance for backtrace matching
 
 PARAMS = [
@@ -143,16 +143,21 @@ def plot_loss_curves(df, save_path="peds_loss_curve.png"):
 # 3.  PLOT 2 — keff scatter at final epoch
 # ──────────────────────────────────────────────
 
-def plot_keff_scatter(df, save_path=SCATTER_PATH):
-    last_epoch = df["epoch"].max()
-    df_fin = df[df["epoch"] == last_epoch].copy()
+def plot_keff_scatter(df, epoch = None, save_path=None, vmin=None, vmax=None):
+    if epoch is None:
+        last_epoch = df["epoch"].max()
+    df_fin = df[df["epoch"] == epoch].copy()
+
+    if save_path is None:
+        save_path = f"../LOGS/{project_name}/metrics_plot/scatter_epoch{epoch}.png"
 
     fig, ax = plt.subplots(figsize=(6, 6))
 
     sc = ax.scatter(
         df_fin["keff_openmc"], df_fin["keff_peds"],
         c=df_fin["delta_rho_pcm"], cmap="RdYlGn_r",
-        s=80, edgecolors="k", linewidths=0.4, zorder=3,
+        s=50, edgecolors="k", linewidths=0.4, zorder=3,
+        vmin=vmin, vmax=vmax,    
     )
     cbar = fig.colorbar(sc, ax=ax, pad=0.02)
     cbar.set_label("Δρ (pcm)", fontsize=10)
@@ -162,21 +167,21 @@ def plot_keff_scatter(df, save_path=SCATTER_PATH):
         min(df_fin["keff_openmc"].min(), df_fin["keff_peds"].min()) * 0.995,
         max(df_fin["keff_openmc"].max(), df_fin["keff_peds"].max()) * 1.005,
     ]
-    ax.plot(lims, lims, "k--", lw=1, label="Perfect prediction")
+    ax.plot(lims, lims, "k--", lw=1, label="y = x")
     ax.set_xlim(lims); ax.set_ylim(lims)
 
     # Annotate each point with sample index
-    for _, row in df_fin.iterrows():
+    """ for _, row in df_fin.iterrows():
         ax.annotate(
             f"s{int(row['sample_idx'])}",
             (row["keff_openmc"], row["keff_peds"]),
             textcoords="offset points", xytext=(5, 4),
             fontsize=7, color="#374151",
-        )
+        ) """
 
     ax.set_xlabel("k$_{eff}$ — OpenMC", fontsize=11)
     ax.set_ylabel("k$_{eff}$ — PEDS",   fontsize=11)
-    ax.set_title(f"keff Prediction at Epoch {last_epoch}", fontsize=13, fontweight="bold")
+    ax.set_title(f"keff Prediction at Epoch {epoch}", fontsize=13, fontweight="bold")
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.25, linestyle="--")
     fig.tight_layout()
@@ -217,9 +222,13 @@ def plot_delta_rho_evolution(df, save_path="peds_delta_rho_evolution.png"):
 # 5.  PLOT 4 — Parallel coordinates, coloured by Δρ at final epoch
 # ──────────────────────────────────────────────
 
-def plot_parallel_coords(df, save_path=PARALLEL_PATH):
-    last_epoch = df["epoch"].max()
-    df_fin = df[df["epoch"] == last_epoch].copy()
+def plot_parallel_coords(df, epoch= None, save_path=None):
+    if epoch is None:    
+        last_epoch = df["epoch"].max()
+    df_fin = df[df["epoch"] == epoch].copy()
+
+    if save_path is None:
+        save_path = f"../LOGS/{project_name}/metrics_plot/parallel_coords_epoch{epoch}.png"
 
     # Only rows where all 6 params are known
     df_plot = df_fin.dropna(subset=PARAMS).copy()
@@ -249,7 +258,7 @@ def plot_parallel_coords(df, save_path=PARALLEL_PATH):
     ax.set_xticklabels(PARAM_LABELS, fontsize=9)
     ax.set_ylabel("Normalised parameter value", fontsize=10)
     ax.set_title(
-        f"Parallel Coordinates — 6 parameters coloured by Δρ at epoch {last_epoch}",
+        f"Parallel Coordinates — 6 parameters coloured by Δρ at epoch {epoch}",
         fontsize=12, fontweight="bold",
     )
     ax.set_xlim(-0.1, len(PARAMS) - 0.9)
@@ -280,8 +289,19 @@ if __name__ == "__main__":
 
     print("\nGenerating plots …")
     #plot_loss_curves(df)
-    plot_keff_scatter(df)
     #plot_delta_rho_evolution(df)
-    plot_parallel_coords(df)
+    first_epoch = df["epoch"].min()   # typically 1
+    last_epoch  = df["epoch"].max()
+
+    # ✅ Compute shared colorbar range across BOTH epochs
+    both_epochs = df[df["epoch"].isin([first_epoch, last_epoch])]
+    global_vmin = both_epochs["delta_rho_pcm"].min()
+    global_vmax = both_epochs["delta_rho_pcm"].max()
+
+    plot_keff_scatter(df, epoch=first_epoch, vmin=global_vmin, vmax=global_vmax)
+    plot_keff_scatter(df, epoch=last_epoch,  vmin=global_vmin, vmax=global_vmax)
+
+    plot_parallel_coords(df, epoch=first_epoch)   # 🆕 epoch 1
+    plot_parallel_coords(df, epoch=last_epoch) 
 
     print("\nDone. All plots saved.")

@@ -3,16 +3,17 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 from pathlib import Path
 
 
-project_name = "v5_otherclip"
+project_name = "v1_baseline"
 csv_path_val = f"../LOGS/{project_name}/keff_epoch_log_val.csv"
 rhodiff_path_val = f"../LOGS/{project_name}/metrics_plot/keff_pcm_evolution_val.png"
 hist_path_val = f"../LOGS/{project_name}/metrics_plot/loss_histogram_val.png"
 scatt_path_val = f"../LOGS/{project_name}/metrics_plot/keff_scatter_val.png"
 
-csv_path_train = f"../LOGS/{project_name}/keff_epoch_log_train_stable.csv"
+csv_path_train = f"../LOGS/{project_name}/keff_epoch_log_train.csv"
 rhodiff_path_train = f"../LOGS/{project_name}/metrics_plot/keff_pcm_evolution_train.png"
 hist_path_train = f"../LOGS/{project_name}/metrics_plot/loss_histogram_train.png"
 scatt_path_train = f"../LOGS/{project_name}/metrics_plot/keff_scatter_train.png"
@@ -68,11 +69,11 @@ def plot_keff_pcm(log_path, save_path):
     ax.text(x=ax.get_xlim()[1], y=beta_eff_pcm + 60,
             s=f"β_eff = {beta_eff_pcm} pcm",
             color="#00008B", fontsize=9, ha="right")
-    ax.set_xlabel("Epoch", fontsize=12)
-    ax.set_ylabel("Delta-rho (pcm)", fontsize=12)
-    ax.set_title(f"Reactivity Error (pcm) — PEDS vs. OpenMC - {project_name}", fontsize=13)
+    ax.set_xlabel("Epoch", fontsize=16)
+    ax.set_ylabel("Delta-rho (pcm)", fontsize=16)
+    ax.set_title(f"Reactivity Error (pcm) — PEDS vs. OpenMC - {project_name}", fontsize=18)
     all_epochs = sorted(df["epoch"].unique())
-    ax.set_xticks(all_epochs)      
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=12, integer=True))
     ax.grid(True, alpha=0.15)
     #ax.set_yscale("log")
     ax.legend(
@@ -246,7 +247,7 @@ def plot_loss_from_csv(
 
     # ── Ticks — one per epoch, large font ─────────────────────────────
     ax.set_xticks(loss_stats["epoch"])                   # exactly 1–N, no gaps
-    ax.tick_params(axis="both", labelsize=13)
+    ax.tick_params(axis="both", labelsize=14)
 
     ax.set_yscale("log")
     ax.grid(True, alpha=0.15)
