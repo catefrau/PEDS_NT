@@ -80,8 +80,8 @@ if __name__ == "__main__":
     ]
 
     csv_to_npz(
-        csv_path="../FILES/LHS_big_dataset.csv",
+        csv_path="../FILES/1000_clean.csv",
         param_cols=PARAM_COLUMNS,
         keff_col="keff",
-        output_path="../FILES/MCruns_big.npz",
+        output_path="../FILES/1000_clean.npz",
     )

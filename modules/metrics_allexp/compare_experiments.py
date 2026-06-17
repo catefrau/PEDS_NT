@@ -8,10 +8,10 @@ import numpy as np
 #  CONFIGURATION  –  edit these as needed
 # ─────────────────────────────────────────────
 LOGS_DIR        = "../LOGS"                  # folder that contains all experiment sub-folders
-METRIC          = "train_mae_k"             # column to extract and compare
+METRIC          = "val_mae_k"             # column to extract and compare
 SUMMARY_FILE    = "epoch_metrics.csv"     # filename inside each experiment folder
-OUTPUT_CSV      = "combined_metrics_train.csv"  # output combined CSV
-OUTPUT_PLOT     = "comparison_plot_train.png"   # output plot image
+OUTPUT_CSV      = "combined_metrics_val.csv"  # output combined CSV
+OUTPUT_PLOT     = "comparison_plot_val.png"   # output plot image
 # ─────────────────────────────────────────────
 
 def collect_metrics(logs_dir, metric, summary_file):

@@ -16,7 +16,7 @@ THIS_DIR   = os.path.dirname(os.path.abspath(__file__))
 PARENT_DIR = os.path.dirname(THIS_DIR)
 
 os.environ["JAX_PLATFORMS"] = "cpu"
-os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=1"
+os.environ["XLA_FLAGS"] = f"--xla_force_host_platform_device_count={os.cpu_count()}"
 os.environ["XLA_CPU_ENABLE_FAST_MATH"] = "false"
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 multiprocessing.set_start_method("spawn", force=True)
@@ -65,11 +65,11 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-EXP_NAME   = "v6_ste"
-TRAIN_SIZE = 450
-TEST_SIZE  = 150
-BATCH_SIZE = 20
-EPOCHS     = 70
+EXP_NAME   = "v6_aa"
+TRAIN_SIZE = 80
+TEST_SIZE  = 20
+BATCH_SIZE = 10
+EPOCHS     = 10
 
 LR_max     = 5e-4   # cosine schedule peak learning rate
 LR_min     = 5e-6
@@ -94,22 +94,28 @@ _DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "1000_clean.np
 
 N_WORKERS = min(int(os.environ.get("SLURM_CPUS_PER_TASK", 16)), BATCH_SIZE)
 print(f"Using {N_WORKERS} parallel workers")
-executor = ProcessPoolExecutor(max_workers=N_WORKERS, mp_context=ctx)
+
+executor = None
+
+val_logfile = None
+train_logfile = None
+val_writer = None
+train_writer = None
+
+epoch_stats_file = None
+epoch_stats_writer = None
+
+logratio_stats_file = None
+logratio_stats_writer = None
+
 
 # ── output directory: everything for this run lives under LOG_DIR ─────────────
-# Whether you run from THIS_DIR or from the parent, files always land here.
 LOG_DIR = os.path.join(THIS_DIR, "LOGS", EXP_NAME)
 os.makedirs(LOG_DIR, exist_ok=True)
-
 val_log_path    = os.path.join(LOG_DIR, "keff_epoch_log_val.csv")
 train_log_path  = os.path.join(LOG_DIR, "keff_epoch_log_train.csv")
-# NEW: one row per epoch with all aggregate metrics
 epoch_stats_path = os.path.join(LOG_DIR, "epoch_metrics.csv")
 
-loggy_file = open(os.path.join(LOG_DIR, f"train_log_{EXP_NAME}.txt"), "w", buffering=1)
-sys.stdout = loggy_file
-sys.stderr = loggy_file
-print("JAX devices:", jax.devices())
 
 # ── precomputed geometry constants ───────────────────────────────────────────
 GEO_DATA = precompute_geometry(GEO)
@@ -170,7 +176,6 @@ def update_geo(geo: GeometryConfig, params_raw: np.ndarray) -> GeometryConfig:
 
 # Defer N_FLAT_MAX until after update_geo is defined
 N_FLAT_MAX = _compute_n_flat_max_from_file(_DATA_FILEPATH, GEO)
-print(f"N_FLAT_MAX = {N_FLAT_MAX}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -671,6 +676,7 @@ def print_keff_bin_counts(name, keffs):
             n = np.sum((keffs >= lo) & (keffs <= hi))
             label = f"[{lo:.2f}, {hi:.2f}]"
         print(f"{label}: {n}")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 5: Metrics
 # ─────────────────────────────────────────────────────────────────────────────
@@ -711,7 +717,7 @@ def print_metrics(epoch: int, tag: str, m: dict):
     print(
         f"[Epoch {epoch:4d}] {tag:5s} | "
         f"MSE={m['mse_k']:.6f} | "
-        f"MAE_k={m['MAE_k']:7.1f} | "
+        f"MAE_k={m['MAE_k']:9.1f} | "
         f"mean={m['mean_pcm']:7.1f} pcm | "
         f"median={m['median_pcm']:7.1f} pcm | "
         f"p95={m['p95_pcm']:7.1f} pcm | "
@@ -724,29 +730,56 @@ def print_metrics(epoch: int, tag: str, m: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 6: CSV logging
 # ─────────────────────────────────────────────────────────────────────────────
-val_logfile   = open(val_log_path,   "w", newline="", buffering=1)
-train_logfile = open(train_log_path, "w", newline="", buffering=1)
-val_writer    = csv.writer(val_logfile)
-train_writer  = csv.writer(train_logfile)
-_HEADER = ["epoch", "sample_idx", "keff_openmc", "keff_peds",
-           "delta_rho_pcm", "train_loss", "val_loss"]
-val_writer.writerow(_HEADER)
-train_writer.writerow(_HEADER)
+def init_csv_logs():
+    global val_logfile, train_logfile, val_writer, train_writer
+    global epoch_stats_file, epoch_stats_writer
+    global logratio_stats_file, logratio_stats_writer
 
-# ── NEW: epoch-level aggregate stats CSV ─────────────────────────────────────
-# One row per epoch with every metric for both train and val splits.
-# This lets you reconstruct the full training curve even if prints are lost.
-epoch_stats_file = open(epoch_stats_path, "w", newline="", buffering=1)
-epoch_stats_writer = csv.writer(epoch_stats_file)
-_EPOCH_HEADER = [
-    "epoch",
-    "train_mse_k", "train_mae_k", "train_mean_pcm", "train_median_pcm",
-    "train_p95_pcm", "train_std_pcm", "train_frac_below_650", "train_frac_below_100",
-    "val_mse_k",   "val_mae_k",   "val_mean_pcm",   "val_median_pcm",
-    "val_p95_pcm",   "val_std_pcm",   "val_frac_below_650",   "val_frac_below_100",
-]
-epoch_stats_writer.writerow(_EPOCH_HEADER)
+    os.makedirs(LOG_DIR, exist_ok=True)
 
+    for p in [val_log_path, train_log_path, epoch_stats_path,
+              os.path.join(LOG_DIR, "logratio_saturation.csv")]:
+        if os.path.exists(p):
+            os.remove(p)
+
+    val_logfile = open(val_log_path, "w", newline="", buffering=1)
+    train_logfile = open(train_log_path, "w", newline="", buffering=1)
+
+    val_writer = csv.writer(val_logfile)
+    train_writer = csv.writer(train_logfile)
+
+    header = ["epoch", "sample_idx", "keff_openmc", "keff_peds",
+              "delta_rho_pcm", "train_loss", "val_loss"]
+    val_writer.writerow(header)
+    train_writer.writerow(header)
+    val_logfile.flush()
+    train_logfile.flush()
+
+    epoch_stats_file = open(epoch_stats_path, "w", newline="", buffering=1)
+    epoch_stats_writer = csv.writer(epoch_stats_file)
+    epoch_header = [
+        "epoch",
+        "train_mse_k", "train_mae_k", "train_mean_pcm", "train_median_pcm",
+        "train_p95_pcm", "train_std_pcm", "train_frac_below_650", "train_frac_below_100",
+        "val_mse_k", "val_mae_k", "val_mean_pcm", "val_median_pcm",
+        "val_p95_pcm", "val_std_pcm", "val_frac_below_650", "val_frac_below_100",
+    ]
+    epoch_stats_writer.writerow(epoch_header)
+    epoch_stats_file.flush()
+
+    logratio_stats_path = os.path.join(LOG_DIR, "logratio_saturation.csv")
+    logratio_stats_file = open(logratio_stats_path, "w", newline="", buffering=1)
+    logratio_stats_writer = csv.writer(logratio_stats_file)
+    lr_header = ["epoch", "region", "xs_idx",
+                 "min", "max", "mean", "std",
+                 "frac_at_lower_clip", "frac_at_upper_clip"]
+    logratio_stats_writer.writerow(lr_header)
+    logratio_stats_file.flush()
+
+def close_csv_logs():
+    for fh in [val_logfile, train_logfile, epoch_stats_file, logratio_stats_file]:
+        if fh is not None:
+            fh.close()
 
 def log_epoch_stats(epoch: int, train_m: dict, val_m: dict):
     """Write one row of aggregate stats per epoch to epoch_metrics.csv."""
@@ -770,16 +803,6 @@ def log_keff_batch(writer, filehandle, epoch, k_pred, k_ref,
                               f"{kr:.6f}", f"{kp:.6f}", f"{dr:.1f}",
                               avg_train_loss, avg_val_loss])
         filehandle.flush()
-
-# ── NEW: log_ratios saturation diagnostics ──────────────────────────────────
-logratio_stats_path = os.path.join(LOG_DIR, "logratio_saturation.csv")
-logratio_stats_file = open(logratio_stats_path, "w", newline="", buffering=1)
-logratio_stats_writer = csv.writer(logratio_stats_file)
-_LR_HEADER = ["epoch", "region", "xs_idx",
-              "min", "max", "mean", "std",
-              "frac_at_lower_clip", "frac_at_upper_clip"]
-logratio_stats_writer.writerow(_LR_HEADER)
-
 
 _CLIP_EPS = 1e-4  # tolerance for "at the clip boundary"
 
@@ -805,6 +828,98 @@ def log_logratio_saturation(epoch: int, log_ratios_all: np.ndarray):
                 ])
         logratio_stats_file.flush()
 
+def save_final_xs_csv(model, geoms, raw_params, xs_baselines, k_reg_norm, phi_norm,
+                      keffs_ref, log_xs_mean, log_xs_std, file_path, tag="train"):
+    region_names = ["CR", "Core", "Mod"]
+    xs_labels    = ["D1","D2","Sa1","Sa2","nSf1","nSf2","Ss11","Ss22","Ss12","Ss21","chi1","chi2"]
+    
+    geo_header = PARAM_NAMES
+    xs_header  = [f"{reg}_{xs}" for reg in region_names for xs in xs_labels]
+    # ↓ added keff_pred and delta_rho_pcm to the header
+    header = ["sample_idx"] + geo_header + ["keff_ref", "keff_pred", "delta_rho_pcm"] + xs_header
+
+    rows = []
+    N = geoms.shape[0]
+    batch_size = 25
+
+    for start in range(0, N, batch_size):
+        sl = slice(start, start + batch_size)
+        xsf = model.compute_xs(
+            jnp.array(geoms[sl],         dtype=jnp.float32),
+            jnp.array(xs_baselines[sl],  dtype=jnp.float32),
+            jnp.array(k_reg_norm[sl],    dtype=jnp.float32),
+            jnp.array(phi_norm[sl],      dtype=jnp.float32),
+            log_xs_mean, log_xs_std,
+        )  # (batch, 3, 12)
+
+        for i, global_idx in enumerate(range(start, min(start + batch_size, N))):
+            # ── run solver to get keff_pred ──────────────────────────────────
+            keff_pred = None
+            try:
+                k, _, _, _ = _run_NT_solver(
+                    xsf[i],                                     # (3,12) final XS
+                    raw_params[global_idx],                     # (6,)   geometry
+                    np.array([global_idx], dtype=np.int32),     # sample id
+                )
+                keff_pred = float(k)
+            except Exception as e:
+                print(f"  [save_final_xs_csv] solver failed for {tag} sample {global_idx}: {e}")
+
+            # ── compute delta_rho_pcm ────────────────────────────────────────
+            keff_ref_val = float(keffs_ref[global_idx])
+            if keff_pred is not None:
+                dr = abs(keff_pred - keff_ref_val) / (keff_pred * keff_ref_val) * 1e5
+            else:
+                dr = float("nan")   # solver failed → mark as NaN
+
+            row = (
+                [global_idx]
+                + raw_params[global_idx].tolist()   # 6 geometry params
+                + [keff_ref_val, keff_pred, round(dr, 2)]
+                + xsf[i].flatten().tolist()          # 36 XS values
+            )
+            rows.append(row)
+
+        if start % 100 == 0:
+            print(f"  [{tag}] saving XS CSV: {start}/{N}", flush=True)
+
+    with open(file_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        writer.writerows(rows)
+    print(f"Saved final XS ({tag}): {file_path}  [{N} samples]")
+
+import os
+import shutil
+import hashlib
+
+def save_code_snapshot(logdir, expname, log_handle=None):
+    src = os.path.abspath(__file__)
+    snapshot_path = os.path.join(logdir, f"code_snapshot_{expname}.py")
+
+    # 1) Save a real copy of the script
+    shutil.copy2(src, snapshot_path)
+
+    # 2) Read code text
+    with open(src, "r", encoding="utf-8") as f:
+        code_text = f.read()
+
+    # 3) Optional hash, useful to identify exact version
+    code_hash = hashlib.sha256(code_text.encode("utf-8")).hexdigest()
+
+    # 4) Optional: also append the full code into the txt log
+    if log_handle is not None:
+        log_handle.write("\n" + "=" * 100 + "\n")
+        log_handle.write("CODE SNAPSHOT\n")
+        log_handle.write(f"Source file : {src}\n")
+        log_handle.write(f"Saved copy  : {snapshot_path}\n")
+        log_handle.write(f"SHA256      : {code_hash}\n")
+        log_handle.write("=" * 100 + "\n")
+        log_handle.write(code_text)
+        log_handle.write("\n" + "=" * 100 + "\n")
+        log_handle.flush()
+
+    return snapshot_path, code_hash
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 7: Plotting helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -872,11 +987,10 @@ def _save_xs_subplots_for_samples(
         # ── optional: run solver for keff_pred ───────────────────────────────
         keff_pred_val = None
         try:
-            SENTINEL  = 7000 + idx
             keff_pred_val = float(NTdiff_solver(
-                jnp.array(final_xs,              dtype=jnp.float32),
-                jnp.array(rawparams_all[idx],    dtype=jnp.float32),
-                jnp.array([SENTINEL],            dtype=jnp.int32),
+                jnp.array(final_xs, dtype=jnp.float32),
+                jnp.array(rawparams_all[idx], dtype=jnp.float32),
+                jnp.array([idx], dtype=jnp.int32),
             ))
         except Exception as e:
             print(f"  [subplot] solver failed for sample {idx} epoch {epoch}: {e}")
@@ -1036,12 +1150,12 @@ def _plot_history(history: dict, exp_name: str):
 
 def _save_flux_plots(
     sample_indices: list,
-    train_geoms: np.ndarray,
-    train_keffs: np.ndarray,
-    train_rawparams: np.ndarray,
-    train_xs_baselines: np.ndarray,
-    train_k_reg_norm: np.ndarray,
-    train_phi_norm: np.ndarray,
+    test_geoms: np.ndarray,
+    test_keffs: np.ndarray,
+    test_rawparams: np.ndarray,
+    test_xs_baselines: np.ndarray,
+    test_k_reg_norm: np.ndarray,
+    test_phi_norm: np.ndarray,
     model,
     epoch: int,
 ):
@@ -1058,21 +1172,21 @@ def _save_flux_plots(
 
     for idx in sample_indices:
         idx = int(idx)
-        if idx >= len(train_geoms):
+        if idx >= len(test_geoms):
             print(f"  [flux_plot] sample_idx={idx} out of range, skipping")
             continue
 
         # ── Geometry for this sample ──────────────────────────────────────────
-        geo_i    = update_geo(GEO, train_rawparams[idx])
+        geo_i    = update_geo(GEO, test_rawparams[idx])
         R        = geo_i.boundaries[-1].radius
         I        = int(R / geo_i.mesh_size)
         Delta_r  = geo_i.mesh_size
 
         # ── Get NN-corrected XS (no gradient needed) ──────────────────────────
-        xs_b  = jnp.array(train_xs_baselines[idx:idx+1], dtype=jnp.float32)  # (1,3,12)
-        geom  = jnp.array(train_geoms[idx:idx+1],        dtype=jnp.float32)  # (1,6)
-        dk    = jnp.array([[float(train_k_reg_norm[idx])]], dtype=jnp.float32)  # (1,1)
-        phi   = jnp.array((train_phi_norm[idx:idx+1]), dtype=jnp.float32) 
+        xs_b  = jnp.array(test_xs_baselines[idx:idx+1], dtype=jnp.float32)  # (1,3,12)
+        geom  = jnp.array(test_geoms[idx:idx+1],        dtype=jnp.float32)  # (1,6)
+        dk    = jnp.array([[float(test_k_reg_norm[idx])]], dtype=jnp.float32)  # (1,1)
+        phi   = jnp.array((test_phi_norm[idx:idx+1]), dtype=jnp.float32) 
 
         log_base   = model._log_baselines(xs_b)
         log_ratios = model.generator(geom, log_base, dk, phi, training=False)  # (1,3,12)
@@ -1096,7 +1210,7 @@ def _save_flux_plots(
         x = np.array([(i + 0.5) * Delta_r for i in range(I)])  # shape (I,)
 
         # ── Also run baseline (no NN) for comparison ──────────────────────────
-        xs_base_np = np.array(train_xs_baselines[idx], dtype=np.float32)  # (3,12)
+        xs_base_np = np.array(test_xs_baselines[idx], dtype=np.float32)  # (3,12)
         try:
             k_base, phi_fwd_base, phi_adj_base = run_diffusion_solver(xs_base_np, geo_i)
         except Exception as e:
@@ -1134,7 +1248,7 @@ def _save_flux_plots(
             plot_output  = save_path,
         )
 
-        k_ref = float(train_keffs[idx])
+        k_ref = float(test_keffs[idx])
         dr    = abs(k_pred - k_ref) / (k_pred * k_ref) * 1e5
         print(
             f"  [flux_plot] epoch {epoch}  sample {idx}  "
@@ -1147,6 +1261,8 @@ def _save_flux_plots(
 def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
           hidden_sizes, n_regions, G, seed):
 
+    init_csv_logs()
+        
     # ── 8.1 Data ─────────────────────────────────────────────────────────────
     USE_BALANCED_RANGES = False
     print("Loading data …")
@@ -1203,10 +1319,9 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     def loss_fn(model, geoms, keffs_true, rawparams_batch,
                 xs_baselines_batch, k_reg_norm_batch, phi_norm_batch):
         with timer("loss_fn forward pass", verbose=False):
-            keff_pred, _, _ = model(
+            keff_pred, _, log_ratios = model(
                 geoms, rawparams_batch, xs_baselines_batch, k_reg_norm_batch,
                 phi_norm_batch, training=True,
-                log_xs_mean=log_xs_mean_j, log_xs_std=log_xs_std_j,  # ← add
             )
         loss = jnp.mean((keff_pred - keffs_true) ** 2)
         return loss, keff_pred
@@ -1248,6 +1363,30 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     print(f"\nTraining for {epochs} epochs …")
     epoch_grad_norms = []
 
+    # ── Epoch 0: true pre-training baseline ──────────────────
+    print("Computing epoch 0 baseline for train set...")
+    kp_train_baseline = []
+    for i in range(len(train_rawparams)):
+        xs_i = np.array(predict_xs(update_geo(GEO, train_rawparams[i])), dtype=np.float32)
+        k, _, _, _ = _run_NT_solver(xs_i, train_rawparams[i], np.array([i], dtype=np.int32))
+        kp_train_baseline.append(float(k))
+
+    print("Computing epoch 0 baseline for val/test set...")
+    kp_val_baseline = []
+    for i in range(len(test_rawparams)):
+        xs_i = np.array(predict_xs(update_geo(GEO, test_rawparams[i])), dtype=np.float32)
+        k, _, _, _ = _run_NT_solver(xs_i, test_rawparams[i], np.array([i], dtype=np.int32))
+        kp_val_baseline.append(float(k))    
+
+    log_keff_batch(train_writer, train_logfile, epoch=0,
+                k_pred=np.array(kp_train_baseline),
+                k_ref=train_keffs,
+                avg_train_loss=0.0, avg_val_loss=0.0)
+    log_keff_batch(val_writer, val_logfile, epoch=0,
+                k_pred=np.array(kp_val_baseline),
+                k_ref=test_keffs,
+                avg_train_loss=0.0, avg_val_loss=0.0)
+                
     for epoch in range(1, epochs + 1):
         # ── shuffle ──────────────────────────────────────────────────────────
         idx = np.random.permutation(train_size)
@@ -1380,28 +1519,46 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             _save_xs_subplots_for_samples(
                 model            = model,
                 sample_indices   = SUBPLOT_SAMPLE_INDICES,
-                geoms_all        = train_geoms,              # ← unshuffled
-                keffs_all        = train_keffs,              # ← unshuffled
-                rawparams_all    = train_rawparams,          # ← unshuffled
-                xs_baselines_all = np.array(train_xs_baselines),  # ← unshuffled
-                k_reg_norm_all = train_k_reg_norm,       # ← unshuffled
-                phi_norm_all     = train_phi_norm,   # ← ADD
+                geoms_all        = test_geoms,              # ← unshuffled
+                keffs_all        = test_keffs,              # ← unshuffled
+                rawparams_all    = test_rawparams,          # ← unshuffled
+                xs_baselines_all = np.array(test_xs_baselines),  # ← unshuffled
+                k_reg_norm_all   = test_k_reg_norm,       # ← unshuffled
+                phi_norm_all     = test_phi_norm,   
                 epoch            = epoch,
             )
             _save_flux_plots(                         
                 sample_indices      = SUBPLOT_SAMPLE_INDICES,
-                train_geoms         = train_geoms,
-                train_keffs         = train_keffs,
-                train_rawparams     = train_rawparams,
-                train_xs_baselines  = np.array(train_xs_baselines),
-                train_k_reg_norm  = train_k_reg_norm,
-                train_phi_norm      = train_phi_norm,
+                test_geoms         = test_geoms,
+                test_keffs         = test_keffs,
+                test_rawparams     = test_rawparams,
+                test_xs_baselines  = np.array(test_xs_baselines),
+                test_k_reg_norm  = test_k_reg_norm,
+                test_phi_norm      = test_phi_norm,
                 model               = model,
                 epoch               = epoch,
             )
 
         if epoch % 20 == 0:
             jax.clear_caches()
+
+    # end of the epoch loop
+
+    # --- Save final-epoch XS for all train and val samples ---
+    save_final_xs_csv(
+        model, train_geoms, train_rawparams, np.array(train_xs_baselines),
+        train_k_reg_norm, train_phi_norm, train_keffs,
+        log_xs_mean_j, log_xs_std_j,
+        file_path=os.path.join(LOG_DIR, "final_xs_train.csv"),
+        tag="train"
+    )
+    save_final_xs_csv(
+        model, test_geoms, test_rawparams, np.array(test_xs_baselines),
+        test_k_reg_norm, test_phi_norm, test_keffs,
+        log_xs_mean_j, log_xs_std_j,
+        file_path=os.path.join(LOG_DIR, "final_xs_val.csv"),
+        tag="val"
+    )
 
     # ─────────────────────────────────────────────────────────────
     # check the geometry of the badly converged samples
@@ -1439,34 +1596,50 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     # ── final report ─────────────────────────────────────────────────────────
     _plot_history(history, EXP_NAME)
     print_timing_report()
-    val_logfile.close()
-    train_logfile.close()
-    epoch_stats_file.close()
-    loggy_file.close()
-    return model, history
+
+    close_csv_logs()
+    return model, history    
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    HP = dict(
-        filepath    = _DATA_FILEPATH,   # uses anchored path, not hard-coded string
-        train_size  = TRAIN_SIZE,
-        test_size   = TEST_SIZE,
-        batch_size  = BATCH_SIZE,
-        epochs      = EPOCHS,
-        lr_max        = LR_max,   # cosine schedule peak learning rate
-        lr_min        = LR_min,        
-        hidden_sizes= [128, 128, 64],
-        n_regions   = 3,
-        G           = 2,
-        seed        = SEED,
-    )
-    print("Starting PEDS v1 (clean baseline) …")
-    model, history = train(**HP)
-    print("\nDone.")
-    print(f"  Final val mean |Δρ|   : {history['val_mean_pcm'][-1]:.1f} pcm")
-    print(f"  Final val median |Δρ| : {history['val_median_pcm'][-1]:.1f} pcm")
-    print(f"  Final val p95 |Δρ|    : {history['val_p95_pcm'][-1]:.1f} pcm")
-    print(f"  Final % below 650 pcm : {history['val_frac_below_650'][-1]*100:.1f}%")
+    loggy_file = open(os.path.join(LOG_DIR, f"train_log_{EXP_NAME}.txt"), "w", buffering=1)
+    snapshot_path, code_hash = save_code_snapshot(LOG_DIR, EXP_NAME)
+    sys.stdout = loggy_file
+    sys.stderr = loggy_file
+
+    print(f"Run log      : {loggy_file}")
+    print(f"Code copy    : {snapshot_path}")
+    print(f"Code SHA256  : {code_hash}")
+    
+    executor = ProcessPoolExecutor(max_workers=N_WORKERS, mp_context=ctx)
+
+    try:
+        print(f"N_FLAT_MAX = {N_FLAT_MAX}")
+        HP = dict(
+            filepath    = _DATA_FILEPATH,   # uses anchored path, not hard-coded string
+            train_size  = TRAIN_SIZE,
+            test_size   = TEST_SIZE,
+            batch_size  = BATCH_SIZE,
+            epochs      = EPOCHS,
+            lr_max        = LR_max,   # cosine schedule peak learning rate
+            lr_min        = LR_min,        
+            hidden_sizes= [128, 128, 64],
+            n_regions   = 3,
+            G           = 2,
+            seed        = SEED,
+        )
+        print("Starting PEDS v1 (clean baseline) …")
+        model, history = train(**HP)
+        print("\nDone.")
+        print(f"  Final val mean |Δρ|   : {history['val_mean_pcm'][-1]:.1f} pcm")
+        print(f"  Final val median |Δρ| : {history['val_median_pcm'][-1]:.1f} pcm")
+        print(f"  Final val p95 |Δρ|    : {history['val_p95_pcm'][-1]:.1f} pcm")
+        print(f"  Final % below 650 pcm : {history['val_frac_below_650'][-1]*100:.1f}%")
+
+
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+        loggy_file.close()

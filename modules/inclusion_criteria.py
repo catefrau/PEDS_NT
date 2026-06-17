@@ -2,10 +2,17 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-from config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
-from diffusion_solver import run_diffusion_solver, precompute_geometry, predict_xs, build_xs_callables,  xs_per_region, xs_layout
+import sys
+import os
+THIS_DIR   = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(THIS_DIR)
+
+sys.path.insert(0, PARENT_DIR)
+
+from NTcode_config_data.config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
+from solvers.NTdiffusion.diffusion_solver import run_diffusion_solver, precompute_geometry, predict_xs, build_xs_callables, fn_xs_per_region, xs_layout
 from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import DiffusionEigenvalue_MG
-from config_run import GEO_CYL  # to reuse G, geometry, bc, mesh_size
+from NTcode_config_data.config_run import GEO_CYL  # to reuse G, geometry, bc, mesh_size
 
 
 
@@ -69,7 +76,7 @@ def xs_tensor_from_row(row, geo: GeometryConfig) -> np.ndarray:
     Build xs_tensor directly from CSV XS columns for this geometry.
     """
     G = geo.G
-    n = xs_per_region(G)
+    n = fn_xs_per_region(G)
     lay = xs_layout(G)
     xs_tensor = np.zeros((len(geo.regions), n))
 
@@ -120,7 +127,7 @@ def xs_tensor_from_row(row, geo: GeometryConfig) -> np.ndarray:
 
     return xs_tensor
 
-def scatter_plot_from_csv(df, plot_output="LOGS/keffplots/keff_scatter.png"):
+def scatter_plot_from_csv(df, plot_output="LOGS/zed/keff_scatter.png"):
     plt.figure(figsize=(5, 5))
     plt.scatter(df["keff"], df["keff_lf"], s=8, alpha=0.4)
     plt.plot([df["keff"].min(), df["keff"].max()],
@@ -132,11 +139,12 @@ def scatter_plot_from_csv(df, plot_output="LOGS/keffplots/keff_scatter.png"):
     plt.legend()
     plt.grid(alpha=0.3)
     plt.tight_layout()
+    os.makedirs(os.path.dirname(plot_output), exist_ok=True)  # ← add this
     plt.savefig(plot_output, dpi=250)
     #plt.show()
 
 
-def plot_histogram(df, plot_output="LOGS/keffplots/keff_histogram.png"):
+def plot_histogram(df, plot_output="LOGS/zed/keff_histogram.png"):
     plt.figure()
     plt.hist(df["keff"], bins=40, alpha=0.5, label="OpenMC (HF)")
     plt.hist(df["keff_lf"], bins=40, alpha=0.5, label="Diffusion (LF)")
@@ -145,12 +153,14 @@ def plot_histogram(df, plot_output="LOGS/keffplots/keff_histogram.png"):
     plt.legend()
     plt.grid(alpha=0.3)
     plt.tight_layout()
+    os.makedirs(os.path.dirname(plot_output), exist_ok=True)  # ← add this
+    
     plt.savefig(plot_output, dpi=250)
     #plt.show()
 
 
 if __name__ == "__main__":
-    df = pd.read_csv("./FILES/LHS_full_dataset.csv")
+    df = pd.read_csv("./FILES/1000_clean.csv")
 
     row = df.iloc[0]
     geo = geometry_from_row(row)
@@ -176,7 +186,7 @@ if __name__ == "__main__":
         if any(pat in c for pat in xs_patterns)
     ]
     df_small = df.drop(columns=xs_cols)
-    df_small.to_csv("./FILES/LHS_with_diffusion_keff.csv", index=False)
+    df_small.to_csv("./FILES/clean_with_diffusion_keff.csv", index=False)
     
     kh_min, kh_max = df_small["keff"].min(), df_small["keff"].max()
     kl_min, kl_max = df_small["keff_lf"].min(), df_small["keff_lf"].max()
