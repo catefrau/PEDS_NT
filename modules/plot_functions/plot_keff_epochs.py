@@ -7,7 +7,7 @@ from matplotlib.ticker import MaxNLocator
 from pathlib import Path
 
 
-project_name = "v7_batchsize"
+project_name = "v9_changeinit"
 csv_path_val = f"../LOGS/{project_name}/keff_epoch_log_val.csv"
 rhodiff_path_val = f"../LOGS/{project_name}/metrics_plot/keff_pcm_evolution_val.png"
 hist_path_val = f"../LOGS/{project_name}/metrics_plot/loss_histogram_val.png"
@@ -24,7 +24,7 @@ def plot_keff_pcm(log_path, save_path):
 
     df = pd.read_csv(log_path)
     epoch_stats = df.groupby("epoch")["delta_rho_pcm"].agg(["mean","min","max"]).reset_index()
-    samples = sorted(df["sample_idx"].unique())
+    samples = sorted(df["sample_idx"].unique()) #[-20:]
     kref_map = {s: df[df["sample_idx"]==s]["keff_openmc"].iloc[0] for s in samples}
     print(f"Samples number: {len(samples)}")
     plt.style.use("default")
@@ -75,7 +75,7 @@ def plot_keff_pcm(log_path, save_path):
     all_epochs = sorted(df["epoch"].unique())
     ax.xaxis.set_major_locator(MaxNLocator(nbins=12, integer=True))
     ax.grid(True, alpha=0.15)
-    #ax.set_yscale("log")
+    ax.set_yscale("log")
     ax.legend(
         loc="upper center",
         bbox_to_anchor=(0.5, -0.12),  # centered, below the x-axis

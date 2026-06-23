@@ -33,7 +33,7 @@ warnings.filterwarnings("ignore")
 # 0.  CONFIGURATION  — adjust paths here
 # ──────────────────────────────────────────────
 
-project_name = "v6_ste"
+project_name = "v9_huberloss"
 LOG_PATH = f"../LOGS/{project_name}/keff_epoch_log_val.csv"
 
 FULL_PATH = "../FILES/1000_clean.csv"
@@ -245,14 +245,30 @@ def plot_parallel_coords(df, epoch= None, save_path=None):
     delta_rho_vals = df_plot["delta_rho_pcm"].values
     norm_dr        = (delta_rho_vals - delta_rho_vals.min()) / \
                      (delta_rho_vals.max() - delta_rho_vals.min() + 1e-30)
-    colors = cm.RdYlGn_r(norm_dr)   # red = high error, green = low error
+    base_colors = cm.RdYlGn_r(norm_dr)   # red = high error, green = low error
 
     fig, ax = plt.subplots(figsize=(11, 5))
     x_pos = np.arange(len(PARAMS))
 
+    # threshold = upper half of Δρ range
+    high_mask =  norm_dr > 0.3
+    low_mask  = ~high_mask
+
+    # 1) draw low-error lines first, faint
     for i, (_, row) in enumerate(norm_params.iterrows()):
-        y_vals = row[PARAMS].values.astype(float)
-        ax.plot(x_pos, y_vals, color=colors[i], alpha=0.75, linewidth=2.0)
+        if low_mask[i]:
+            y_vals = row[PARAMS].values.astype(float)
+            color = base_colors[i].copy()
+            color[-1] = 0.4   # more transparent
+            ax.plot(x_pos, y_vals, color=color, linewidth=1.5, zorder=1)
+
+    # 2) draw high-error lines second, bold
+    for i, (_, row) in enumerate(norm_params.iterrows()):
+        if high_mask[i]:
+            y_vals = row[PARAMS].values.astype(float)
+            color = base_colors[i].copy()
+            color[-1] = 0.9   # almost opaque
+            ax.plot(x_pos, y_vals, color=color, linewidth=2.5, zorder=3)
 
     ax.set_xticks(x_pos)
     ax.set_xticklabels(PARAM_LABELS, fontsize=9)

@@ -353,6 +353,7 @@ def plot_xs_subplots(
     param_names=None,
     keff_ref=None,
     keff_pred=None,
+    weight=None,
 ):
     """
     Portrait layout: 2 subplots per row, stacked vertically.
@@ -444,6 +445,8 @@ def plot_xs_subplots(
                 f"k_ref={keff_ref:.5f}   k_pred={keff_pred:.5f}"
                 f"   Δρ={delta_rho:.0f} pcm"
             )
+            if weight is not None:
+                parts.append(f"weight={weight:.2f}")
         elif keff_ref is not None:
             parts.append(f"k_ref={keff_ref:.5f}")
 

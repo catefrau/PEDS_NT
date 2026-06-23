@@ -1,0 +1,46 @@
+{
+  "input_cols": [
+    "r0_b4c_rod_outer_radius",
+    "r0_b4c_rod_cr_fraction",
+    "r1_fuel_annulus_outer_radius",
+    "r1_fuel_annulus_enrichment",
+    "r1_fuel_annulus_f_mod",
+    "r2_water_outer_radius"
+  ],
+  "output_cols": [
+    "b4c_rod_diffusion-coefficient_g1",
+    "b4c_rod_diffusion-coefficient_g2",
+    "b4c_rod_absorption_g1",
+    "b4c_rod_absorption_g2",
+    "b4c_rod_scatter matrix_g1",
+    "b4c_rod_scatter matrix_g2",
+    "b4c_rod_scatter matrix_g3",
+    "b4c_rod_scatter matrix_g4",
+    "fuel_annulus_diffusion-coefficient_g1",
+    "fuel_annulus_diffusion-coefficient_g2",
+    "fuel_annulus_absorption_g1",
+    "fuel_annulus_absorption_g2",
+    "fuel_annulus_nu-fission_g1",
+    "fuel_annulus_nu-fission_g2",
+    "fuel_annulus_scatter matrix_g1",
+    "fuel_annulus_scatter matrix_g2",
+    "fuel_annulus_scatter matrix_g3",
+    "fuel_annulus_scatter matrix_g4",
+    "water_diffusion-coefficient_g1",
+    "water_diffusion-coefficient_g2",
+    "water_absorption_g1",
+    "water_absorption_g2",
+    "water_scatter matrix_g1",
+    "water_scatter matrix_g2",
+    "water_scatter matrix_g3",
+    "water_scatter matrix_g4"
+  ],
+  "chi_cols": [
+    "b4c_rod_chi_g1",
+    "b4c_rod_chi_g2",
+    "fuel_annulus_chi_g1",
+    "fuel_annulus_chi_g2",
+    "water_chi_g1",
+    "water_chi_g2"
+  ]
+}
