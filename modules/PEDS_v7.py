@@ -67,11 +67,11 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
 W_INIT     = 0.20
-EXP_NAME   = f"v10_winit_{W_INIT:.2f}".replace(".", "p")
+EXP_NAME   = f"v10_wbatch"
 TRAIN_SIZE = 400
 TEST_SIZE  = 100
 BATCH_SIZE = 32
-EPOCHS     = 50
+EPOCHS     = 70
 
 LR_max     = 5e-4   # cosine schedule peak learning rate
 LR_min     = 5e-6
@@ -479,7 +479,7 @@ class PEDSModel(nnx.Module):
 
         log_xs_final = log_xs_base_phys + log_corr
         xs_final = jnp.exp(log_xs_final) * XS_MASK_J
-        return np.array(xs_final)  
+        return np.array(xs_final), np.array(w)
 
         
     def compute_mixing_diagnostics(self, geoms, xs_baselines, phi_norm,
@@ -875,15 +875,19 @@ def log_epoch_stats(epoch: int, train_m: dict, val_m: dict):
 
 
 def log_keff_batch(writer, filehandle, epoch, k_pred, k_ref,
-                   avg_train_loss, avg_val_loss, weight=None, sample_id_offset=0, sample_ids_override=None):
+                   avg_train_loss, avg_val_loss, w_batch=None, sample_id_offset=0, sample_ids_override=None):
     with _csv_lock:
         for sidx, (kr, kp) in enumerate(zip(k_ref, k_pred)):
             dr = abs(kp - kr) / (kp * kr) * 1e5
             # Use actual sample IDs if provided, else fall back to offset-based indexing
             sample_idx = int(sample_ids_override[sidx]) if sample_ids_override is not None else sidx + sample_id_offset
+            if w_batch is None:
+                weight_val = "NA"
+            else:
+                weight_val = f"{float(np.asarray(w_batch[sidx]).reshape(-1)[0]):.6f}"
             writer.writerow([epoch, sample_idx,
                               f"{kr:.6f}", f"{kp:.6f}", f"{dr:.1f}",
-                              avg_train_loss, avg_val_loss, weight])
+                              avg_train_loss, avg_val_loss, weight_val])
         filehandle.flush()
 
 
@@ -951,7 +955,7 @@ def log_xs_history_samples(model, epoch, sample_indices,
 
     idx = np.array(sample_indices, dtype=int)
 
-    xsf = model.compute_xs(
+    xsf, w_np = model.compute_xs(
         jnp.array(geom_sample_all[idx], dtype=jnp.float32),
         jnp.array(xs_baselines_sample_all[idx], dtype=jnp.float32),
         jnp.array(phi_norm_sample_all[idx], dtype=jnp.float32),
@@ -980,7 +984,7 @@ def save_final_xs_csv(model, geoms, raw_params, xs_baselines, phi_norm,
 
     for start in range(0, N, batch_size):
         sl = slice(start, start + batch_size)
-        xsf = model.compute_xs(
+        xsf, w_np = model.compute_xs(
             jnp.array(geoms[sl],         dtype=jnp.float32),
             jnp.array(xs_baselines[sl],  dtype=jnp.float32),
             jnp.array(phi_norm[sl],      dtype=jnp.float32),
@@ -1110,6 +1114,10 @@ def _save_xs_subplots_for_samples(
 
         xs_b  = jnp.array(xs_baselines_all[idx:idx+1], dtype=jnp.float32)   # (1,3,12)
         geom  = jnp.array(geoms_all[idx:idx+1],        dtype=jnp.float32)   # (1,6)
+        if weight is not None:
+            weight = weight[idx:idx+1]
+        else:
+            weight = None
 
         # ── NN forward (no gradient needed) ──────────────────────────────────
         log_base   = model._log_baselines(xs_b, log_xs_mean_j, log_xs_std_j)   
@@ -1119,13 +1127,14 @@ def _save_xs_subplots_for_samples(
         )
         final_xs = np.exp(log_ratios) * baseline                     # (3,12)
 
-        final_xs = model.compute_xs(
+        xs_batch, _ = model.compute_xs(
             jnp.array(geoms_all[idx:idx+1], dtype=jnp.float32),
             jnp.array(xs_baselines_all[idx:idx+1], dtype=jnp.float32),
             jnp.array(phi_norm_all[idx:idx+1], dtype=jnp.float32),
             log_xs_mean_j,
             log_xs_std_j,
-        )[0]
+        )
+        final_xs = xs_batch[0]
         keff_pred_val = None
         try:
             keff_pred_val = float(NTdiff_solver(
@@ -1150,7 +1159,6 @@ def _save_xs_subplots_for_samples(
             param_names = PARAM_NAMES,
             keff_ref    = float(keffs_all[idx]),
             keff_pred   = keff_pred_val,
-            weight      = weight,
         )
         print(f"  [subplot] epoch {epoch}  sample {idx}  →  {save_path}")
 
@@ -1171,7 +1179,7 @@ def _plot_xs_heatmap(model, geoms_batch, xs_baselines_batch,
     # ── get corrected XS (numpy, no grad) ────────────────────────────────────
     n    = min(n_show, geoms_batch.shape[0])
     xs_b = jnp.array(xs_baselines_batch[:n], dtype=jnp.float32)
-    xs_f = model.compute_xs(
+    xs_f, w = model.compute_xs(
         jnp.array(geoms_batch[:n], dtype=jnp.float32),
         xs_b,
         jnp.array(phi_norm_batch[:n], dtype=jnp.float32),
@@ -1330,13 +1338,14 @@ def _save_flux_plots(
         geom  = jnp.array(test_geoms[idx:idx+1],        dtype=jnp.float32)  # (1,6)
         phi   = jnp.array((test_phi_norm[idx:idx+1]), dtype=jnp.float32) 
 
-        xs_corrected = model.compute_xs(
+        xs, w = model.compute_xs(
             jnp.array(test_geoms[idx:idx+1], dtype=jnp.float32),
             jnp.array(test_xs_baselines[idx:idx+1], dtype=jnp.float32),
             jnp.array(test_phi_norm[idx:idx+1], dtype=jnp.float32),
             log_xs_mean_j,
             log_xs_std_j,
-        )[0]  # shape (3, 12)
+        )
+        xs_corrected = xs[0]  # shape (3, 12)
 
         # ── Run the solver directly (NumPy, no JAX trace) ─────────────────────
         # We call run_diffusion_solver because it returns phi_fwd and phi_adj
@@ -1544,11 +1553,11 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     log_keff_batch(train_writer, train_logfile, epoch=0,
                 k_pred=np.array(kp_train_baseline),
                 k_ref=train_keffs,
-                avg_train_loss=0.0, avg_val_loss=0.0, weight=0.0)
+                avg_train_loss=0.0, avg_val_loss=0.0, w_batch=None)
     log_keff_batch(val_writer, val_logfile, epoch=0,
                 k_pred=np.array(kp_val_baseline),
                 k_ref=test_keffs,
-                avg_train_loss=0.0, avg_val_loss=0.0, weight=0.0)
+                avg_train_loss=0.0, avg_val_loss=0.0, w_batch=None)
 
     log_xs_history_samples(
         model=model,
@@ -1586,7 +1595,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             b_phi_j = jnp.array(bphi)
 
             # Step 1: concrete XS from NN (outside JAX trace)
-            xs_np = model.compute_xs(bp, bxs, b_phi_j, log_xs_mean_j, log_xs_std_j)
+            xs_np, w_np = model.compute_xs(bp, bxs, b_phi_j, log_xs_mean_j, log_xs_std_j)
 
             # Step 2: parallel pre-solve
             args_list = [(i, xs_np[i], np.array(br[i]), i, epoch)
@@ -1612,7 +1621,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
             log_keff_batch(
                 train_writer, train_logfile, epoch,
-                np.array(keff_preds_batch), bk, float(loss), 0.0, weight=None,
+                np.array(keff_preds_batch), bk, float(loss), 0.0, w_batch=w_np,
                 sample_id_offset=0, sample_ids_override=bsid,
             )
             log_xs_history_samples(
@@ -1641,7 +1650,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                     batch_size=batch_size)):
 
                 global_start = batch_idx * batch_size
-                xs_np = model.compute_xs(
+                xs_np, w_np = model.compute_xs(
                     jnp.array(bg), jnp.array(bb),
                     jnp.array(bphi), log_xs_mean_j, log_xs_std_j,
                 )
@@ -1675,7 +1684,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
         # ── per-sample CSV ───────────────────────────────────────────────────
         log_keff_batch(val_writer, val_logfile, epoch, kp_val, kr_val,
-                       train_m["mse_k"], val_m["mse_k"], weight=val_w)
+                       train_m["mse_k"], val_m["mse_k"], w_batch=val_w)
 
         # ── epoch-level aggregate CSV (NEW) ──────────────────────────────────
         log_epoch_stats(epoch, train_m, val_m)
