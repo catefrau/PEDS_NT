@@ -27,16 +27,14 @@ from modules.NTcode_config_data.config_run import GEO_CYL as GEO
 # TODO make the path definition dependent on the GEO
 
 
-DATA_FOLDER    = Path('reg_and_data/inputs/CR')
-DATA_PATH      = DATA_FOLDER / 'full_results.csv'
-META_PATH      = DATA_FOLDER / 'full_results_meta.json'
-#OUTPUT_DIR     = DATA_FOLDER / 'wtfisthis'
+DATA_FOLDER    = Path('reg_and_data/inputs/CR_new')
+DATA_PATH      = DATA_FOLDER / '1000_clean.csv'
 REG_MODEL_PATH = DATA_FOLDER / 'polyreg_model'
 
 OUT_FOLDER = 'reg_and_data/output/CR'
 PLOT_OUTPUT= "LOGS/fluxes_plots/fixed_CR_fluxes.png"
 
-META_PATH = Path(str(DATA_PATH).replace('.csv', '_meta.json'))
+META_PATH = REG_MODEL_PATH / 'xs_model_meta.json'
 
 """ DATA_FOLDER    = Path('reg_and_data/inputs/HOM')
 DATA_PATH      = DATA_FOLDER / 'hom_MCdf_XSk.csv'
@@ -68,9 +66,9 @@ if os.path.exists(META_PATH):
     _all_knobs = _meta.get('input_cols', [])
 
     # Use swept_cols if declared, otherwise fall back to all knobs
-    _INPUT_COLS = _swept if _swept else _all_knobs
+    _INPUT_COLS = _meta.get('input_cols', [])    
     _CHI_COLS   = _meta.get('chi_cols', [])
-    _XS_COLS    = _meta.get('xs_cols', [])
+    _XS_COLS = _meta.get('output_cols') or _meta.get('xs_cols', [])
     print(f"\n[meta] Loaded from {META_PATH}")
     #print(f"  geometry={_meta['geometry']} | G={_meta['G']}")
     #print(f"  input_cols = {_INPUT_COLS}")
