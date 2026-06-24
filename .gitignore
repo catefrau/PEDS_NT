@@ -39,3 +39,5 @@ reg_and_data/inputs/HOM/
 gradient_fd_check.py
 grad_check_output.txt
 checkTrainingdata.ipynb
+verify.py
+znapcode.py
