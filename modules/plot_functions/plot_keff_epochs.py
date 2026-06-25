@@ -7,7 +7,7 @@ from matplotlib.ticker import MaxNLocator
 from pathlib import Path
 
 
-project_name = "v9_changeinit"
+project_name = "v10_wloss"
 csv_path_val = f"../LOGS/{project_name}/keff_epoch_log_val.csv"
 rhodiff_path_val = f"../LOGS/{project_name}/metrics_plot/keff_pcm_evolution_val.png"
 hist_path_val = f"../LOGS/{project_name}/metrics_plot/loss_histogram_val.png"

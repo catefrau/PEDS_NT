@@ -33,7 +33,7 @@ warnings.filterwarnings("ignore")
 # 0.  CONFIGURATION  — adjust paths here
 # ──────────────────────────────────────────────
 
-project_name = "v9_huberloss"
+project_name = "v10_wloss"
 LOG_PATH = f"../LOGS/{project_name}/keff_epoch_log_val.csv"
 
 FULL_PATH = "../FILES/1000_clean.csv"

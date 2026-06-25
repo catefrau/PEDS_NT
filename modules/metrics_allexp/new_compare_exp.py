@@ -9,7 +9,7 @@ import numpy as np
 # ─────────────────────────────────────────────
 # CONFIGURATION – edit these as needed
 # ─────────────────────────────────────────────
-LOGS_DIR = "../LOGS"
+LOGS_DIR = "../LOGS/v1-v3"
 METRIC = "train_mae_k"
 SUMMARY_FILE = "epoch_metrics.csv"
 
@@ -17,7 +17,7 @@ OUTPUT_CSV = "combined_mae_train.csv"
 
 VERSION_PLOTS_DIR = "version_plots_train"   # folder for v1, v2, ..., v10 figures
 COMPARE_PLOT = "compare_train.png"
-LAST_EPOCH_SUMMARY_CSV = "last_epoch_summary.csv"
+LAST_EPOCH_SUMMARY_CSV = "v3last_epoch_summary.csv"
 
 # Put exact experiment folder names here when you want a custom comparison plot
 SELECTED_EXPERIMENTS = [
