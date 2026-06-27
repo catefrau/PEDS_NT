@@ -66,11 +66,12 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-EXP_NAME   = "v11"
-TRAIN_SIZE = 400
+TRAIN_SIZE = 1000
 TEST_SIZE  = 100
 BATCH_SIZE = 32
-EPOCHS     = 120
+EPOCHS     = 70
+EXP_NAME   = f"train_{TRAIN_SIZE}"
+
 
 LR_max     = 5e-4   # cosine schedule peak learning rate
 LR_min     = 5e-6
@@ -437,7 +438,7 @@ class PEDSModel(nnx.Module):
             log_ratios  = self.generator(geoms, log_base, phi_norm, training=False)
         # ── v1: NO clip, NO warmup ─────────────────────────────────────────
         log_ratios = clip_ste(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)  # now consistent
-        xs_final = jnp.exp(log_ratios) * xs_baselines
+        xs_final = jnp.exp(log_ratios) * xs_baselines * XS_MASK_J
         return np.array(xs_final)  # concrete numpy, exits JAX world
         
     def compute_log_ratios(self, geoms, xs_baselines, phi_norm,
@@ -485,7 +486,9 @@ def data_loader(*arrays, batch_size: int):
 def compute_batch_baselines(params_raw: np.ndarray, geo: GeometryConfig) -> jnp.ndarray:
     """Polynomial-regression XS for every sample. Returns [N, 3, 12]."""
     raw = np.stack([predict_xs(update_geo(geo, params_raw[i])) for i in range(len(params_raw))])
-    return jnp.array(np.maximum(raw, 1e-6), dtype=jnp.float32)   # ← hard floor
+    floored = np.maximum(raw, 1e-6)
+    masked = np.where(XS_MASK[None, :, :], floored, 0.0)
+    return jnp.array(masked, dtype=jnp.float32)
 
 
 def compute_phi_features(rawparams: np.ndarray) -> tuple:
@@ -816,7 +819,7 @@ def log_keff_batch(writer, filehandle, epoch, k_pred, k_ref,
         for sidx, (kr, kp) in enumerate(zip(k_ref, k_pred)):
             dr = abs(kp - kr) / (kp * kr) * 1e5
             sample_idx = int(sample_ids_override[sidx]) if sample_ids_override is not None else sidx + sample_id_offset
-            writer.writerow([epoch, sidx + sample_id_offset,
+            writer.writerow([epoch, sample_idx,
                               f"{kr:.6f}", f"{kp:.6f}", f"{dr:.1f}",
                               avg_train_loss, avg_val_loss])
         filehandle.flush()
@@ -1454,7 +1457,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         print(f"Epoch {epoch:4d} | LR = {current_lr:.2e}")
 
         epoch_loss = 0.0
-        all_kp_train, all_kr_train = [], []
+        all_kp_train, all_kr_train, all_sample_ids  = [], [], []
 
         for batch_idx, (bg, bk, br, bb, bphi, bsid) in enumerate(data_loader(
                 t_geoms, t_keffs, t_raw, t_base, t_phi, t_sample_ids, batch_size=batch_size)):
@@ -1488,23 +1491,32 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             epoch_loss    += float(loss)
             all_kp_train.extend(np.array(keff_preds_batch).tolist())
             all_kr_train.extend(bk.tolist())
+            all_sample_ids.extend(bsid.tolist())
 
-            log_keff_batch(
-                train_writer, train_logfile, epoch,
-                np.array(keff_preds_batch), bk, float(loss), 0.0,
-                sample_id_offset=0, sample_ids_override=bsid,
-            )
-            log_xs_history_samples(
-                model=model,
-                epoch=epoch,
-                sample_indices=TRACKED_SAMPLES,
-                geom_sample_all=bg,          
-                rawparams_sample_all=br,
-                xs_baselines_sample_all=bb,
-                phi_norm_sample_all=bphi,
-                log_xs_mean_j=log_xs_mean_j,
-                log_xs_std_j=log_xs_std_j,
-            )
+        # After all batches — one row per sample, sorted by dataset index
+        ids = np.asarray(all_sample_ids, dtype=int)
+        order = np.argsort(ids)
+        log_keff_batch(
+            train_writer, train_logfile, epoch,
+            np.array(all_kp_train)[order],
+            np.array(all_kr_train)[order],
+            epoch_loss / max(1, (train_size + batch_size - 1) // batch_size),
+            0.0,
+            sample_id_offset=0,
+            sample_ids_override=ids[order],
+        )
+        
+        log_xs_history_samples(
+            model=model,
+            epoch=epoch,
+            sample_indices=TRACKED_SAMPLES,
+            geom_sample_all=train_geoms,
+            rawparams_sample_all=train_rawparams,
+            xs_baselines_sample_all=train_xs_baselines,
+            phi_norm_sample_all=train_phi_norm,
+            log_xs_mean_j=log_xs_mean_j,
+            log_xs_std_j=log_xs_std_j,
+        )
 
         # ── validation ───────────────────────────────────────────────────────
         gn = np.array(epoch_grad_norms)
