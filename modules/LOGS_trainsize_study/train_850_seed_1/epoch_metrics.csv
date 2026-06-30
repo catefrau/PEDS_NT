@@ -1,0 +1,1 @@
+epoch,train_mse_k,train_mae_k,train_mean_pcm,train_median_pcm,train_p95_pcm,train_std_pcm,train_frac_below_650,train_frac_below_100,val_mse_k,val_mae_k,val_mean_pcm,val_median_pcm,val_p95_pcm,val_std_pcm,val_frac_below_650,val_frac_below_100
