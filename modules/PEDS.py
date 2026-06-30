@@ -24,6 +24,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import optax
+import pickle
 from flax import nnx
 import matplotlib.pyplot as plt
 import csv
@@ -66,16 +67,17 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-TRAIN_SIZE = 1000
-TEST_SIZE  = 100
+TRAIN_SIZE   = 750
+VAL_SIZE     = 100    # used every epoch — was previously called val_SIZE
+TEST_SIZE    = 100    # held out, evaluated only once at the very end
+HOLDOUT_SEED = 0      # FIXED — keeps val/test identical across all runs
 BATCH_SIZE = 32
-EPOCHS     = 70
-EXP_NAME   = f"train_{TRAIN_SIZE}"
-
+EPOCHS     = 3
+SEED       = 0
+EXP_NAME   = f"train_{TRAIN_SIZE}_seed_{SEED}"
 
 LR_max     = 5e-4   # cosine schedule peak learning rate
 LR_min     = 5e-6
-SEED       = 42
 
 LOG_RATIO_CLIP_LO = -1.8
 LOG_RATIO_CLIP_HI = 0.8
@@ -113,16 +115,27 @@ xs_proposal_stats_file = None
 xs_proposal_stats_writer = None
 xs_history_file = None
 xs_history_writer = None
+split_logfile = None
+split_writer = None
 
 # ── output directory: everything for this run lives under LOG_DIR ─────────────
-LOG_DIR = os.path.join(THIS_DIR, "LOGS", EXP_NAME)
+LOG_DIR = os.path.join(THIS_DIR, "LOGS_trainsize_study", EXP_NAME)
+XS_DIR = os.path.join(LOG_DIR, "XS")
 os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(XS_DIR, exist_ok=True)
+
 val_log_path    = os.path.join(LOG_DIR, "keff_epoch_log_val.csv")
 train_log_path  = os.path.join(LOG_DIR, "keff_epoch_log_train.csv")
 epoch_stats_path = os.path.join(LOG_DIR, "epoch_metrics.csv")
 xs_proposal_stats_path = os.path.join(LOG_DIR, "xs_proposal_stats.csv")
-xs_history_path = os.path.join(LOG_DIR, "xs_history_first5.csv")
-
+xs_history_path = os.path.join(XS_DIR, "history_first5.csv")
+logratio_stats_path = os.path.join(XS_DIR, "logratio_saturation.csv")
+split_log_path = os.path.join(LOG_DIR, "split_log.csv")
+# ── checkpointing ────────────────────────────────────────────────────────────
+CHECKPOINT_DIR = os.path.join(LOG_DIR, "checkpoints")
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+BEST_CKPT_PATH = os.path.join(CHECKPOINT_DIR, "best_model.pkl")
+LAST_CKPT_PATH = os.path.join(CHECKPOINT_DIR, "last_checkpoint.pkl")
 
 # ── precomputed geometry constants ───────────────────────────────────────────
 GEO_DATA = precompute_geometry(GEO)
@@ -545,48 +558,176 @@ def compute_phi_features(rawparams: np.ndarray) -> tuple:
     return np.array(phi_features, dtype=np.float32)
     
 
-def load_data(filepath: str, train_size: int, test_size: int, seed: int = 42):
-    """Stratified split by k-eff range."""
+def derive_split_indices(filepath, train_size, val_size, test_size,
+                          train_seed=42, holdout_seed=0):
+    """Pure index selection — no phi/XS computation, so it's cheap to call standalone."""
+    data  = np.load(filepath, allow_pickle=True)
+    keffs = np.array(data['keffs'], dtype=np.float32)
+    sorted_idx = np.argsort(keffs)
+    n_bins = 10
+
+    holdout_rng  = np.random.default_rng(holdout_seed)
+    val_per_bin  = max(1, val_size  // n_bins)
+    test_per_bin = max(1, test_size // n_bins)
+
+    val_idx, test_idx, pool_idx = [], [], []
+    for bin_indices in np.array_split(sorted_idx, n_bins):
+        bin_indices = bin_indices.copy()
+        holdout_rng.shuffle(bin_indices)
+        n_v = min(val_per_bin,  len(bin_indices) - 1)
+        n_t = min(test_per_bin, len(bin_indices) - 1 - n_v)
+        val_idx.extend(bin_indices[:n_v].tolist())
+        test_idx.extend(bin_indices[n_v:n_v + n_t].tolist())
+        pool_idx.extend(bin_indices[n_v + n_t:].tolist())
+
+    val_idx  = np.array(val_idx[:val_size])
+    test_idx = np.array(test_idx[:test_size])
+    pool_idx = np.array(pool_idx)
+
+    train_rng = np.random.default_rng(train_seed)
+    train_rng.shuffle(pool_idx)
+    train_idx = pool_idx[:train_size]
+    if len(train_idx) < train_size or len(val_idx) < val_size or len(test_idx) < test_size:
+        raise ValueError(
+            f"Not enough samples! Dataset has ~{len(pool_idx) + len(val_idx) + len(test_idx)} total, "
+            f"but requested train={train_size}, val={val_size}, test={test_size}. "
+            f"Got: train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)}"
+        )
+    return train_idx, val_idx, test_idx
+
+def _save_split_cache(cache_path, train_idx, val_idx, test_idx, metadata):
+    """Save splits to disk for reuse across runs."""
+    os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
+    payload = {
+        "train_idx": train_idx, "val_idx": val_idx, "test_idx": test_idx,
+        "metadata": metadata,
+    }
+    with open(cache_path, "wb") as f:
+        pickle.dump(payload, f)
+
+
+def load_or_create_split_cache(filepath, train_size, val_size, test_size,
+                                train_seed=42, holdout_seed=0, cache_dir=None):
+    """
+    Load train/val/test splits from cache if available and compatible.
+    If dataset grew: val/test stay the same, train extends with new samples.
+    """
+    if cache_dir is None:
+        cache_dir = os.path.join(os.path.dirname(filepath) or ".", ".split_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    # One cache file per (train_seed, holdout_seed, val/test config)
+    cache_fname = f"split_t{train_size}_ts{train_seed}_hs{holdout_seed}_v{val_size}_t{test_size}.pkl"
+    cache_path = os.path.join(cache_dir, cache_fname)
+    
+    data = np.load(filepath, allow_pickle=True)
+    current_dataset_size = len(data['params'])
+    
+    # ── Try to load cache ────────────────────────────────────────────────────
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "rb") as f:
+                cache = pickle.load(f)
+            meta = cache["metadata"]
+            old_train_idx = cache["train_idx"]
+            old_val_idx   = cache["val_idx"]
+            old_test_idx  = cache["test_idx"]
+            old_dataset_size = meta.get("dataset_size")
+            
+            # ── Seeds match: cache is for the same holdout config ────────────
+            if (meta.get("train_seed") == train_seed and
+                meta.get("holdout_seed") == holdout_seed and
+                meta.get("val_size") == val_size and
+                meta.get("test_size") == test_size):
+                
+                # Dataset unchanged: reuse exactly
+                if current_dataset_size == old_dataset_size:
+                    if meta.get("train_size") == train_size:
+                        print(f"  [cache hit] reusing {len(old_train_idx)} train, "
+                              f"{len(old_val_idx)} val, {len(old_test_idx)} test samples")
+                        return old_train_idx, old_val_idx, old_test_idx
+                
+                # Dataset grew: extend training set
+                if current_dataset_size > old_dataset_size:
+                    print(f"  [cache hit, dataset grew] {old_dataset_size} → {current_dataset_size} samples")
+                    print(f"    extending train from {len(old_train_idx)} to {train_size}…")
+                    
+                    # Identify newly available samples (not in old train/val/test)
+                    old_all = np.union1d(old_train_idx, np.union1d(old_val_idx, old_test_idx))
+                    new_pool = np.setdiff1d(np.arange(current_dataset_size), old_all)
+                    
+                    n_needed = train_size - len(old_train_idx)
+                    if len(new_pool) < n_needed:
+                        raise ValueError(
+                            f"Not enough new samples ({len(new_pool)}) to reach "
+                            f"train_size={train_size} (need {n_needed} more)"
+                        )
+                    
+                    # Draw from new pool using the same seed (consistent sampling)
+                    extend_rng = np.random.default_rng(train_seed)
+                    extend_rng.shuffle(new_pool)
+                    new_indices = new_pool[:n_needed]
+                    
+                    train_idx = np.concatenate([old_train_idx, new_indices])
+                    val_idx   = old_val_idx
+                    test_idx  = old_test_idx
+                    
+                    # Update cache
+                    meta["dataset_size"] = current_dataset_size
+                    meta["train_size"] = train_size
+                    _save_split_cache(cache_path, train_idx, val_idx, test_idx, meta)
+                    return train_idx, val_idx, test_idx
+        
+        except Exception as e:
+            print(f"  [cache load failed] {e}, recomputing…")
+    
+    # ── Cache miss: compute from scratch ─────────────────────────────────────
+    print(f"  [cache miss] computing new splits (train_seed={train_seed})…")
+    train_idx, val_idx, test_idx = derive_split_indices(
+        filepath, train_size, val_size, test_size, train_seed, holdout_seed
+    )
+    
+    meta = {
+        "train_size": train_size, "val_size": val_size, "test_size": test_size,
+        "train_seed": train_seed, "holdout_seed": holdout_seed,
+        "dataset_size": current_dataset_size,
+    }
+    _save_split_cache(cache_path, train_idx, val_idx, test_idx, meta)
+    return train_idx, val_idx, test_idx
+
+
+def load_data(filepath, train_size, val_size, test_size,
+              train_seed=42, holdout_seed=0, split_cache_path=None, cache_dir=None):
+
+    if split_cache_path is not None:
+        cache_dir = os.path.dirname(split_cache_path)
+    
     data      = np.load(filepath, allow_pickle=True)
     geoms     = np.array(data['params'],     dtype=np.float32)
     keffs     = np.array(data['keffs'],      dtype=np.float32)
     rawparams = np.array(data['params_raw'], dtype=np.float32)
 
-    rng        = np.random.default_rng(seed)
-    sorted_idx = np.argsort(keffs)
-    n_bins     = 10
-    test_per_bin = max(1, test_size // n_bins)
-
-    test_idx, train_idx = [], []
-    for bin_indices in np.array_split(sorted_idx, n_bins):
-        rng.shuffle(bin_indices)
-        n_t = min(test_per_bin, len(bin_indices) - 1)
-        test_idx.extend(bin_indices[:n_t].tolist())
-        train_idx.extend(bin_indices[n_t:].tolist())
-
-    test_idx  = np.array(test_idx[:test_size])
-    train_idx = np.array(train_idx)
-    rng.shuffle(train_idx)
-    train_idx = train_idx[:train_size]
+    train_idx, val_idx, test_idx = load_or_create_split_cache(
+        filepath, train_size, val_size, test_size, train_seed, holdout_seed, cache_dir=cache_dir)
 
     print(f"  Train k range: {keffs[train_idx].min():.3f} – {keffs[train_idx].max():.3f}")
+    print(f"  Val   k range: {keffs[val_idx].min():.3f}  – {keffs[val_idx].max():.3f}")
     print(f"  Test  k range: {keffs[test_idx].min():.3f}  – {keffs[test_idx].max():.3f}")
-    print(f"  Train keff mean:  {keffs[train_idx].mean():.3f}  std: {keffs[train_idx].std():.3f}")
-    print(f"  Test  keff mean:  {keffs[test_idx].mean():.3f}   std: {keffs[test_idx].std():.3f}")
 
     print("Precomputing φ_reg features (done once)…")
     train_phi_features = compute_phi_features(rawparams[train_idx])
-    test_phi_features  = compute_phi_features(rawparams[test_idx])
+    val_phi_features    = compute_phi_features(rawparams[val_idx])
+    test_phi_features   = compute_phi_features(rawparams[test_idx])
 
     return (
-        (geoms[train_idx], keffs[train_idx], rawparams[train_idx],
-         train_phi_features),
-        (geoms[test_idx],  keffs[test_idx],  rawparams[test_idx],
-         test_phi_features),
+        (train_idx, geoms[train_idx], keffs[train_idx], rawparams[train_idx], train_phi_features),
+        (val_idx, geoms[val_idx],   keffs[val_idx],   rawparams[val_idx],   val_phi_features),
+        (test_idx, geoms[test_idx],  keffs[test_idx],  rawparams[test_idx],  test_phi_features),
     )
+    
 
-def load_data_balanced_ranges(filepath, train_size, test_size, seed=2,
-                               bin_edges=None, train_per_bin=50, test_per_bin=10):
+def load_data_balanced_ranges(filepath, train_size, val_size, seed=2,
+                               bin_edges=None, train_per_bin=50, val_per_bin=10):
     """
     Fixed-range balanced split by k_eff.
     Uses the same number of samples from every k_eff range.
@@ -607,19 +748,19 @@ def load_data_balanced_ranges(filepath, train_size, test_size, seed=2,
 
     nbins = len(bin_edges) - 1
 
-    if train_size % nbins != 0 or test_size % nbins != 0:
+    if train_size % nbins != 0 or val_size % nbins != 0:
         raise ValueError(
-            f"train_size={train_size} and test_size={test_size} must both be "
+            f"train_size={train_size} and val_size={val_size} must both be "
             f"divisible by nbins={nbins}"
         )
 
     train_per_bin = train_size // nbins   # 500 // 10 = 50
-    test_per_bin  = test_size  // nbins   # 100 // 10 = 10
+    val_per_bin  = val_size  // nbins   # 100 // 10 = 10
 
     trainidx, testidx = [], []
 
     print("\n=== Balanced fixed-range split ===")
-    print(f"train_per_bin = {train_per_bin}, test_per_bin = {test_per_bin}")
+    print(f"train_per_bin = {train_per_bin}, val_per_bin = {val_per_bin}")
 
     for b in range(nbins):
         lo = bin_edges[b]
@@ -634,19 +775,19 @@ def load_data_balanced_ranges(filepath, train_size, test_size, seed=2,
 
         rng.shuffle(idx)
 
-        needed = train_per_bin + test_per_bin
+        needed = train_per_bin + val_per_bin
         if len(idx) < needed:
             raise ValueError(
                 f"Bin {label} has only {len(idx)} samples, but needs {needed}."
             )
 
-        test_bin = idx[:test_per_bin]
-        train_bin = idx[test_per_bin:test_per_bin + train_per_bin]
+        val_bin = idx[:val_per_bin]
+        train_bin = idx[val_per_bin:val_per_bin + train_per_bin]
 
-        testidx.extend(test_bin.tolist())
+        testidx.extend(val_bin.tolist())
         trainidx.extend(train_bin.tolist())
 
-        print(f"{label}: available={len(idx):3d}, train={len(train_bin):2d}, test={len(test_bin):2d}")
+        print(f"{label}: available={len(idx):3d}, train={len(train_bin):2d}, test={len(val_bin):2d}")
 
     trainidx = np.array(trainidx, dtype=int)
     testidx = np.array(testidx, dtype=int)
@@ -742,11 +883,12 @@ def init_csv_logs():
     global epoch_stats_file, epoch_stats_writer
     global logratio_stats_file, logratio_stats_writer
     global xs_history_file, xs_history_writer
+    global split_logfile, split_writer
 
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    for p in [val_log_path, train_log_path, epoch_stats_path, xs_history_path,
-              os.path.join(LOG_DIR, "logratio_saturation.csv")]:
+    for p in [val_log_path, train_log_path, epoch_stats_path, xs_history_path, split_log_path,
+              logratio_stats_path]:
         if os.path.exists(p):
             os.remove(p)
 
@@ -775,7 +917,6 @@ def init_csv_logs():
     epoch_stats_writer.writerow(epoch_header)
     epoch_stats_file.flush()
 
-    logratio_stats_path = os.path.join(LOG_DIR, "logratio_saturation.csv")
     logratio_stats_file = open(logratio_stats_path, "w", newline="", buffering=1)
     logratio_stats_writer = csv.writer(logratio_stats_file)
     lr_header = ["epoch", "region", "xs_idx",
@@ -794,9 +935,13 @@ def init_csv_logs():
     xs_history_writer.writerow(["epoch", "sample_idx", *PARAM_NAMES, *xs_header])
     xs_history_file.flush()
 
+    split_logfile = open(split_log_path, "w", newline="", buffering=1)
+    split_writer = csv.writer(split_logfile)
+    split_writer.writerow(["sample_idx", "split", "keff"])
+    split_logfile.flush()
 
 def close_csv_logs():
-    for fh in [val_logfile, train_logfile, epoch_stats_file, logratio_stats_file]:
+    for fh in [val_logfile, train_logfile, epoch_stats_file, logratio_stats_file, split_logfile]:
         if fh is not None:
             fh.close()
 
@@ -871,6 +1016,18 @@ def log_xs_history_samples(model, epoch, sample_indices,
             xs_history_writer.writerow(row)
         xs_history_file.flush()
 
+
+def log_splits(train_idx, train_keffs, valid_idx, valid_keffs, test_idx, test_keffs,):
+    global split_logfile, split_writer
+    with _csv_lock:
+        for idx, k in zip(train_idx, train_keffs):
+            split_writer.writerow([int(idx), "train", float(k)])
+        if valid_idx is not None and valid_keffs is not None:
+            for idx, k in zip(valid_idx, valid_keffs):
+                split_writer.writerow([int(idx), "val", float(k)])
+        for idx, k in zip(test_idx, test_keffs):
+            split_writer.writerow([int(idx), "test", float(k)])
+        split_logfile.flush()
 
 def save_final_xs_csv(model, geoms, raw_params, xs_baselines, phi_norm,
                       keffs_ref, log_xs_mean, log_xs_std, file_path, tag="train"):
@@ -963,6 +1120,22 @@ def save_code_snapshot(logdir, expname, log_handle=None):
         log_handle.flush()
 
     return snapshot_path, code_hash
+
+
+def save_checkpoint(state_obj, filepath, metadata=None):
+    """state_obj: an nnx.State, e.g. nnx.state(model) or nnx.state(optimizer)."""
+    np_state = jax.tree_util.tree_map(np.asarray, state_obj)   # portable, no live JAX arrays
+    with open(filepath, "wb") as f:
+        pickle.dump({"state": np_state, "metadata": metadata or {}}, f)
+
+
+def load_checkpoint(filepath):
+    with open(filepath, "rb") as f:
+        payload = pickle.load(f)
+    jax_state = jax.tree_util.tree_map(jnp.asarray, payload["state"])
+    return jax_state, payload["metadata"]
+
+    
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 7: Plotting helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1198,13 +1371,13 @@ def _plot_history(history: dict, exp_name: str):
 
 def _save_flux_plots(
     sample_indices: list,
-    test_geoms: np.ndarray,
-    test_keffs: np.ndarray,
-    test_rawparams: np.ndarray,
-    test_xs_baselines: np.ndarray,
+    val_geoms: np.ndarray,
+    val_keffs: np.ndarray,
+    val_rawparams: np.ndarray,
+    val_xs_baselines: np.ndarray,
     log_xs_mean_j: jnp.ndarray,
     log_xs_std_j: jnp.ndarray,
-    test_phi_norm: np.ndarray,
+    val_phi_norm: np.ndarray,
     model,
     epoch: int,
 ):
@@ -1221,32 +1394,32 @@ def _save_flux_plots(
 
     for idx in sample_indices:
         idx = int(idx)
-        if idx >= len(test_geoms):
+        if idx >= len(val_geoms):
             print(f"  [flux_plot] sample_idx={idx} out of range, skipping")
             continue
 
         # ── Geometry for this sample ──────────────────────────────────────────
-        geo_i    = update_geo(GEO, test_rawparams[idx])
+        geo_i    = update_geo(GEO, val_rawparams[idx])
         R        = geo_i.boundaries[-1].radius
         I        = int(R / geo_i.mesh_size)
         Delta_r  = geo_i.mesh_size
 
         # ── Get NN-corrected XS (no gradient needed) ──────────────────────────
-        xs_b  = jnp.array(test_xs_baselines[idx:idx+1], dtype=jnp.float32)  # (1,3,12)
-        geom  = jnp.array(test_geoms[idx:idx+1],        dtype=jnp.float32)  # (1,6)
-        phi   = jnp.array((test_phi_norm[idx:idx+1]), dtype=jnp.float32) 
+        xs_b  = jnp.array(val_xs_baselines[idx:idx+1], dtype=jnp.float32)  # (1,3,12)
+        geom  = jnp.array(val_geoms[idx:idx+1],        dtype=jnp.float32)  # (1,6)
+        phi   = jnp.array((val_phi_norm[idx:idx+1]), dtype=jnp.float32) 
 
         log_base   = model._log_baselines(xs_b)
         log_ratios = model.generator(geom, log_base, phi, training=False)  # (1,3,12)
-        xs_corrected = np.array(jnp.exp(log_ratios[0]) * xs_b[0])        # (3,12)
+        #xs_corrected = np.array(jnp.exp(log_ratios[0]) * xs_b[0])        # (3,12)
         # TODO check
-        """ xs_corrected = model.compute_xs(
-                jnp.array(test_geoms[idx:idx+1], dtype=jnp.float32),
-                jnp.array(test_xs_baselines[idx:idx+1], dtype=jnp.float32),
-                jnp.array(test_phi_norm[idx:idx+1], dtype=jnp.float32),
+        xs_corrected = model.compute_xs(
+                jnp.array(val_geoms[idx:idx+1], dtype=jnp.float32),
+                jnp.array(val_xs_baselines[idx:idx+1], dtype=jnp.float32),
+                jnp.array(val_phi_norm[idx:idx+1], dtype=jnp.float32),
                 log_xs_mean_j,
                 log_xs_std_j,
-            )[0] """
+            )[0]
         # ── Run the solver directly (NumPy, no JAX trace) ─────────────────────
         # We call run_diffusion_solver because it returns phi_fwd and phi_adj
         # in (G, I) shape, which is exactly what _plot_fluxes expects.
@@ -1265,7 +1438,7 @@ def _save_flux_plots(
         x = np.array([(i + 0.5) * Delta_r for i in range(I)])  # shape (I,)
 
         # ── Also run baseline (no NN) for comparison ──────────────────────────
-        xs_base_np = np.array(test_xs_baselines[idx], dtype=np.float32)  # (3,12)
+        xs_base_np = np.array(val_xs_baselines[idx], dtype=np.float32)  # (3,12)
         try:
             k_base, phi_fwd_base, phi_adj_base = run_diffusion_solver(xs_base_np, geo_i)
         except Exception as e:
@@ -1303,7 +1476,7 @@ def _save_flux_plots(
             plot_output  = save_path,
         )
 
-        k_ref = float(test_keffs[idx])
+        k_ref = float(val_keffs[idx])
         dr    = abs(k_pred - k_ref) / (k_pred * k_ref) * 1e5
         print(
             f"  [flux_plot] epoch {epoch}  sample {idx}  "
@@ -1313,7 +1486,7 @@ def _save_flux_plots(
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 8: Training
 # ─────────────────────────────────────────────────────────────────────────────
-def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
+def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max, lr_min,
           hidden_sizes, n_regions, G, seed):
 
     init_csv_logs()
@@ -1323,27 +1496,34 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     print("Loading data …")
     if USE_BALANCED_RANGES: 
         (train_geoms, train_keffs, train_rawparams, train_phi_features), \
-        (test_geoms,  test_keffs,  test_rawparams, test_phi_features) = load_data_balanced_ranges(
-            filepath, train_size, test_size, seed,
+        (val_geoms,  val_keffs,  val_rawparams, val_phi_features) = load_data_balanced_ranges(
+            filepath, train_size, val_size, seed,
         )
     else:    
-        (train_geoms, train_keffs, train_rawparams, train_phi_features), \
-        (test_geoms,  test_keffs,  test_rawparams, test_phi_features) = load_data(
-            filepath, train_size, test_size, seed,
-        )
+        split_cache_dir = os.path.join(PARENT_DIR, "data", "highfidelity", ".split_cache")
+        (train_idx, train_geoms, train_keffs, train_rawparams, train_phi_features), \
+        (val_idx, val_geoms,   val_keffs,   val_rawparams,   val_phi_features),  \
+        (test_idx, test_geoms,  test_keffs,  test_rawparams,  test_phi_features) = load_data(
+            filepath, train_size, val_size, test_size,
+            train_seed=seed, holdout_seed=HOLDOUT_SEED,
+            split_cache_path=None, cache_dir=split_cache_dir)
     train_size = len(train_geoms)
-    test_size = len(test_geoms)
+    val_size   = len(val_geoms)
+    test_size  = len(test_geoms)
+    log_splits(train_idx, train_keffs, val_idx, val_keffs, test_idx, test_keffs)
 
     print(f"Actual train size: {train_size}")
-    print(f"Actual test size:  {test_size}")
+    print(f"Actual test size:  {val_size}")
     print_keff_bin_counts("TRAIN", train_keffs)
+    print_keff_bin_counts("VAL", val_keffs)
     print_keff_bin_counts("TEST", test_keffs)
 
     # NEW: normalise phi features per-column (each group/region combination separately)
     phi_mean = train_phi_features.mean(axis=0)         # shape [G*3]
     phi_std  = train_phi_features.std(axis=0) + 1e-8   # shape [G*3]
     train_phi_norm = ((train_phi_features - phi_mean) / phi_std).astype(np.float32)
-    test_phi_norm  = ((test_phi_features  - phi_mean) / phi_std).astype(np.float32)
+    val_phi_norm  = ((val_phi_features  - phi_mean) / phi_std).astype(np.float32)
+    test_phi_norm = ((test_phi_features - phi_mean) / phi_std).astype(np.float32)   # add this
 
     n_phi_feats = GEO.G * 3
     # ── 8.2 Model — v1: plain Adam, constant LR, NO grad clip ────────────────
@@ -1363,6 +1543,12 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         ),
         wrt=nnx.Param,
     )
+    RESUME_FROM = None  # set to LAST_CKPT_PATH (or any saved path) to resume training
+    if RESUME_FROM is not None:
+        state, meta = load_checkpoint(RESUME_FROM)
+        nnx.update(optimizer, state)
+        print(f"Resumed from {RESUME_FROM}: epoch={meta.get('epoch')}, "
+            f"val_mean_pcm={meta.get('val_mean_pcm')}")
 
     # ── 8.3 Loss — pure MSE, NO regularization ───────────────────────────────
     def loss_fn(model, geoms, keffs_true, rawparams_batch,
@@ -1381,7 +1567,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     # ── 8.4 Pre-compute XS baselines once ────────────────────────────────────
     print("Precomputing XS baselines …")
     train_xs_baselines = compute_batch_baselines(train_rawparams, GEO)
-    test_xs_baselines  = compute_batch_baselines(test_rawparams,  GEO)
+    val_xs_baselines  = compute_batch_baselines(val_rawparams,  GEO)
     print("Done.")
      # ── Compute log-baseline normalization stats (fit on train only) ──────────
     # We take log of the baselines the same way _log_baselines() does:
@@ -1404,6 +1590,9 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     history = {k: [] for k in
                ["train_mse","val_mse", "train_mae","val_mae","val_mean_pcm","val_median_pcm",
                 "val_p95_pcm","val_std_pcm","val_frac_below_650"]}
+    
+    best_val_mean_pcm = float("inf")
+    best_epoch = 0
 
     print(f"\nTraining for {epochs} epochs …")
     epoch_grad_norms = []
@@ -1418,9 +1607,9 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
     print("Computing epoch 0 baseline for val/test set...")
     kp_val_baseline = []
-    for i in range(len(test_rawparams)):
-        xs_i = np.array(predict_xs(update_geo(GEO, test_rawparams[i])), dtype=np.float32)
-        k, _, _, _ = _run_NT_solver(xs_i, test_rawparams[i], np.array([i], dtype=np.int32))
+    for i in range(len(val_rawparams)):
+        xs_i = np.array(predict_xs(update_geo(GEO, val_rawparams[i])), dtype=np.float32)
+        k, _, _, _ = _run_NT_solver(xs_i, val_rawparams[i], np.array([i], dtype=np.int32))
         kp_val_baseline.append(float(k))    
 
     log_keff_batch(train_writer, train_logfile, epoch=0,
@@ -1429,7 +1618,7 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
                 avg_train_loss=0.0, avg_val_loss=0.0)
     log_keff_batch(val_writer, val_logfile, epoch=0,
                 k_pred=np.array(kp_val_baseline),
-                k_ref=test_keffs,
+                k_ref=val_keffs,
                 avg_train_loss=0.0, avg_val_loss=0.0)
 
     log_xs_history_samples(
@@ -1527,8 +1716,8 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         all_kp_val, all_kr_val = [], []
         with timer("validation step"):
             for batch_idx, (bg, bk, br, bb, bphi) in enumerate(data_loader(
-                    test_geoms, test_keffs, test_rawparams,
-                    np.array(test_xs_baselines), test_phi_norm,
+                    val_geoms, val_keffs, val_rawparams,
+                    np.array(val_xs_baselines), val_phi_norm,
                     batch_size=batch_size)):
 
                 global_start = batch_idx * batch_size
@@ -1547,8 +1736,8 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
         # ── log_ratios saturation diagnostic (every epoch, val set) ─────────
         val_log_ratios = model.compute_log_ratios(
-            jnp.array(test_geoms), jnp.array(test_xs_baselines),
-            jnp.array(test_phi_norm),
+            jnp.array(val_geoms), jnp.array(val_xs_baselines),
+            jnp.array(val_phi_norm),
             log_xs_mean_j, log_xs_std_j,
         )
         log_logratio_saturation(epoch, val_log_ratios)
@@ -1563,6 +1752,15 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
         val_m   = compute_metrics(kp_val, kr_val)
         print_metrics(epoch, "TRAIN", train_m)
         print_metrics(epoch, "VAL",   val_m)
+        if val_m["mean_pcm"] < best_val_mean_pcm:
+            best_val_mean_pcm = val_m["mean_pcm"]
+            best_epoch = epoch
+            save_checkpoint(nnx.state(model), BEST_CKPT_PATH,
+                            metadata={"epoch": epoch, "val_mean_pcm": best_val_mean_pcm,
+                                    "hidden_sizes": hidden_sizes, "n_regions": n_regions,
+                                    "G": G, "n_phi_feats": n_phi_feats})
+            print(f"  ✓ new best val_mean_pcm = {best_val_mean_pcm:.1f} pcm "
+                f"(epoch {epoch}) — saved → {BEST_CKPT_PATH}")
 
         # ── per-sample CSV ───────────────────────────────────────────────────
         log_keff_batch(val_writer, val_logfile, epoch, kp_val, kr_val,
@@ -1596,24 +1794,24 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
             _save_xs_subplots_for_samples(
                 model            = model,
                 sample_indices   = SUBPLOT_SAMPLE_INDICES,
-                geoms_all        = test_geoms,              # ← unshuffled
-                keffs_all        = test_keffs,              # ← unshuffled
-                rawparams_all    = test_rawparams,          # ← unshuffled
-                xs_baselines_all = np.array(test_xs_baselines),  # ← unshuffled
-                phi_norm_all     = test_phi_norm,   
+                geoms_all        = val_geoms,              # ← unshuffled
+                keffs_all        = val_keffs,              # ← unshuffled
+                rawparams_all    = val_rawparams,          # ← unshuffled
+                xs_baselines_all = np.array(val_xs_baselines),  # ← unshuffled
+                phi_norm_all     = val_phi_norm,   
                 log_xs_mean_j    = log_xs_mean_j,
                 log_xs_std_j    = log_xs_std_j,
                 epoch            = epoch,
             )
             _save_flux_plots(                         
                 sample_indices      = SUBPLOT_SAMPLE_INDICES,
-                test_geoms         = test_geoms,
-                test_keffs         = test_keffs,
-                test_rawparams     = test_rawparams,
-                test_xs_baselines  = np.array(test_xs_baselines),
+                val_geoms         = val_geoms,
+                val_keffs         = val_keffs,
+                val_rawparams     = val_rawparams,
+                val_xs_baselines  = np.array(val_xs_baselines),
                 log_xs_mean_j      = log_xs_mean_j,
                 log_xs_std_j      = log_xs_std_j,
-                test_phi_norm      = test_phi_norm,
+                val_phi_norm      = val_phi_norm,
                 model               = model,
                 epoch               = epoch,
             )
@@ -1623,22 +1821,48 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
 
     # end of the epoch loop
 
+    save_checkpoint(nnx.state(optimizer), LAST_CKPT_PATH,
+                    metadata={"epoch": epochs, "val_mean_pcm": val_m["mean_pcm"]})
+    print(f"Saved last-epoch checkpoint (model+optimizer) → {LAST_CKPT_PATH}")
+    print(f"Best epoch was {best_epoch}  (val_mean_pcm = {best_val_mean_pcm:.1f} pcm)  → {BEST_CKPT_PATH}")
+
     # --- Save final-epoch XS for all train and val samples ---
     save_final_xs_csv(
         model, train_geoms, train_rawparams, np.array(train_xs_baselines),
         train_phi_norm, train_keffs,
         log_xs_mean_j, log_xs_std_j,
-        file_path=os.path.join(LOG_DIR, "final_xs_train.csv"),
+        file_path=os.path.join(XS_DIR, "final_xs_train.csv"),
         tag="train"
     )
     save_final_xs_csv(
-        model, test_geoms, test_rawparams, np.array(test_xs_baselines),
-        test_phi_norm, test_keffs,
+        model, val_geoms, val_rawparams, np.array(val_xs_baselines),
+        val_phi_norm, val_keffs,
         log_xs_mean_j, log_xs_std_j,
-        file_path=os.path.join(LOG_DIR, "final_xs_val.csv"),
+        file_path=os.path.join(XS_DIR, "final_xs_val.csv"),
         tag="val"
     )
 
+    print("\n=== Final evaluation on held-out TEST set (never seen during training) ===")
+    test_xs_baselines = compute_batch_baselines(test_rawparams, GEO)
+    all_kp_test, all_kr_test = [], []
+    for bg, bk, br, bb, bphi in data_loader(
+            test_geoms, test_keffs, test_rawparams,
+            np.array(test_xs_baselines), test_phi_norm, batch_size=batch_size):
+        xs_np = model.compute_xs(jnp.array(bg), jnp.array(bb), jnp.array(bphi),
+                                log_xs_mean_j, log_xs_std_j)
+        for i in range(len(bg)):
+            k, _, _, _ = _run_NT_solver(xs_np[i], np.array(br[i]), np.array([i], dtype=np.int32))
+            all_kp_test.append(float(k))
+            all_kr_test.append(float(bk[i]))
+
+    test_m = compute_metrics(np.array(all_kp_test), np.array(all_kr_test))
+    print_metrics(epoch, "TEST", test_m)
+
+    save_final_xs_csv(
+        model, test_geoms, test_rawparams, np.array(test_xs_baselines),
+        test_phi_norm, test_keffs, log_xs_mean_j, log_xs_std_j,
+        file_path=os.path.join(XS_DIR, "test_final_xs.csv"), tag="test",
+    )
     # ─────────────────────────────────────────────────────────────
     # check the geometry of the badly converged samples
     # ─────────────────────────────────────────────────────────────
@@ -1664,9 +1888,9 @@ def train(filepath, train_size, test_size, batch_size, epochs, lr_max, lr_min,
     print("\n=== GEOMETRY OF WORST 10 SAMPLES AT FINAL EPOCH ===")
     feat_names = ['b4c_r', 'cr_frac', 'fuel_r', 'enrich', 'f_mod', 'water_r']
     for idx in bad_indices:
-        geom = test_geoms[idx]
-        raw  = test_rawparams[idx]
-        k_ref = test_keffs[idx]
+        geom = val_geoms[idx]
+        raw  = val_rawparams[idx]
+        k_ref = val_keffs[idx]
         delta = float(df_final[df_final['sample_idx']==idx]['delta_rho_pcm'].values[0])
         print(f"\n  Sample {idx} | k_ref={k_ref:.4f} | delta_rho={delta:.1f} pcm")
         for i, name in enumerate(feat_names):
@@ -1723,6 +1947,7 @@ if __name__ == "__main__":
         HP = dict(
             filepath    = _DATA_FILEPATH,   # uses anchored path, not hard-coded string
             train_size  = TRAIN_SIZE,
+            val_size    = VAL_SIZE,
             test_size   = TEST_SIZE,
             batch_size  = BATCH_SIZE,
             epochs      = EPOCHS,

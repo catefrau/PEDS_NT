@@ -251,7 +251,7 @@ def main(logs_root, out_csv):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("logs_root", help="e.g. ../LOGS")
+    parser.add_argument("logs_root", help="e.g. LOGS")
     parser.add_argument("--out", default=None,
                          help="output CSV path (default: <logs_root>/test_set_metrics_all_runs.csv)")
     args = parser.parse_args()

@@ -1,3 +1,9 @@
+# =========================
+# code to check if the inclusion criteria is met, 
+# plots the histogram of training + validation 
+# and the range of keffs per bin
+# =========================
+
 import os
 import numpy as np
 import matplotlib.pyplot as plt
