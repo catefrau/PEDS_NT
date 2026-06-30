@@ -24,24 +24,16 @@ from modules.NTcode_config_data.config_run import GEO_CYL as GEO
 #  PATHS DEFINITION  
 # ══════════════════════════════════════════════════════════════════════════════
 
-# TODO make the path definition dependent on the GEO
+HERE = Path(__file__).resolve().parent
+PROJECT_ROOT = HERE.parent.parent
 
+DATA_FOLDER = PROJECT_ROOT / "modules" / "reg_and_data" / "inputs" / "CR_1000samples"
+DATA_PATH = DATA_FOLDER / "1000_clean.csv"
+REG_MODEL_PATH = DATA_FOLDER / "polyreg_model"
 
-DATA_FOLDER    = Path('reg_and_data/inputs/CR_new')
-DATA_PATH      = DATA_FOLDER / '1000_clean.csv'
-REG_MODEL_PATH = DATA_FOLDER / 'polyreg_model'
+PLOT_OUTPUT = PROJECT_ROOT / "LOGS" / "fluxes_plots" / "fixed_CR_fluxes.png"
 
-OUT_FOLDER = 'reg_and_data/output/CR'
-PLOT_OUTPUT= "LOGS/fluxes_plots/fixed_CR_fluxes.png"
-
-META_PATH = REG_MODEL_PATH / 'xs_model_meta.json'
-
-""" DATA_FOLDER    = Path('reg_and_data/inputs/HOM')
-DATA_PATH      = DATA_FOLDER / 'hom_MCdf_XSk.csv'
-META_PATH      = DATA_FOLDER / 'xs_model_meta.json'
-REG_MODEL_PATH = DATA_FOLDER / 'polyreg_model'
-PLOT_OUTPUT= "plots/HOM_fluxes.png" """
-
+META_PATH = REG_MODEL_PATH / "xs_model_meta.json"
 
 _KNOB_EXTRACTORS = {
     'outer_radius' : lambda geo, i: geo.boundaries[i].radius,
