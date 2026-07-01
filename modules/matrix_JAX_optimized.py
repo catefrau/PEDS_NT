@@ -372,3 +372,133 @@ def Aphi_Fphi_vjp(xs_tensor, geo_data, lay, phi_fwd, v_A, v_F):
     xs_grad = xs_grad.at[:, D_start:D_start+G].add(D_grad)
 
     return xs_grad
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PADDED SINGLE-SAMPLE VJP  (fixed array sizes → safe for jax.vmap)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def Aphi_Fphi_vjp_padded(
+    xs_tensor,  # [n_regions, M]    float32 — NN output XS
+    S_pad,      # [I_max+1]         float32 — surface areas, padded with last valid value
+    V_pad,      # [I_max]           float32 — cell volumes, padded with 1.0 (avoids /0)
+    roc_pad,    # [I_max]           int32   — region_of_cell, padded by replicating last entry
+    phi2d,      # [G, I_max+1]      float32 — forward flux, correctly unpacked per group
+    vA2d,       # [G, I_max+1]      float32 — cotangent for A@phi
+    vF2d,       # [G, I_max+1]      float32 — cotangent for F@phi
+    I_valid,    # scalar            int32   — actual number of mesh cells for this sample
+    I_max,      # Python int        (static: compiled into the scan bound)
+    G,          # Python int        (static)
+    Delta_r,    # Python float      (static)
+    BC,         # Python list[3]    (static)
+    lay,        # dict of slices    (static)
+):
+    """
+    Identical gradient formula to Aphi_Fphi_vjp, but operates on fixed-size
+    padded arrays so that jax.vmap can batch multiple samples together.
+
+    phi2d / vA2d / vF2d must arrive as [G, I_max+1] arrays where each group's
+    values are placed at positions [g, 0:I_valid+1] and zeros fill [g, I_valid+1:].
+    The caller (NT_batch_bwd) is responsible for this unpacking — it cannot be
+    done inside this function with a flat reshape because the stride is I_valid+1,
+    not I_max+1.
+
+    Cells i >= I_valid are masked to zero via `valid = (i < I_valid).astype(float32)`,
+    so padding beyond the real mesh contributes exactly zero to every gradient.
+    V_pad is padded with 1.0 (not 0.0) so that S/(Delta_r*V) never divides by zero;
+    since valid=0 for those cells, the result is multiplied away regardless.
+    """
+    num_regions = xs_tensor.shape[0]
+    # phi2d, vA2d, vF2d are already [G, I_max+1] — no reshape needed
+
+    def body(Dplus_prev, i):
+        valid = (i < I_valid).astype(jnp.float32)   # 1.0 inside mesh, 0.0 in padding
+
+        reg      = roc_pad[i]
+        reg_next = jax.lax.cond(
+            i < I_max - 1,
+            lambda: roc_pad[i + 1],
+            lambda: roc_pad[i],
+        )
+
+        D_g      = xs_tensor[reg,      lay['D']]
+        D_g_next = xs_tensor[reg_next, lay['D']]
+        Sig_s    = xs_tensor[reg,      lay['Sigma_s']].reshape(G, G)
+        chi_g    = xs_tensor[reg,      lay['chi']]
+        nuSigf   = xs_tensor[reg,      lay['nuSigma_f']]
+
+        Dplus  = 2 * D_g * D_g_next / (D_g + D_g_next + 1e-30)
+        Dminus = jnp.where(i > 0, Dplus_prev, jnp.zeros(G))
+
+        phi_i   = phi2d[:, i]
+        phi_im1 = phi2d[:, jnp.maximum(i - 1, 0)]
+        phi_ip1 = phi2d[:, jnp.minimum(i + 1, I_max)]
+
+        vA_i = vA2d[:, i]
+        vF_i = vF2d[:, i]
+
+        # ── grad w.r.t. Sigma_a ──────────────────────────────────────────
+        grad_Sig_a = vA_i * phi_i                                    # [G]
+
+        # ── grad w.r.t. nuSigma_f ────────────────────────────────────────
+        weighted_chi = jnp.dot(vF_i, chi_g)
+        grad_nuSigf  = weighted_chi * phi_i                          # [G]
+
+        # ── grad w.r.t. chi ──────────────────────────────────────────────
+        nusigf_phi = jnp.dot(nuSigf, phi_i)
+        grad_chi   = vF_i * nusigf_phi                               # [G]
+
+        # ── grad w.r.t. Sigma_s ──────────────────────────────────────────
+        grad_Sig_s_out = jnp.outer(vA_i * phi_i, jnp.ones(G))       # [G, G]
+        grad_Sig_s_in  = jnp.outer(vA_i, phi_i)                     # [G, G]
+        diag_mask      = jnp.eye(G, dtype=jnp.bool_)
+        grad_Sig_s     = jnp.where(diag_mask, 0.0,
+                                   grad_Sig_s_out - grad_Sig_s_in)  # [G, G]
+
+        # ── grad w.r.t. D ────────────────────────────────────────────────
+        dDplus_dD      = 2 * D_g_next**2 / (D_g + D_g_next + 1e-30)**2
+        dDplus_dD_next = 2 * D_g**2      / (D_g + D_g_next + 1e-30)**2
+        dAphi_dDplus   = S_pad[i+1] / (Delta_r * V_pad[i]) * (phi_i - phi_ip1)
+        grad_D_reg      = vA_i * (dAphi_dDplus * dDplus_dD)
+        grad_D_reg_next = vA_i * (dAphi_dDplus * dDplus_dD_next)
+
+        return Dplus, (
+            reg, reg_next,
+            valid * grad_Sig_a,
+            valid * grad_nuSigf,
+            valid * grad_chi,
+            valid * grad_Sig_s.ravel(),
+            valid * grad_D_reg,
+            valid * grad_D_reg_next,
+        )
+
+    _, (regs, regs_next,
+        grad_sig_a_all, grad_nusigf_all, grad_chi_all,
+        grad_sigs_all,
+        grad_D_all, grad_D_next_all) = jax.lax.scan(
+        body, jnp.zeros(G), jnp.arange(I_max)
+    )
+
+    def acc(grad_per_cell, region_ids):
+        return jax.ops.segment_sum(grad_per_cell, region_ids,
+                                   num_segments=num_regions)
+
+    xs_grad = jnp.zeros_like(xs_tensor)
+
+    sa_start  = lay['Sigma_a'].start
+    xs_grad   = xs_grad.at[:, sa_start:sa_start+G].add(acc(grad_sig_a_all, regs))
+
+    nf_start  = lay['nuSigma_f'].start
+    xs_grad   = xs_grad.at[:, nf_start:nf_start+G].add(acc(grad_nusigf_all, regs))
+
+    chi_start = lay['chi'].start
+    xs_grad   = xs_grad.at[:, chi_start:chi_start+G].add(acc(grad_chi_all, regs))
+
+    ss_start  = lay['Sigma_s'].start
+    xs_grad   = xs_grad.at[:, ss_start:ss_start+G*G].add(acc(grad_sigs_all, regs))
+
+    D_start = lay['D'].start
+    D_grad  = acc(grad_D_all, regs) + acc(grad_D_next_all, regs_next)
+    xs_grad = xs_grad.at[:, D_start:D_start+G].add(D_grad)
+
+    return xs_grad

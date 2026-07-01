@@ -65,13 +65,13 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-TRAIN_SIZE   = 1000
+TRAIN_SIZE   = 500
 VAL_SIZE     = 100    # used every epoch — was previously called val_SIZE
 TEST_SIZE    = 100    # held out, evaluated only once at the very end
 HOLDOUT_SEED = 0      # FIXED — keeps val/test identical across all runs
 BATCH_SIZE = 32
 EPOCHS     = 70
-SEED       = 4
+SEED       = 0
 LR_max     = 5e-4   # cosine schedule peak learning rate
 LR_min     = 5e-6
 
