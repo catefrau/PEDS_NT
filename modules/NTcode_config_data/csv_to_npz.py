@@ -68,6 +68,25 @@ def csv_to_npz(
     print(f"Saved '{output_path}' with {len(keffs)} samples and {len(param_cols)} parameters.")
 
 
+
+# --- Load the dataset ---
+def cut_dataset(csv_path: str, csv_path_filtered: str) -> None:
+    df = pd.read_csv(csv_path)
+    print(f"Original dataset size: {len(df)} samples")
+
+    # --- Define your filtering conditions ---
+    condition_remove = (
+        (df["keff"] < 0.8) |       # remove if outer radius > 8
+        (df["keff"] > 1.2)         # remove if f_mod < 0.4
+    )
+
+    df_filtered = df[~condition_remove]  # ~ means "NOT" — keep everything else
+    print(f"Filtered dataset size: {len(df_filtered)} samples")
+    print(f"Samples removed: {len(df) - len(df_filtered)}")
+    # --- Save the filtered dataset ---
+    df_filtered.to_csv(csv_path_filtered, index=False)
+    print(f"Saved to {csv_path_filtered} ✅")
+
 # ── Example usage ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     PARAM_COLUMNS = [
@@ -79,9 +98,14 @@ if __name__ == "__main__":
         "r2_water_outer_radius",
     ]
 
+    """ cut_dataset(
+        csv_path="../FILES/30june_piece.csv",
+        csv_path_filtered="../FILES/30june_piece_filtered.csv",
+    )
+ """
     csv_to_npz(
-        csv_path="../FILES/1000_clean.csv",
+        csv_path="../FILES/30_june_full.csv",
         param_cols=PARAM_COLUMNS,
         keff_col="keff",
-        output_path="../FILES/1000_clean.npz",
+        output_path="../FILES/30_june_full.npz",
     )
