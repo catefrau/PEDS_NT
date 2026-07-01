@@ -37,12 +37,10 @@ from collections import OrderedDict
 import sys
 import traceback
 from datetime import datetime
-
+import glob
 
 # ── add the project root (parent of THIS_DIR) to sys.path ───────────────────
-# Previously this used os.path.dirname(__file__) which breaks when you cd
-# into a subdirectory and run the script.  Using THIS_DIR + PARENT_DIR is
-# robust regardless of working directory.
+
 sys.path.insert(0, PARENT_DIR)
 
 ctx = mp.get_context("spawn")
@@ -67,17 +65,17 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-TRAIN_SIZE   = 850
+TRAIN_SIZE   = 1000
 VAL_SIZE     = 100    # used every epoch — was previously called val_SIZE
 TEST_SIZE    = 100    # held out, evaluated only once at the very end
 HOLDOUT_SEED = 0      # FIXED — keeps val/test identical across all runs
 BATCH_SIZE = 32
-EPOCHS     = 80
-SEED       = 1
+EPOCHS     = 70
+SEED       = 4
 LR_max     = 5e-4   # cosine schedule peak learning rate
 LR_min     = 5e-6
 
-EXP_NAME   = f"train_{TRAIN_SIZE}_seed_{SEED}"
+EXP_NAME   = f"trainnew_{TRAIN_SIZE}_seed_{SEED}"
 LOG_DIR = os.path.join(THIS_DIR, "LOGS_trainsize_study", EXP_NAME)
 
 
@@ -98,7 +96,7 @@ TRACKED_SAMPLES: list = [0, 1, 2, 3, 4]
 PARAM_NAMES: list = ['b4c_r', 'cr_frac', 'fuel_r', 'enrichment', 'f_mod', 'water_r']
 
 # ── data path — anchored to PARENT_DIR so it works from any cwd ─────────────
-_DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "1082_0.8_1.2.npz")
+_DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "MC_1315.npz")
 
 N_WORKERS = min(int(os.environ.get("SLURM_CPUS_PER_TASK", 32)), BATCH_SIZE)
 print(f"Using {N_WORKERS} parallel workers")
@@ -197,6 +195,35 @@ def update_geo(geo: GeometryConfig, params_raw: np.ndarray) -> GeometryConfig:
 
 # Defer N_FLAT_MAX until after update_geo is defined
 N_FLAT_MAX = _compute_n_flat_max_from_file(_DATA_FILEPATH, GEO)
+
+# ── Batch-backward constants (derived once, fixed for the whole run) ─────────
+# I_MAX_SCAN is the maximum mesh-cell count across the whole dataset.
+# Padded arrays in the batched VJP always have this size, so XLA compiles
+# one kernel for all batches (no recompilation per batch).
+I_MAX_SCAN     = N_FLAT_MAX // GEO.G - 1          # e.g. 160//2 - 1 = 79
+_DELTA_R_CONST = float(GEO.mesh_size)             # same for all samples
+_BC_CONST      = bc_to_coeffs(GEO.bc)             # same for all samples
+
+def _make_vjp_single(I_max, G, Delta_r, BC, lay):
+    """
+    Returns a closure that computes Aphi_Fphi_vjp_padded for ONE sample,
+    with the static geometry constants (I_max, G, Delta_r, BC, lay) baked in.
+    This lets jax.vmap work cleanly: every in_axes argument is per-sample.
+
+    phi2d / vA2d / vF2d must be [G, I_max+1] — see _NT_batch_bwd for unpacking.
+    """
+    from matrix_JAX_optimized import Aphi_Fphi_vjp_padded
+    def _single(xs, S_pad, V_pad, roc_pad, phi2d, vA2d, vF2d, I_valid):
+        return Aphi_Fphi_vjp_padded(
+            xs, S_pad, V_pad, roc_pad,
+            phi2d, vA2d, vF2d,
+            I_valid, I_max, G, Delta_r, BC, lay,
+        )
+    return _single
+
+# JIT + vmap over the batch dimension — compiled once, reused every backward call
+_vjp_single = _make_vjp_single(I_MAX_SCAN, GEO.G, _DELTA_R_CONST, _BC_CONST, SLAY)
+_Aphi_Fphi_vjp_batch = jax.jit(jax.vmap(_vjp_single))
 
 def build_xs_mask(filepath: str, geo: GeometryConfig) -> np.ndarray:
     """
@@ -327,15 +354,191 @@ def NTdiff_solver(xs_tensor, params_raw_single, sample_id):
 NTdiff_solver.defvjp(_NTdiff_fwd, _NTdiff_bwd)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# BATCH SOLVER — one custom VJP call per batch instead of one per sample
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _NT_batch_fwd(xs_batch, params_raw_batch, sample_ids):
+    """
+    Forward pass for NTdiff_solver_batch.
+
+    Calls pure_callback(_run_NT_solver) for each sample in the batch.
+    At training time each call hits _PRESOLVE_CACHE (populated by the
+    parallel pre-solve step), so the eigenvalue solve itself is NOT repeated.
+    All results are stacked and returned as residuals for the backward.
+
+    xs_batch        : [B, n_regions, M]  float32
+    params_raw_batch: [B, 6]             float32
+    sample_ids      : [B]                int32
+    Returns: keffs [B], residuals
+    """
+    B = xs_batch.shape[0]
+    keffs_list, phi_fwd_list, phi_adj_list, Fphi_list = [], [], [], []
+
+    for i in range(B):
+        k, phi_fwd, phi_adj, Fphi = jax.pure_callback(
+            _run_NT_solver,
+            (
+                jax.ShapeDtypeStruct((),            jnp.float32),
+                jax.ShapeDtypeStruct((N_FLAT_MAX,), jnp.float32),
+                jax.ShapeDtypeStruct((N_FLAT_MAX,), jnp.float32),
+                jax.ShapeDtypeStruct((N_FLAT_MAX,), jnp.float32),
+            ),
+            xs_batch[i], params_raw_batch[i], sample_ids[i:i+1],
+        )
+        keffs_list.append(k)
+        phi_fwd_list.append(phi_fwd)
+        phi_adj_list.append(phi_adj)
+        Fphi_list.append(Fphi)
+
+    keffs     = jnp.stack(keffs_list)      # [B]
+    phi_fwd_b = jnp.stack(phi_fwd_list)    # [B, N_FLAT_MAX]
+    phi_adj_b = jnp.stack(phi_adj_list)    # [B, N_FLAT_MAX]
+    Fphi_b    = jnp.stack(Fphi_list)       # [B, N_FLAT_MAX]
+
+    residuals = (xs_batch, keffs, phi_fwd_b, phi_adj_b, Fphi_b,
+                 params_raw_batch, sample_ids)
+    return keffs, residuals
+
+
+def _build_padded_geo_arrays(params_raw_batch_np):
+    """
+    For each sample in the batch, call precompute_geometry and pack the
+    geometry arrays into fixed-size padded arrays of shape [I_MAX_SCAN(+1)].
+
+    Padding rules that avoid numerical issues in the batched scan:
+      - S_pad  : last valid S value is replicated into padding slots
+      - V_pad  : padded with 1.0 so that S/(Delta_r * V) stays finite;
+                 the validity mask (valid = i < I_valid) zeroes contributions
+      - roc_pad: last valid region index is replicated
+    """
+    B = params_raw_batch_np.shape[0]
+    S_pads   = np.ones( (B, I_MAX_SCAN + 1), dtype=np.float32)
+    V_pads   = np.ones( (B, I_MAX_SCAN),     dtype=np.float32)
+    roc_pads = np.zeros((B, I_MAX_SCAN),     dtype=np.int32)
+    I_vals   = np.zeros(B, dtype=np.int32)
+
+    for idx in range(B):
+        geo_i    = update_geo(GEO, params_raw_batch_np[idx])
+        gd       = precompute_geometry(geo_i)
+        I_i      = gd['I']
+        I_vals[idx] = I_i
+
+        S_pads[idx, :I_i+1]  = np.array(gd['S'],              dtype=np.float32)[:I_i+1]
+        V_pads[idx, :I_i]    = np.array(gd['V'],              dtype=np.float32)[:I_i]
+        roc_np = np.array(gd['region_of_cell'], dtype=np.int32)
+        roc_pads[idx, :I_i]  = roc_np
+        if I_i < I_MAX_SCAN:
+            # replicate last valid region into padding to avoid out-of-bound XS reads
+            roc_pads[idx, I_i:] = roc_np[I_i - 1]
+
+    return (jnp.array(S_pads), jnp.array(V_pads),
+            jnp.array(roc_pads), jnp.array(I_vals))
+
+
+def _NT_batch_bwd(residuals, g_batch):
+    """
+    Batched backward pass for NTdiff_solver_batch.
+
+    Instead of calling Aphi_Fphi_vjp once per sample (35 000 separate JAX
+    dispatch + compile events), this calls _Aphi_Fphi_vjp_batch once,
+    which is a jit-compiled vmap over the whole batch.
+
+    g_batch: [B] upstream gradient d(loss)/d(keff_i)
+    Returns: (grad_xs_batch [B, n_regions, M], None, None)
+    """
+    xs_batch, k_batch, phi_fwd_batch, phi_adj_batch, Fphi_batch, \
+        params_raw_batch, sample_ids = residuals
+
+    B = xs_batch.shape[0]
+
+    # ── padded geometry arrays for all samples in this batch ─────────────────
+    params_np = np.array(params_raw_batch)   # bring to CPU once
+    S_pad_b, V_pad_b, roc_pad_b, I_vals = _build_padded_geo_arrays(params_np)
+
+    # ── repack flat padded fluxes into [B, G, I_MAX_SCAN+1] ──────────────────
+    # The flat padded layout is: [g0_cell0..g0_cellI | g1_cell0..g1_cellI | 0 0 ...]
+    # with stride I_valid+1 per group.  reshape(G, I_MAX_SCAN+1) would be wrong
+    # for any sample where I_valid < I_MAX_SCAN.  We unpack per-sample on CPU.
+    G_val       = GEO.G
+    phi_fwd_np  = np.array(phi_fwd_batch)    # [B, N_FLAT_MAX]
+    phi_adj_np  = np.array(phi_adj_batch)    # [B, N_FLAT_MAX]
+    k_np        = np.array(k_batch)          # [B]
+    I_vals_np   = np.array(I_vals)           # [B]
+
+    phi2d_np = np.zeros((B, G_val, I_MAX_SCAN + 1), dtype=np.float32)
+    vA2d_np  = np.zeros((B, G_val, I_MAX_SCAN + 1), dtype=np.float32)
+    vF2d_np  = np.zeros((B, G_val, I_MAX_SCAN + 1), dtype=np.float32)
+
+    for b in range(B):
+        I_i    = int(I_vals_np[b])
+        inv_k  = -1.0 / float(k_np[b])
+        for g in range(G_val):
+            src = g * (I_i + 1)           # stride in the flat padded vector
+            phi2d_np[b, g, :I_i + 1] = phi_fwd_np[b, src:src + I_i + 1]
+            vA2d_np [b, g, :I_i + 1] = phi_adj_np[b, src:src + I_i + 1]
+            vF2d_np [b, g, :I_i + 1] = inv_k * phi_adj_np[b, src:src + I_i + 1]
+
+    phi2d_j = jnp.array(phi2d_np)   # [B, G, I_MAX_SCAN+1]
+    vA2d_j  = jnp.array(vA2d_np)
+    vF2d_j  = jnp.array(vF2d_np)
+
+    # ── one batched VJP call  →  [B, n_regions, M] ───────────────────────────
+    with timer("  bwd: vjp A@phi, F@phi -> numerator", verbose=False):
+        numerators = _Aphi_Fphi_vjp_batch(
+            xs_batch,   # [B, n_regions, M]
+            S_pad_b,    # [B, I_MAX_SCAN+1]
+            V_pad_b,    # [B, I_MAX_SCAN]
+            roc_pad_b,  # [B, I_MAX_SCAN]
+            phi2d_j,    # [B, G, I_MAX_SCAN+1]
+            vA2d_j,     # [B, G, I_MAX_SCAN+1]
+            vF2d_j,     # [B, G, I_MAX_SCAN+1]
+            I_vals,     # [B]
+        )  # → [B, n_regions, M]
+
+    # ── denominator ⟨φ†, Fφ⟩ / k² per sample ────────────────────────────────
+    denominators = (1.0 / k_batch**2) * jnp.sum(
+        phi_adj_batch * Fphi_batch, axis=1)                   # [B]
+
+    # ── scale by upstream gradient and denominator ────────────────────────────
+    scale    = -(g_batch / denominators)                       # [B]
+    dk_dxs_b = scale[:, None, None] * numerators              # [B, n_regions, M]
+
+    return (dk_dxs_b, None, None)
+
+
+@jax.custom_vjp
+def NTdiff_solver_batch(xs_batch, params_raw_batch, sample_ids):
+    """
+    Drop-in replacement for the per-sample NTdiff_solver loop in
+    PEDSModel.__call__.  Returns keffs [B].  The backward computes
+    d(loss)/d(xs_batch) with a single batched VJP call.
+    """
+    keffs, _ = _NT_batch_fwd(xs_batch, params_raw_batch, sample_ids)
+    return keffs
+
+NTdiff_solver_batch.defvjp(_NT_batch_fwd, _NT_batch_bwd)
+
+
 def _solve_sample_worker(args):
-    """Runs in a subprocess. Returns (i, k, phi_fwd, phi_adj, geo_data, epoch)."""
-    import os
+    """
+    Runs in a subprocess.
+    Returns (i, k, phi_fwd, phi_adj, geo_data, epoch, worker_elapsed_s).
+
+    worker_elapsed_s is the wall time inside this process, comparable to
+    the per-sample backward time shown in the timing report.  The parent
+    collects these to 'fwd pre-solve worker sample' in _TIMINGS, giving
+    the same call count as 'bwd: vjp A@phi, F@phi -> numerator'.
+    """
+    import os, time as _time
     os.environ["JAX_PLATFORMS"] = "cpu"
+    _t0 = _time.perf_counter()
     i, xs_np, params_np, sample_id_int, epoch = args
     geo_i    = update_geo(GEO, params_np)
     geo_data = precompute_geometry(geo_i)
     k, phi_fwd, phi_adj, Fphi = _run_NT_solver(xs_np, params_np, np.array([sample_id_int]))
-    return i, k, phi_fwd, phi_adj, geo_data, epoch
+    worker_elapsed = _time.perf_counter() - _t0
+    return i, k, phi_fwd, phi_adj, geo_data, epoch, worker_elapsed
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -475,16 +678,16 @@ class PEDSModel(nnx.Module):
 
         xs_final = jnp.exp(log_ratios) * xs_baselines * XS_MASK_J # [batch, 3, 12]
 
+        # Single batched forward+backward call — replaces the per-sample loop.
+        # _NT_batch_fwd retrieves from _PRESOLVE_CACHE (no repeated eigen-solve);
+        # _NT_batch_bwd runs one jit-vmapped Aphi_Fphi_vjp_padded over all samples.
+        params_raw_j = jnp.array(params_raw, dtype=jnp.float32)          # [B, 6]
+        sample_ids_j = (jnp.arange(batch_size, dtype=jnp.int32)
+                        + sample_id_offset)                               # [B]
+
         with timer("forward: solver loop (all samples)", verbose=False):
-            keffs = []
-            for i in range(batch_size):
-                keff_i = NTdiff_solver(
-                    xs_final[i],
-                    jnp.array(params_raw[i], dtype=jnp.float32),
-                    jnp.array([i + sample_id_offset], dtype=jnp.int32),
-                )
-                keffs.append(keff_i)
-        keffs = jnp.stack(keffs)  # [batch]
+            keffs = NTdiff_solver_batch(xs_final, params_raw_j, sample_ids_j)
+
         return keffs, xs_final, log_ratios
 
 
@@ -607,24 +810,50 @@ def _save_split_cache(cache_path, train_idx, val_idx, test_idx, metadata):
         pickle.dump(payload, f)
 
 
+def _find_largest_smaller_cache(cache_dir, train_seed, holdout_seed, val_size, test_size, train_size):
+    """Find the largest cached train_size < current request."""
+    pattern = os.path.join(cache_dir, f"split_t*_ts{train_seed}_hs{holdout_seed}_v{val_size}_t{test_size}.pkl")
+    cached_files = glob.glob(pattern)
+    
+    candidates = []
+    for fpath in cached_files:
+        fname = os.path.basename(fpath)
+        try:
+            parts = fname.split("_")
+            t_val = int(parts[1][1:])  
+            candidates.append((t_val, fpath))
+        except:
+            continue
+    
+    if not candidates:
+        return None, None
+    candidates.sort(reverse=True)
+    return candidates[0][0], candidates[0][1]
+
+
 def load_or_create_split_cache(filepath, train_size, val_size, test_size,
-                                train_seed=42, holdout_seed=0, cache_dir=None):
+                                train_seed=42, holdout_seed=0, cache_path=None):
     """
     Load train/val/test splits from cache if available and compatible.
     If dataset grew: val/test stay the same, train extends with new samples.
+    
+    Fallback: if exact train_size not found, looks for largest smaller train_size
+    and extends from there.
     """
-    if cache_dir is None:
+    if cache_path is None:
         cache_dir = os.path.join(os.path.dirname(filepath) or ".", ".split_cache")
+    else:
+        cache_dir = cache_path 
+    
     os.makedirs(cache_dir, exist_ok=True)
     
-    # One cache file per (train_seed, holdout_seed, val/test config)
     cache_fname = f"split_t{train_size}_ts{train_seed}_hs{holdout_seed}_v{val_size}_t{test_size}.pkl"
     cache_path = os.path.join(cache_dir, cache_fname)
     
     data = np.load(filepath, allow_pickle=True)
     current_dataset_size = len(data['params'])
     
-    # ── Try to load cache ────────────────────────────────────────────────────
+    # ── Try to load EXACT cache ──────────────────────────────────────────────
     if os.path.exists(cache_path):
         try:
             with open(cache_path, "rb") as f:
@@ -635,7 +864,7 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
             old_test_idx  = cache["test_idx"]
             old_dataset_size = meta.get("dataset_size")
             
-            # ── Seeds match: cache is for the same holdout config ────────────
+            # Seeds match: cache is for the same holdout config
             if (meta.get("train_seed") == train_seed and
                 meta.get("holdout_seed") == holdout_seed and
                 meta.get("val_size") == val_size and
@@ -653,18 +882,16 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
                     print(f"  [cache hit, dataset grew] {old_dataset_size} → {current_dataset_size} samples")
                     print(f"    extending train from {len(old_train_idx)} to {train_size}…")
                     
-                    # Identify newly available samples (not in old train/val/test)
                     old_all = np.union1d(old_train_idx, np.union1d(old_val_idx, old_test_idx))
                     new_pool = np.setdiff1d(np.arange(current_dataset_size), old_all)
-                    
                     n_needed = train_size - len(old_train_idx)
+                    
                     if len(new_pool) < n_needed:
                         raise ValueError(
                             f"Not enough new samples ({len(new_pool)}) to reach "
                             f"train_size={train_size} (need {n_needed} more)"
                         )
                     
-                    # Draw from new pool using the same seed (consistent sampling)
                     extend_rng = np.random.default_rng(train_seed)
                     extend_rng.shuffle(new_pool)
                     new_indices = new_pool[:n_needed]
@@ -673,14 +900,58 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
                     val_idx   = old_val_idx
                     test_idx  = old_test_idx
                     
-                    # Update cache
                     meta["dataset_size"] = current_dataset_size
                     meta["train_size"] = train_size
                     _save_split_cache(cache_path, train_idx, val_idx, test_idx, meta)
                     return train_idx, val_idx, test_idx
         
         except Exception as e:
-            print(f"  [cache load failed] {e}, recomputing…")
+            print(f"  [cache load failed] {e}, trying fallback…")
+    
+    # ── Fallback: look for largest smaller cached train_size ─────────────────
+    prev_train_size, prev_cache_path = _find_largest_smaller_cache(
+        cache_dir, train_seed, holdout_seed, val_size, test_size, train_size
+    )
+    
+    if prev_cache_path is not None:
+        print(f"  [fallback] found previous cache for train_size={prev_train_size}")
+        print(f"    extending from {prev_cache_path} to {train_size}…")
+        
+        try:
+            with open(prev_cache_path, "rb") as f:
+                cache = pickle.load(f)
+            meta = cache["metadata"]
+            old_train_idx = cache["train_idx"]
+            old_val_idx   = cache["val_idx"]
+            old_test_idx  = cache["test_idx"]
+            old_dataset_size = meta.get("dataset_size")
+
+            old_all = np.union1d(old_train_idx, np.union1d(old_val_idx, old_test_idx))
+            new_pool = np.setdiff1d(np.arange(current_dataset_size), old_all)
+            n_needed = train_size - len(old_train_idx)
+
+            if len(new_pool) < n_needed:
+                raise ValueError(
+                    f"Not enough new samples ({len(new_pool)}) to extend train "
+                    f"from {len(old_train_idx)} to {train_size} (need {n_needed})"
+                )
+
+            extend_rng = np.random.default_rng(train_seed)
+            extend_rng.shuffle(new_pool)
+            new_indices = new_pool[:n_needed]
+            
+            train_idx = np.concatenate([old_train_idx, new_indices])
+            val_idx   = old_val_idx
+            test_idx  = old_test_idx
+
+            meta["dataset_size"] = current_dataset_size
+            meta["train_size"]   = train_size
+            _save_split_cache(cache_path, train_idx, val_idx, test_idx, meta)
+            print(f"    ✓ extended: {len(old_train_idx)} → {len(train_idx)} samples")
+            return train_idx, val_idx, test_idx
+        
+        except Exception as e:
+            print(f"  [fallback failed] {e}, computing from scratch…")
     
     # ── Cache miss: compute from scratch ─────────────────────────────────────
     print(f"  [cache miss] computing new splits (train_seed={train_seed})…")
@@ -696,7 +967,6 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
     _save_split_cache(cache_path, train_idx, val_idx, test_idx, meta)
     return train_idx, val_idx, test_idx
 
-
 def load_data(filepath, train_size, val_size, test_size,
               train_seed=42, holdout_seed=0, split_cache_path=None, cache_dir=None):
 
@@ -709,7 +979,7 @@ def load_data(filepath, train_size, val_size, test_size,
     rawparams = np.array(data['params_raw'], dtype=np.float32)
 
     train_idx, val_idx, test_idx = load_or_create_split_cache(
-        filepath, train_size, val_size, test_size, train_seed, holdout_seed, cache_dir=cache_dir)
+        filepath, train_size, val_size, test_size, train_seed, holdout_seed, cache_path=cache_dir)
 
     print(f"  Train k range: {keffs[train_idx].min():.3f} – {keffs[train_idx].max():.3f}")
     print(f"  Val   k range: {keffs[val_idx].min():.3f}  – {keffs[val_idx].max():.3f}")
@@ -1642,10 +1912,11 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
     EMA_ALPHA     = 0.15
     MIN_SAVE_EPOCH = 20   # don't save before the model has passed early oscillations
     ema_val_mean_pcm = None   # will be set at end of epoch 1
+    train_shuffle_rng = np.random.default_rng(seed)
 
     for epoch in range(1, epochs + 1):
         # ── shuffle ──────────────────────────────────────────────────────────
-        idx = np.random.permutation(train_size)
+        idx = train_shuffle_rng.permutation(train_size)
         t_geoms   = train_geoms[idx]
         t_keffs   = train_keffs[idx]
         t_raw     = train_rawparams[idx]
@@ -1672,10 +1943,13 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
             # Step 2: parallel pre-solve
             args_list = [(i, xs_np[i], np.array(br[i]), i, epoch)
                          for i in range(len(bg))]
+            _t_batch = time.perf_counter()
             results = list(executor.map(_solve_sample_worker, args_list))
+            _TIMINGS["fwd pre-solve batch wall"].append(time.perf_counter() - _t_batch)
             _PRESOLVE_CACHE.clear()
-            for i, k, phi_fwd, phi_adj, geo_data, _ in results:
+            for i, k, phi_fwd, phi_adj, geo_data, _, w_elapsed in results:
                 _PRESOLVE_CACHE[i] = (k, phi_fwd, phi_adj, geo_data)
+                _TIMINGS["fwd pre-solve worker sample"].append(w_elapsed)
 
             # Step 3: forward + backward + update
             with timer("train step: forward+backward+optiupd", verbose = False):
@@ -1740,9 +2014,10 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
                             VAL_OFFSET + i + global_start, -1)
                             for i in range(len(bg))]
                 results = list(executor.map(_solve_sample_worker, args_list))
-                for i, k, *_ in results:
+                for i, k, _pf, _pa, _gd, _ep, w_elapsed in results:
                     all_kp_val.append(float(k))
                     all_kr_val.append(float(bk[i]))
+                    _TIMINGS["fwd val worker sample"].append(w_elapsed)
 
         # ── log_ratios saturation diagnostic (every epoch, val set) ─────────
         val_log_ratios = model.compute_log_ratios(
@@ -1952,7 +2227,6 @@ if __name__ == "__main__":
     print(f"Started at   : {now_str}")
     print(f"Run log      : {loggy_file}")
     print(f"Code copy    : {snapshot_path}")
-    print(f"Code SHA256  : {code_hash}")
     
     executor = ProcessPoolExecutor(max_workers=N_WORKERS, mp_context=ctx)
 
