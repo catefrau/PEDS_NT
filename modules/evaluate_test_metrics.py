@@ -42,11 +42,6 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from flax import nnx
-
-# ── TODO 1: point this at the folder containing your training script ───────
-#sys.path.insert(0, "../")
-
-# ── TODO 2: rename "PEDS_v7" to your training script's module name ─────────
 from PEDS import (
     GEO,
     PEDSModel,
@@ -62,6 +57,11 @@ from PEDS import (
     TEST_SIZE,
 )
 
+# ── CONFIG: edit these paths once, here ────────────────────────────────────
+LOGS_ROOT = "final_DF_epochs"
+OUTPUT_DIRNAME = "testset_results"
+OUTPUT_FILENAME = "test_metrics_all_runs.csv"
+
 RUN_PATTERN = re.compile(r"^train_(\d+)_seed_(\d+)$")
 EVAL_BATCH_SIZE = 32
 
@@ -69,9 +69,9 @@ EVAL_BATCH_SIZE = 32
 # ─────────────────────────────────────────────────────────────────────────────
 # Discovery
 # ─────────────────────────────────────────────────────────────────────────────
-def find_runs(logs_root):
+def find_runs(LOGS_ROOT):
     """Yield (run_id, train_size, seed, ckpt_path) for every best_model.pkl found."""
-    pattern = os.path.join(logs_root, "**", "checkpoints", "best_model.pkl")
+    pattern = os.path.join(LOGS_ROOT, "**", "checkpoints", "best_model.pkl")
     for ckpt_path in sorted(glob.glob(pattern, recursive=True)):
         run_dir = os.path.dirname(os.path.dirname(ckpt_path))
         run_folder = os.path.basename(run_dir)
@@ -82,14 +82,14 @@ def find_runs(logs_root):
             continue
 
         train_size, seed = int(m.group(1)), int(m.group(2))
-        run_id = os.path.relpath(run_dir, logs_root).replace(os.sep, "/")
+        run_id = os.path.relpath(run_dir, LOGS_ROOT).replace(os.sep, "/")
         yield run_id, train_size, seed, ckpt_path
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Caching: fixed TEST set (built once, shared by every run)
 # ─────────────────────────────────────────────────────────────────────────────
-def get_or_build_test_set(logs_root):
-    cache_path = os.path.join(logs_root, "_eval_cache", "test_set.pkl")
+def get_or_build_test_set(LOGS_ROOT):
+    cache_path = os.path.join(LOGS_ROOT, "_evaluation_cache", "test_set.pkl")
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     if os.path.exists(cache_path):
         print(f"Loading cached TEST set ← {cache_path}")
@@ -123,9 +123,9 @@ def get_or_build_test_set(logs_root):
 # ─────────────────────────────────────────────────────────────────────────────
 # Caching: per-(train_size, seed) normalization stats
 # ─────────────────────────────────────────────────────────────────────────────
-def get_or_build_norm_stats(logs_root, train_size, seed):
+def get_or_build_norm_stats(LOGS_ROOT, train_size, seed):
     cache_path = os.path.join(
-        logs_root, "_eval_cache", f"norm_stats_train{train_size}_seed{seed}.pkl"
+        LOGS_ROOT, "_evaluation_cache", f"norm_stats_train{train_size}_seed{seed}.pkl"
     )
     if os.path.exists(cache_path):
         with open(cache_path, "rb") as f:
@@ -210,14 +210,18 @@ def evaluate_on_test(model, test_payload, norm_stats):
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
-def main(logs_root, out_csv):
-    test_payload = get_or_build_test_set(logs_root)
+def main():
+    out_dir = os.path.join(LOGS_ROOT, OUTPUT_DIRNAME)
+    os.makedirs(out_dir, exist_ok=True)
+    out_csv = os.path.join(out_dir, OUTPUT_FILENAME)
+
+    test_payload = get_or_build_test_set(LOGS_ROOT)
     rows = []
 
-    for run_id, train_size, seed, ckpt_path in find_runs(logs_root):
+    for run_id, train_size, seed, ckpt_path in find_runs(LOGS_ROOT):
         print(f"\n=== Evaluating {run_id} ===")
         try:
-            norm_stats = get_or_build_norm_stats(logs_root, train_size, seed)
+            norm_stats = get_or_build_norm_stats(LOGS_ROOT, train_size, seed)
             state, meta = load_checkpoint(ckpt_path)
             model = build_model_from_metadata(meta, seed_for_init=seed)
             nnx.update(model, jax.tree_util.tree_map(jnp.asarray, state))
@@ -250,10 +254,4 @@ def main(logs_root, out_csv):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("logs_root", help="e.g. LOGS")
-    parser.add_argument("--out", default=None,
-                         help="output CSV path (default: <logs_root>/test_set_metrics_all_runs.csv)")
-    args = parser.parse_args()
-    out_csv = args.out or os.path.join(args.logs_root, "test_set_metrics_all_runs.csv")
-    main(args.logs_root, out_csv)
+    main()
