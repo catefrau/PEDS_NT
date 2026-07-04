@@ -65,18 +65,19 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-TRAIN_SIZE   = 500
+TRAIN_SIZE   = int(os.environ.get("PEDS_TRAIN_SIZE", 500))
 VAL_SIZE     = 100    # used every epoch — was previously called val_SIZE
 TEST_SIZE    = 100    # held out, evaluated only once at the very end
 HOLDOUT_SEED = 0      # FIXED — keeps val/test identical across all runs
 BATCH_SIZE = 32
-EPOCHS     = 70
-SEED       = 0
+EPOCHS     = 200
+SEED       = int(os.environ.get("PEDS_SEED", 0))
 LR_max     = 5e-4   # cosine schedule peak learning rate
 LR_min     = 5e-6
+DECAY_EPOCHS = int(os.environ.get("PEDS_DECAY_EPOCHS", 70))
 
-EXP_NAME   = f"trainnew_{TRAIN_SIZE}_seed_{SEED}"
-LOG_DIR = os.path.join(THIS_DIR, "LOGS_trainsize_study", EXP_NAME)
+EXP_NAME   = f"train_{TRAIN_SIZE}_seed_{SEED}_decay{DECAY_EPOCHS}"
+LOG_DIR = os.path.join(THIS_DIR, "final_DF_epochs", EXP_NAME)
 
 
 LOG_RATIO_CLIP_LO = -1.8
@@ -84,11 +85,11 @@ LOG_RATIO_CLIP_HI = 0.8
 
 # Epochs at which XS heatmap snapshots are saved.
 # Add/remove values here to control checkpointing granularity.
-XS_HEATMAP_EPOCHS = {1, 5, 10, 20, 50, 100}
+XS_HEATMAP_EPOCHS = [1, int(EPOCHS/2), EPOCHS]
 
 # Sample indices (into the TRAINING set) for per-sample xs_subplots figures.
 # These are saved at the same epochs as XS_HEATMAP_EPOCHS.
-SUBPLOT_SAMPLE_INDICES: list = [0, 1, 2, 3, 4]
+SUBPLOT_SAMPLE_INDICES: list = [22, 44, 55, 68, 82]
 
 TRACKED_SAMPLES: list = [0, 1, 2, 3, 4]
 
@@ -96,7 +97,7 @@ TRACKED_SAMPLES: list = [0, 1, 2, 3, 4]
 PARAM_NAMES: list = ['b4c_r', 'cr_frac', 'fuel_r', 'enrichment', 'f_mod', 'water_r']
 
 # ── data path — anchored to PARENT_DIR so it works from any cwd ─────────────
-_DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "MC_1315.npz")
+_DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "merged_good_lhs_0.8_1.2.npz")
 
 N_WORKERS = min(int(os.environ.get("SLURM_CPUS_PER_TASK", 32)), BATCH_SIZE)
 print(f"Using {N_WORKERS} parallel workers")
@@ -645,6 +646,34 @@ class PEDSModel(nnx.Module):
             log_xs = (log_xs - log_xs_mean) / log_xs_std
         return log_xs
 
+    def _normalize_chi(self, xs_final: jnp.ndarray, xs_baselines: jnp.ndarray) -> jnp.ndarray:
+        """
+        Enforce chi normalization per region:
+          - fissile regions: sum_g chi_g = 1
+          - non-fissile regions: chi_g = 0 for all g
+
+        Works for any number of energy groups G.
+        """
+        lay = xs_layout(self.G)
+        chi_sl = lay['chi']
+        nuf_sl = lay['nuSigma_f']
+        eps = 1e-12
+
+        chi = jnp.maximum(xs_final[:, :, chi_sl], 0.0)
+        chi_sum = jnp.sum(chi, axis=-1, keepdims=True)
+        chi_norm = chi / jnp.where(chi_sum > eps, chi_sum, 1.0)
+
+        base_chi = jnp.maximum(xs_baselines[:, :, chi_sl], 0.0)
+        base_sum = jnp.sum(base_chi, axis=-1, keepdims=True)
+        base_norm = base_chi / jnp.where(base_sum > eps, base_sum, 1.0)
+        uniform = jnp.ones_like(base_chi) / float(self.G)
+        chi_fallback = jnp.where(base_sum > eps, base_norm, uniform)
+
+        fissile = jnp.sum(jnp.maximum(xs_baselines[:, :, nuf_sl], 0.0), axis=-1, keepdims=True) > eps
+        chi_final = jnp.where(fissile, jnp.where(chi_sum > eps, chi_norm, chi_fallback), jnp.zeros_like(chi))
+
+        return xs_final.at[:, :, chi_sl].set(chi_final)
+
     def compute_xs(self, geoms, xs_baselines, phi_norm,
                              log_xs_mean=None, log_xs_std=None):
         """Pure NN forward (no grad). Used for pre-solving and validation."""
@@ -656,6 +685,7 @@ class PEDSModel(nnx.Module):
         # ── v1: NO clip, NO warmup ─────────────────────────────────────────
         log_ratios = clip_ste(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)  # now consistent
         xs_final = jnp.exp(log_ratios) * xs_baselines * XS_MASK_J
+        #xs_final = self._normalize_chi(xs_final, xs_baselines)
         return np.array(xs_final)  # concrete numpy, exits JAX world
         
     def compute_log_ratios(self, geoms, xs_baselines, phi_norm,
@@ -677,6 +707,7 @@ class PEDSModel(nnx.Module):
         log_ratios = clip_ste(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)  # exp(±0.7) ≈ 0.5x to 2x
 
         xs_final = jnp.exp(log_ratios) * xs_baselines * XS_MASK_J # [batch, 3, 12]
+        #xs_final = self._normalize_chi(xs_final, xs_baselines)
 
         # Single batched forward+backward call — replaces the per-sample loop.
         # _NT_batch_fwd retrieves from _PRESOLVE_CACHE (no repeated eigen-solve);
@@ -810,6 +841,64 @@ def _save_split_cache(cache_path, train_idx, val_idx, test_idx, metadata):
         pickle.dump(payload, f)
 
 
+def _as_1d_int_indices(indices, name):
+    """Normalize cached index containers to a flat integer NumPy array."""
+    arr = np.asarray(indices, dtype=np.int64).reshape(-1)
+    if arr.ndim != 1:
+        raise ValueError(f"{name} must be 1D, got shape {arr.shape}")
+    return arr
+
+
+def _validate_split_indices(train_idx, val_idx, test_idx,
+                            dataset_size, expected_train=None, expected_val=None,
+                            expected_test=None, context="split"):
+    """
+    Ensure cached/derived splits are safe to use:
+      - correct lengths (when expected_* provided)
+      - all indices in bounds
+      - no duplicates within each set
+      - train/val/test are mutually disjoint
+    Returns normalized int64 arrays.
+    """
+    if dataset_size is None or int(dataset_size) <= 0:
+        raise ValueError(f"[{context}] invalid dataset_size={dataset_size}")
+    dataset_size = int(dataset_size)
+
+    train_idx = _as_1d_int_indices(train_idx, "train_idx")
+    val_idx   = _as_1d_int_indices(val_idx, "val_idx")
+    test_idx  = _as_1d_int_indices(test_idx, "test_idx")
+
+    if expected_train is not None and len(train_idx) != int(expected_train):
+        raise ValueError(
+            f"[{context}] train length mismatch: expected {int(expected_train)}, got {len(train_idx)}"
+        )
+    if expected_val is not None and len(val_idx) != int(expected_val):
+        raise ValueError(
+            f"[{context}] val length mismatch: expected {int(expected_val)}, got {len(val_idx)}"
+        )
+    if expected_test is not None and len(test_idx) != int(expected_test):
+        raise ValueError(
+            f"[{context}] test length mismatch: expected {int(expected_test)}, got {len(test_idx)}"
+        )
+
+    for name, arr in (("train", train_idx), ("val", val_idx), ("test", test_idx)):
+        if arr.size and (arr.min() < 0 or arr.max() >= dataset_size):
+            raise ValueError(
+                f"[{context}] {name} indices out of bounds for dataset_size={dataset_size}"
+            )
+        if np.unique(arr).size != arr.size:
+            raise ValueError(f"[{context}] duplicate indices inside {name} split")
+
+    if np.intersect1d(train_idx, val_idx).size:
+        raise ValueError(f"[{context}] train/val overlap detected")
+    if np.intersect1d(train_idx, test_idx).size:
+        raise ValueError(f"[{context}] train/test overlap detected")
+    if np.intersect1d(val_idx, test_idx).size:
+        raise ValueError(f"[{context}] val/test overlap detected")
+
+    return train_idx, val_idx, test_idx
+
+
 def _find_largest_smaller_cache(cache_dir, train_seed, holdout_seed, val_size, test_size, train_size):
     """Find the largest cached train_size < current request."""
     pattern = os.path.join(cache_dir, f"split_t*_ts{train_seed}_hs{holdout_seed}_v{val_size}_t{test_size}.pkl")
@@ -821,7 +910,8 @@ def _find_largest_smaller_cache(cache_dir, train_seed, holdout_seed, val_size, t
         try:
             parts = fname.split("_")
             t_val = int(parts[1][1:])  
-            candidates.append((t_val, fpath))
+            if t_val < train_size:
+                candidates.append((t_val, fpath))
         except:
             continue
     
@@ -852,6 +942,10 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
     
     data = np.load(filepath, allow_pickle=True)
     current_dataset_size = len(data['params'])
+    print(f"  Split request: train={train_size}, val={val_size}, test={test_size}, "
+          f"train_seed={train_seed}, holdout_seed={holdout_seed}, "
+          f"dataset_size={current_dataset_size}")
+    print(f"  Split cache: {cache_path}")
     
     # ── Try to load EXACT cache ──────────────────────────────────────────────
     if os.path.exists(cache_path):
@@ -873,12 +967,33 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
                 # Dataset unchanged: reuse exactly
                 if current_dataset_size == old_dataset_size:
                     if meta.get("train_size") == train_size:
+                        old_train_idx, old_val_idx, old_test_idx = _validate_split_indices(
+                            old_train_idx, old_val_idx, old_test_idx,
+                            dataset_size=current_dataset_size,
+                            expected_train=train_size,
+                            expected_val=val_size,
+                            expected_test=test_size,
+                            context="exact cache"
+                        )
                         print(f"  [cache hit] reusing {len(old_train_idx)} train, "
                               f"{len(old_val_idx)} val, {len(old_test_idx)} test samples")
                         return old_train_idx, old_val_idx, old_test_idx
                 
                 # Dataset grew: extend training set
                 if current_dataset_size > old_dataset_size:
+                    old_train_idx, old_val_idx, old_test_idx = _validate_split_indices(
+                        old_train_idx, old_val_idx, old_test_idx,
+                        dataset_size=old_dataset_size,
+                        expected_train=meta.get("train_size"),
+                        expected_val=val_size,
+                        expected_test=test_size,
+                        context="exact cache / dataset grew"
+                    )
+                    if len(old_train_idx) > train_size:
+                        raise ValueError(
+                            f"Cached train split ({len(old_train_idx)}) is larger than "
+                            f"requested train_size={train_size}"
+                        )
                     print(f"  [cache hit, dataset grew] {old_dataset_size} → {current_dataset_size} samples")
                     print(f"    extending train from {len(old_train_idx)} to {train_size}…")
                     
@@ -899,6 +1014,14 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
                     train_idx = np.concatenate([old_train_idx, new_indices])
                     val_idx   = old_val_idx
                     test_idx  = old_test_idx
+                    train_idx, val_idx, test_idx = _validate_split_indices(
+                        train_idx, val_idx, test_idx,
+                        dataset_size=current_dataset_size,
+                        expected_train=train_size,
+                        expected_val=val_size,
+                        expected_test=test_size,
+                        context="extended exact cache"
+                    )
                     
                     meta["dataset_size"] = current_dataset_size
                     meta["train_size"] = train_size
@@ -925,6 +1048,19 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
             old_val_idx   = cache["val_idx"]
             old_test_idx  = cache["test_idx"]
             old_dataset_size = meta.get("dataset_size")
+            old_train_idx, old_val_idx, old_test_idx = _validate_split_indices(
+                old_train_idx, old_val_idx, old_test_idx,
+                dataset_size=old_dataset_size,
+                expected_train=prev_train_size,
+                expected_val=val_size,
+                expected_test=test_size,
+                context="fallback cache"
+            )
+            if len(old_train_idx) > train_size:
+                raise ValueError(
+                    f"Fallback cached train split ({len(old_train_idx)}) is larger than "
+                    f"requested train_size={train_size}"
+                )
 
             old_all = np.union1d(old_train_idx, np.union1d(old_val_idx, old_test_idx))
             new_pool = np.setdiff1d(np.arange(current_dataset_size), old_all)
@@ -943,6 +1079,14 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
             train_idx = np.concatenate([old_train_idx, new_indices])
             val_idx   = old_val_idx
             test_idx  = old_test_idx
+            train_idx, val_idx, test_idx = _validate_split_indices(
+                train_idx, val_idx, test_idx,
+                dataset_size=current_dataset_size,
+                expected_train=train_size,
+                expected_val=val_size,
+                expected_test=test_size,
+                context="extended fallback cache"
+            )
 
             meta["dataset_size"] = current_dataset_size
             meta["train_size"]   = train_size
@@ -957,6 +1101,14 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
     print(f"  [cache miss] computing new splits (train_seed={train_seed})…")
     train_idx, val_idx, test_idx = derive_split_indices(
         filepath, train_size, val_size, test_size, train_seed, holdout_seed
+    )
+    train_idx, val_idx, test_idx = _validate_split_indices(
+        train_idx, val_idx, test_idx,
+        dataset_size=current_dataset_size,
+        expected_train=train_size,
+        expected_val=val_size,
+        expected_test=test_size,
+        context="fresh split"
     )
     
     meta = {
@@ -977,6 +1129,14 @@ def load_data(filepath, train_size, val_size, test_size,
     geoms     = np.array(data['params'],     dtype=np.float32)
     keffs     = np.array(data['keffs'],      dtype=np.float32)
     rawparams = np.array(data['params_raw'], dtype=np.float32)
+    print(f"  Dataset loaded: {filepath}")
+    print(f"  Requested split sizes: train={train_size}, val={val_size}, test={test_size}")
+    print(f"  Split seeds: train_seed={train_seed}, holdout_seed={holdout_seed}")
+    if cache_dir is None:
+        print("  Split cache dir: <default next to dataset>")
+    else:
+        print(f"  Split cache dir: {cache_dir}")
+    print(f"  Dataset samples available: {len(geoms)}")
 
     train_idx, val_idx, test_idx = load_or_create_split_cache(
         filepath, train_size, val_size, test_size, train_seed, holdout_seed, cache_path=cache_dir)
@@ -1457,7 +1617,7 @@ def _save_xs_subplots_for_samples(
 
         # ── per-sample baseline ───────────────────────────────────────────────
         geo_i    = update_geo(GEO, rawparams_all[idx])
-        baseline = np.array(predict_xs(geo_i), dtype=np.float32)   # (3, 12)
+        baseline = np.array(xs_baselines_all[idx], dtype=np.float32)   # (3, 12)
 
         xs_b  = jnp.array(xs_baselines_all[idx:idx+1], dtype=jnp.float32)   # (1,3,12)
         geom  = jnp.array(geoms_all[idx:idx+1],        dtype=jnp.float32)   # (1,6)
@@ -1757,7 +1917,7 @@ def _save_flux_plots(
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 8: Training
 # ─────────────────────────────────────────────────────────────────────────────
-def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max, lr_min,
+def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max, lr_min, decay_epochs,
           hidden_sizes, n_regions, G, seed):
 
     init_csv_logs()
@@ -1800,11 +1960,25 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
     # ── 8.2 Model — v1: plain Adam, constant LR, NO grad clip ────────────────
     rngs      = nnx.Rngs(seed)
     model     = PEDSModel(hidden_sizes=hidden_sizes, n_regions=n_regions, G=G, n_phi_feats=n_phi_feats, rngs=rngs)
-    # cosine decay schedule + grads clipping
-    lr_schedule = optax.cosine_decay_schedule(
+    # Cosine-to-floor up to `decay_epochs`, then hold LR at lr_min.
+    # This decouples LR horizon from total training epochs for sweep studies.
+    if decay_epochs <= 0:
+        raise ValueError(f"decay_epochs must be > 0, got {decay_epochs}")
+    steps_per_epoch = max(int(np.ceil(train_size / batch_size)), 1)
+    decay_steps = int(decay_epochs) * steps_per_epoch
+    cosine_schedule = optax.cosine_decay_schedule(
         init_value=lr_max,
-        decay_steps=epochs * (train_size // batch_size),
+        decay_steps=decay_steps,
         alpha=lr_min / lr_max,   # final lr = lr_max * alpha = lr_min
+    )
+    hold_schedule = optax.constant_schedule(lr_min)
+    lr_schedule = optax.join_schedules(
+        schedules=[cosine_schedule, hold_schedule],
+        boundaries=[decay_steps],
+    )
+    print(
+        "LR schedule: cosine decay for "
+        f"{decay_epochs} epochs ({decay_steps} steps), then hold at {lr_min:.2e}"
     )
     optimizer = nnx.Optimizer(
         model,
@@ -1911,6 +2085,8 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
     # the warm-up bias from an arbitrary starting point is entirely avoided.
     EMA_ALPHA     = 0.15
     MIN_SAVE_EPOCH = 20   # don't save before the model has passed early oscillations
+    PATIENCE = 25  # epochs without EMA improvement before stopping
+    epochs_since_improvement = 0
     ema_val_mean_pcm = None   # will be set at end of epoch 1
     train_shuffle_rng = np.random.default_rng(seed)
 
@@ -2050,7 +2226,9 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
                                     "G": G, "n_phi_feats": n_phi_feats})
             print(f"  ✓ new best val_mean_pcm = {best_val_mean_pcm:.1f} pcm "
                 f"(epoch {epoch}) — saved → {BEST_CKPT_PATH}")
-
+            epochs_since_improvement = 0
+        elif epoch >= MIN_SAVE_EPOCH:
+            epochs_since_improvement += 1
         # ── per-sample CSV ───────────────────────────────────────────────────
         log_keff_batch(val_writer, val_logfile, epoch, kp_val, kr_val,
                        train_m["mse_k"], val_m["mse_k"])
@@ -2104,7 +2282,10 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
                 model               = model,
                 epoch               = epoch,
             )
-
+        if epoch >= MIN_SAVE_EPOCH and epochs_since_improvement >= PATIENCE:
+            print(f"Early stopping at epoch {epoch}: no EMA improvement for {PATIENCE} epochs "
+                f"(best={best_val_mean_pcm:.1f} pcm at epoch {best_epoch})")
+            break
         if epoch % 20 == 0:
             jax.clear_caches()
 
@@ -2114,6 +2295,11 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
                     metadata={"epoch": epochs, "val_mean_pcm": val_m["mean_pcm"]})
     print(f"Saved last-epoch checkpoint (model+optimizer) → {LAST_CKPT_PATH}")
     print(f"Best epoch was {best_epoch}  (val_mean_pcm = {best_val_mean_pcm:.1f} pcm)  → {BEST_CKPT_PATH}")
+    
+    best_state, best_meta = load_checkpoint(BEST_CKPT_PATH)
+    nnx.update(model, best_state)
+    print(f"Loaded best checkpoint from epoch {best_meta['epoch']} "
+        f"(val_mean_pcm={best_meta['val_mean_pcm']:.1f}) for final evaluation.")
 
     # --- Save final-epoch XS for all train and val samples ---
     save_final_xs_csv(
@@ -2240,13 +2426,17 @@ if __name__ == "__main__":
             batch_size  = BATCH_SIZE,
             epochs      = EPOCHS,
             lr_max        = LR_max,   # cosine schedule peak learning rate
-            lr_min        = LR_min,        
+            lr_min        = LR_min,
+            decay_epochs  = DECAY_EPOCHS,
             hidden_sizes= [128, 256, 128],
             n_regions   = 3,
             G           = 2,
             seed        = SEED,
         )
-        print(f"Starting PEDS training with train size = {TRAIN_SIZE} and seed = {SEED}…")
+        print(
+            f"Starting PEDS training with train size = {TRAIN_SIZE}, "
+            f"seed = {SEED}, decay_epochs = {DECAY_EPOCHS}…"
+        )
         model, history = train(**HP)
         print("\nDone.")
         print(f"  Final val mean |Δρ|   : {history['val_mean_pcm'][-1]:.1f} pcm")
