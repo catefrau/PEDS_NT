@@ -33,12 +33,13 @@ warnings.filterwarnings("ignore")
 # 0.  CONFIGURATION  — adjust paths here
 # ──────────────────────────────────────────────
 
-project_name = "v10_wloss"
-LOG_PATH = f"../LOGS/{project_name}/keff_epoch_log_val.csv"
+project_name = "train_500"
+LOG_PATH = f"../LOGS_trainsize_study/train_500_seeds/{project_name}/keff_epoch_log_val.csv"
+SCATTER_PATH = f"../LOGS_trainsize_study/train_500_seeds/{project_name}/metrics_plot/keff_scatter_val.png"
+PARALLEL_PATH = f"../LOGS_trainsize_study/train_500_seeds/{project_name}/metrics_plot/peds_parallel_coords.png"
 
 FULL_PATH = "../FILES/1000_clean.csv"
-#PARALLEL_PATH = f"../LOGS/{project_name}/metrics_plot/peds_parallel_coords.png"
-#SCATTER_PATH = f"../LOGS/{project_name}/metrics_plot/peds_keff_scatter_final.png"
+
 MATCH_TOL = 1e-5                        # keff tolerance for backtrace matching
 
 PARAMS = [

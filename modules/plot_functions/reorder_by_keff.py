@@ -11,8 +11,8 @@ and remap all rows to a consistent stable_idx.
 Usage
 -----
     python reorder_by_keff.py \
-        --input  ../LOGS/v5_cleanDS/keff_epoch_log_train.csv \
-        --output ../LOGS/v5_cleanDS/keff_epoch_log_train_stable.csv
+        --input  ../LOGS/baseline/keff_epoch_log_train.csv \
+        --output ../LOGS/baseline/keff_epoch_log_train_stable.csv
 
 Or import and call reorder_csv() directly.
 """

@@ -1,1 +1,0 @@
-epoch,sample_idx,keff_openmc,keff_peds,delta_rho_pcm,train_loss,val_loss

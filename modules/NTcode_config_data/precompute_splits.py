@@ -35,8 +35,8 @@ from PEDS import derive_split_indices, _save_split_cache
 
 # ── CONFIGURATION: defaults (can be overridden via command line) ──────────────
 SEED_LIST = [0, 1, 2, 3, 4]                              # seeds to precompute
-DEFAULT_DATA_PATH = ("../../data/highfidelity/1000_clean.npz")
-DEFAULT_TRAIN_SIZE = 500
+DEFAULT_DATA_PATH = ("../../data/highfidelity/1082_0.8_1.2.npz")
+DEFAULT_TRAIN_SIZE = 200
 DEFAULT_VAL_SIZE = 100
 DEFAULT_TEST_SIZE = 100
 DEFAULT_HOLDOUT_SEED = 0
@@ -64,6 +64,30 @@ def save_splits_to_csv(train_idx, val_idx, test_idx, train_seed, holdout_seed,
         
     print(f"  ✓ Saved → {csv_path}")
 
+def find_largest_smaller_cache(cache_dir, train_seed, holdout_seed, val_size, test_size):
+    """Find the largest cached train_size < current request in this directory."""
+    import glob
+    pattern = os.path.join(cache_dir, f"split_t*_ts{train_seed}_hs{holdout_seed}_v{val_size}_t{test_size}.pkl")
+    cached_files = glob.glob(pattern)
+    
+    candidates = []
+    for fpath in cached_files:
+        fname = os.path.basename(fpath)
+        # Extract train_size from filename: split_t<N>_ts<seed>_hs<holdout>_v<val>_t<test>.pkl
+        try:
+            parts = fname.split("_")
+            t_val = int(parts[0][1:])  # skip "split_t"
+            candidates.append((t_val, fpath))
+        except:
+            continue
+    
+    if not candidates:
+        return None, None
+    
+    # Return the largest train_size found
+    candidates.sort(reverse=True)
+    return candidates[0][0], candidates[0][1]
+
 
 def precompute_split_for_seed(data_path, train_size, val_size, test_size,
                                train_seed, holdout_seed, cache_dir):
@@ -82,7 +106,7 @@ def precompute_split_for_seed(data_path, train_size, val_size, test_size,
     print(f"  train_size={train_size}, val_size={val_size}, test_size={test_size}")
     print(f"  train_seed={train_seed}, holdout_seed={holdout_seed}")
 
-    # ── Check if cache exists ────────────────────────────────────────────────
+    # ── Check if exact cache exists ──────────────────────────────────────────
     if os.path.exists(cache_path):
         with open(cache_path, "rb") as f:
             cache = pickle.load(f)
@@ -127,8 +151,51 @@ def precompute_split_for_seed(data_path, train_size, val_size, test_size,
             print(f"    Saved → {cache_path}")
             return
 
+    # ── Fallback: look for largest smaller cached train_size ─────────────────
+    prev_train_size, prev_cache_path = find_largest_smaller_cache(
+        cache_dir, train_seed, holdout_seed, val_size, test_size
+    )
+    
+    if prev_cache_path is not None:
+        print(f"  ✓ Found previous cache for train_size={prev_train_size}")
+        print(f"    Extending from {prev_cache_path}")
+        
+        with open(prev_cache_path, "rb") as f:
+            cache = pickle.load(f)
+        meta = cache["metadata"]
+        old_train = cache["train_idx"]
+        old_val   = cache["val_idx"]
+        old_test  = cache["test_idx"]
+        old_ds    = meta.get("dataset_size")
+
+        # Find new samples
+        old_all = np.union1d(old_train, np.union1d(old_val, old_test))
+        new_pool = np.setdiff1d(np.arange(dataset_size), old_all)
+        n_needed = train_size - len(old_train)
+
+        if len(new_pool) < n_needed:
+            raise ValueError(
+                f"Not enough new samples ({len(new_pool)}) to extend train "
+                f"from {len(old_train)} to {train_size} (need {n_needed})"
+            )
+
+        extend_rng = np.random.default_rng(train_seed)
+        extend_rng.shuffle(new_pool)
+        new_indices = new_pool[:n_needed]
+        train_idx = np.concatenate([old_train, new_indices])
+        val_idx   = old_val
+        test_idx  = old_test
+
+        meta["dataset_size"] = dataset_size
+        meta["train_size"]   = train_size
+        _save_split_cache(cache_path, train_idx, val_idx, test_idx, meta)
+        save_splits_to_csv(train_idx, val_idx, test_idx, train_seed, holdout_seed, train_size, val_size, test_size, cache_dir) 
+        print(f"  ✓ Extended train: {len(old_train)} → {len(train_idx)} samples")
+        print(f"    Saved → {cache_path}")
+        return
+
     # ── Compute from scratch ─────────────────────────────────────────────────
-    print(f"  Computing new splits…")
+    print(f"  Computing new splits from scratch…")
     train_idx, val_idx, test_idx = derive_split_indices(
         data_path, train_size, val_size, test_size, train_seed, holdout_seed
     )
@@ -143,9 +210,7 @@ def precompute_split_for_seed(data_path, train_size, val_size, test_size,
     print(f"    train: {len(train_idx)} samples")
     print(f"    val:   {len(val_idx)} samples")
     print(f"    test:  {len(test_idx)} samples")
-    save_splits_to_csv(train_idx, val_idx, test_idx, train_seed, holdout_seed, train_size, val_size, test_size, cache_dir) 
-
-
+    save_splits_to_csv(train_idx, val_idx, test_idx, train_seed, holdout_seed, train_size, val_size, test_size, cache_dir)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

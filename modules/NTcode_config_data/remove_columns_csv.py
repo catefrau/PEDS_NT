@@ -1,6 +1,7 @@
 import pandas as pd
 
-csv_path = "../FILES/26june.csv"
+filename = "LHS_full_dataset"
+csv_path = f"../FILES/{filename}.csv"
 
 keep_cols = [
     "geometry",
@@ -62,7 +63,7 @@ existing_cols = [col for col in keep_cols if col in df.columns]
 df = df[existing_cols]
 
 # Save cleaned file
-output_path = "../FILES/26june_trimmed.csv"
+output_path = f"../FILES/{filename}_trimmed.csv"
 df.to_csv(output_path, index=False)
 
 print("Saved cleaned file to:", output_path)

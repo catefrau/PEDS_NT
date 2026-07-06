@@ -7,10 +7,11 @@ from matplotlib.ticker import MaxNLocator
 from pathlib import Path
 
 
-project_name = "v10_wloss"
+project_name = "baseline"
 csv_path_val = f"../LOGS/{project_name}/keff_epoch_log_val.csv"
 rhodiff_path_val = f"../LOGS/{project_name}/metrics_plot/keff_pcm_evolution_val.png"
-hist_path_val = f"../LOGS/{project_name}/metrics_plot/loss_histogram_val.png"
+hist_path_val_last = f"../LOGS/{project_name}/metrics_plot/hist_val_last.png"
+hist_path_val_first = f"../LOGS/{project_name}/metrics_plot/hist_val_first.png"
 scatt_path_val = f"../LOGS/{project_name}/metrics_plot/keff_scatter_val.png"
 
 csv_path_train = f"../LOGS/{project_name}/keff_epoch_log_train.csv"
@@ -18,13 +19,24 @@ rhodiff_path_train = f"../LOGS/{project_name}/metrics_plot/keff_pcm_evolution_tr
 hist_path_train = f"../LOGS/{project_name}/metrics_plot/loss_histogram_train.png"
 scatt_path_train = f"../LOGS/{project_name}/metrics_plot/keff_scatter_train.png"
 
-def plot_keff_pcm(log_path, save_path):
+""" project_name = "train_500"
+csv_path_val = f"../LOGS_trainsize_study/train_500_seeds/{project_name}/keff_epoch_log_val.csv"
+rhodiff_path_val = f"../LOGS_trainsize_study/train_500_seeds/{project_name}/metrics_plot/keff_pcm_evolution_val.png"
+hist_path_val = f"../LOGS_trainsize_study/train_500_seeds/{project_name}/metrics_plot/loss_histogram_val.png"
+scatt_path_val = f"../LOGS_trainsize_study/train_500_seeds/{project_name}/metrics_plot/keff_scatter_val.png"
+
+csv_path_train = f"../LOGS_trainsize_study/train_500_seeds/{project_name}/keff_epoch_log_train.csv"
+rhodiff_path_train = f"../LOGS_trainsize_study/train_500_seeds/{project_name}/metrics_plot/keff_pcm_evolution_train.png"
+hist_path_train = f"../LOGS_trainsize_study/train_500_seeds/{project_name}/metrics_plot/loss_histogram_train.png"
+scatt_path_train = f"../LOGS_trainsize_study/train_500_seeds/{project_name}/metrics_plot/keff_scatter_train.png" """
+
+def plot_keff_pcm_old(log_path, save_path):
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(log_path)
     epoch_stats = df.groupby("epoch")["delta_rho_pcm"].agg(["mean","min","max"]).reset_index()
-    samples = sorted(df["sample_idx"].unique()) #[-20:]
+    samples = sorted(df["sample_idx"].unique()) [20:40]
     kref_map = {s: df[df["sample_idx"]==s]["keff_openmc"].iloc[0] for s in samples}
     print(f"Samples number: {len(samples)}")
     plt.style.use("default")
@@ -34,7 +46,7 @@ def plot_keff_pcm(log_path, save_path):
     legend_row_height = 0.22                           # inches per legend row
     legend_height = n_legend_rows * legend_row_height + 0.4  # total legend area in inches
 
-    plot_w   = 18.0    # fixed plot width  (inches)
+    plot_w   = 15.0    # fixed plot width  (inches)
     plot_h   = 7.0     # fixed plot height (inches) — NEVER changes
     fig_h    = plot_h + legend_height   # figure grows downward
 
@@ -44,7 +56,7 @@ def plot_keff_pcm(log_path, save_path):
     top_margin   = 0.08               # fraction of fig height for title
     plot_frac    = plot_h / fig_h     # fraction the plot occupies
 
-    ax = fig.add_axes([0.06,                         # left
+    ax = fig.add_axes([0.10,                        # left
                     legend_height / fig_h + 0.05, # bottom — above the legend zone
                     0.91,                          # width
                     plot_frac - top_margin])       # height
@@ -89,69 +101,208 @@ def plot_keff_pcm(log_path, save_path):
     plt.close()
     print(f"Plot saved to {save_path}")
 
+
+def plot_keff_pcm(log_path, save_path):
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    df = pd.read_csv(log_path)
+    epoch_stats = df.groupby("epoch")["delta_rho_pcm"].agg(["mean", "min", "max"]).reset_index()
+    samples = sorted(df["sample_idx"].unique())[20:40]
+    kref_map = {s: df[df["sample_idx"] == s]["keff_openmc"].iloc[0] for s in samples}
+
+    plt.style.use("default")
+
+    n_legend_rows = int(np.ceil(len(samples) / 5))
+    legend_row_height = 0.28
+    legend_height = n_legend_rows * legend_row_height + 0.55
+
+    plot_w = 13.0
+    plot_h = 6.0
+    fig_h = plot_h + legend_height
+
+    fig = plt.figure(figsize=(plot_w, fig_h))
+
+    ax = fig.add_axes([
+        0.10,                           # left
+        legend_height / fig_h + 0.08,  # bottom
+        0.82,                           # width
+        plot_h / fig_h - 0.10           # height
+    ])
+
+    cmap = plt.cm.get_cmap("tab10", len(samples))
+
+    for i, s in enumerate(samples):
+        color = cmap(i)
+        sub = df[df["sample_idx"] == s].sort_values("epoch")
+        ax.plot(
+            sub["epoch"], sub["delta_rho_pcm"],
+            color=color, linewidth=1.6,
+            marker="o", markersize=3.5, alpha=0.75,
+            label=f"S{s}  k={kref_map[s]:.3f}"
+        )
+
+    final_mean_rho = epoch_stats["mean"].iloc[-1]
+    ax.plot(
+        epoch_stats["epoch"], epoch_stats["mean"],
+        color="black", linewidth=2.5,
+        linestyle="--", marker="D", markersize=6,
+        label=f"Mean (final: {final_mean_rho:.1f} pcm)"
+    )
+
+    beta_eff_pcm = 650
+    ax.axhline(
+        y=beta_eff_pcm, color="#00008B", linewidth=1.8,
+        linestyle=(0, (5, 3)))
+
+    ax.text(
+        x=ax.get_xlim()[1], y=beta_eff_pcm + 60,
+        s=f"β_eff = {beta_eff_pcm} pcm",
+        color="#00008B", fontsize=11, ha="right"
+    )
+
+    ax.set_xlabel("Epoch", fontsize=16)
+    ax.set_ylabel(r"Reactivity difference (pcm)", fontsize=16)
+    # ax.set_title(...)   # remove for thesis/publication figure
+
+    ax.tick_params(axis="both", labelsize=14)
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=12, integer=True))
+    ax.grid(True, alpha=0.15)
+    ax.set_yscale("log")
+
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.14),
+        borderaxespad=0,
+        fontsize=11,
+        framealpha=0.35,
+        ncol=6
+    )
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
 def plot_loss_histogram(
     log_path,
     save_path="../LOGS/loss_histogram_final_epoch.png",
-    n_bins=20
-):
+    epoch = None,
+    n_bins=30):
+    from pathlib import Path
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
+
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
     df = pd.read_csv(log_path)
 
-    # Snapshot at the last epoch
-    final_epoch = df["epoch"].max()
-    df_final = df[df["epoch"] == final_epoch].copy()
+    if epoch is None:
+        epoch_label = "last"
+        epoch_value = df["epoch"].max()
+    elif epoch == "first":
+        epoch_label = "first"
+        epoch_value = df["epoch"].min()
+    elif epoch == "last":
+        epoch_label = "last"
+        epoch_value = df["epoch"].max()
+    elif isinstance(epoch, (int, np.integer)):
+        epoch_label = f"epoch {epoch}"
+        epoch_value = epoch
+    else:
+        raise ValueError(
+            f"Invalid epoch: {epoch}. Must be 'first', 'last', or a specific epoch number."
+        )
 
-    # Use absolute value of delta_rho_pcm so bins go left (small error) to right (large)
-    df_final["abs_delta_rho"] = df_final["delta_rho_pcm"].abs()
+    df_epoch = df[df["epoch"] == epoch_value].copy()
 
-    # Color map: blue=low keff, red=high keff
-    keff_vals = df_final["keff_openmc"].values
+    # Absolute reactivity error
+    df_epoch["abs_delta_rho"] = df_epoch["delta_rho_pcm"].abs()
+
+    # Color map: blue = low keff, red = high keff
+    keff_vals = df_epoch["keff_openmc"].values
     norm = plt.Normalize(vmin=keff_vals.min(), vmax=keff_vals.max())
     cmap = plt.cm.get_cmap("coolwarm")
 
-    # Build bins manually so we can color each sample individually
-    bin_edges = np.linspace(df_final["abs_delta_rho"].min(),
-                            df_final["abs_delta_rho"].max(), n_bins + 1)
-    df_final["bin"] = pd.cut(df_final["abs_delta_rho"], bins=bin_edges, include_lowest=True)
+    # Tighter bins for better resolution near small errors
+    x_min = 0.0
+    x_max = float(df_epoch["abs_delta_rho"].max())
+    bin_edges = np.linspace(x_min, x_max, n_bins + 1)
 
-    fig, ax = plt.subplots(figsize=(11, 5.5))
+    df_epoch["bin"] = pd.cut(
+        df_epoch["abs_delta_rho"],
+        bins=bin_edges,
+        include_lowest=True
+    )
 
-    # For each bin, stack one rectangle per sample inside it
-    for bin_interval, group in df_final.groupby("bin", observed=True):
-        # Sort by keff so colors are ordered nicely within the stack
+    fig, ax = plt.subplots(figsize=(10.5, 5.8))
+
+    # Draw stacked bars per bin, colored by keff
+    for bin_interval, group in df_epoch.groupby("bin", observed=True):
         group = group.sort_values("keff_openmc")
         x_center = (bin_interval.left + bin_interval.right) / 2
-        bar_width = (bin_edges[1] - bin_edges[0]) * 0.85
+        bar_width = (bin_edges[1] - bin_edges[0]) * 0.88
 
         for stack_pos, (_, row) in enumerate(group.iterrows()):
             color = cmap(norm(row["keff_openmc"]))
-            ax.bar(x_center, 1, bottom=stack_pos,
-                   width=bar_width, color=color,
-                   edgecolor="white", linewidth=0.4, alpha=0.88)
-            # Label sample index inside the bar if bar is tall enough
-            ax.text(x_center, stack_pos + 0.5, f"S{int(row['sample_idx'])}",
-                    ha="center", va="center", fontsize=5.5, color="white", fontweight="bold")
+            ax.bar(
+                x_center,
+                1,
+                bottom=stack_pos,
+                width=bar_width,
+                color=color,
+                edgecolor="white",
+                linewidth=0.35,
+                alpha=0.92
+            )
 
     # Colorbar
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cbar = plt.colorbar(sm, ax=ax, pad=0.01)
-    cbar.set_label("k_eff (OpenMC)", fontsize=11)
+    cbar = plt.colorbar(sm, ax=ax, pad=0.015)
+    cbar.set_label(r"$k_{\mathrm{eff}}$ (OpenMC)", fontsize=16)
+    cbar.ax.tick_params(labelsize=15)
 
-    # β_eff reference line (convert to pcm on x axis)
+    # Reference lines
     beta_eff_pcm = 650
-    ax.axvline(x=beta_eff_pcm, color="#00008B", linewidth=1.8,
-               linestyle=(0, (5, 3)), label=f"β_eff = {beta_eff_pcm} pcm")
+    ax.axvline(
+        x=beta_eff_pcm,
+        color="#00008B",
+        linewidth=1.8,
+        linestyle=(0, (5, 3)),
+        label=r"$\beta_{\mathrm{eff}} = 650$ pcm"
+    )
 
-    ax.set_xlabel("|Δρ| at Final Epoch (pcm)", fontsize=12)
-    ax.set_ylabel("Number of Samples", fontsize=12)
-    ax.set_title(f"Distribution of Reactivity Error at Final Epoch ({final_epoch})", fontsize=13)
-    ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    ax.grid(True, alpha=0.15, axis="x")
-    ax.legend(fontsize=10, framealpha=0.3)
+    ax.axvline(
+        x=100,
+        color="black",
+        linewidth=1.6,
+        linestyle=":",
+        label=r"$100$ pcm"
+    )
+
+    # Labels and formatting
+    if epoch_label == "first":
+        ax.set_xlabel(f"Distribution of reactivity difference at first epoch (pcm)", fontsize=16)
+    elif epoch_label == "last":
+        ax.set_xlabel(f"Distribution of reactivity difference at final epoch ({epoch_value}) (pcm)", fontsize=16)
+    else:
+        ax.set_xlabel(f"Distribution of reactivity difference at epoch {epoch_value} (pcm)", fontsize=16)
+    ax.set_ylabel("Number of samples", fontsize=16)
+    ax.tick_params(axis="both", labelsize=15)
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+
+    ax.grid(True, axis="x", alpha=0.18)
+    ax.grid(False, axis="y")
+
+    ax.set_xlim(0, x_max * 1.02)
+
+    ax.legend(fontsize=16, framealpha=0.35, loc="upper right")
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
+
     print(f"Histogram saved to {save_path}")
 
 
@@ -267,7 +418,8 @@ if __name__ == "__main__":
     print("Generating keff evolution plot...")
     plot_keff_pcm(csv_path_val, rhodiff_path_val)
     #plot_loss_from_csv(log_path)
-    plot_loss_histogram(csv_path_val, hist_path_val)
+    plot_loss_histogram(csv_path_val, hist_path_val_last, epoch="last")
+    plot_loss_histogram(csv_path_val, hist_path_val_first, epoch="first")
     plot_keff_scatter(csv_path_val, scatt_path_val)
 
     plot_keff_pcm(csv_path_train, rhodiff_path_train)

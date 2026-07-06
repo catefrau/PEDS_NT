@@ -21,6 +21,7 @@ __pycache__/
 *.log
 *.txt
 *.sh
+*.pkl
 
 # Generated experiment outputs
 experiments/coding/figures/
@@ -30,10 +31,9 @@ experiments/coding/curves/
 experiments/coding/results/
 modules/fullcode_perp.py
 modules/NThelper.py
-modules/LOGS/plots_tokeep
-modules/LOGS/fluxes_plots
-modules/LOGS/geometry_plots
-modules/LOGS/
+modules/RUNS/
+modules/density_report/
+mpdules/slurm_logs/
 
 reg_and_data/inputs/heter_regre_files/
 reg_and_data/inputs/HOM/
