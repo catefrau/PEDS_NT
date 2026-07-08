@@ -13,21 +13,20 @@ of test-set metrics to a single aggregate CSV. The row identifier is the
 "train_<N>/seed_<S>" folder path, exactly as requested.
 
 Two things are cached to disk to avoid repeating expensive physics solves:
-  1. The TEST set itself (geoms/keffs/rawparams/phi_features) — built once,
-     reused for every run, since it never changes.
-  2. The per-(train_size, seed) normalization stats (phi_mean/std and
-     log_xs_mean/std) — these depend on which samples ended up in THAT
-     run's training set, so they're cached per (train_size, seed) pair
-     the first time they're needed and reused on any later script run.
+  1. The TEST set itself (geoms/keffs/rawparams/phi_features) — keyed by split
+     signature and snapshot hash so different training code versions do not mix.
+  2. The per-(train_size, seed, snapshot) normalization stats (phi_mean/std and
+     log_xs_mean/std) — cached per run snapshot the first time they're needed.
+
+Each run is evaluated with its own code_snapshot_*.py (same code used at train
+time), so changes to modules/PEDS.py do not affect aggregate metrics. Use
+--use-current-peds to force the live PEDS.py instead.
 
 USAGE
 -----
     python evaluate_test_metrics.py /path/to/LOGS
     python evaluate_test_metrics.py /path/to/LOGS --out my_summary.csv
-
-Before running, edit the TODO below:
- sys.path.insert(...) — point this at the folder containing your
-     training script.
+    python evaluate_test_metrics.py /path/to/LOGS --use-current-peds
 =========================================================================
 """
 import os
@@ -37,38 +36,150 @@ import glob
 import pickle
 import csv
 import hashlib
+import importlib.util
+import types
+from typing import Optional
 import pandas as pd
 import matplotlib.pyplot as plt
+import argparse
 
 import numpy as np
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from PEDS import (
-    GEO,
-    PEDSModel,
-    _run_NT_solver,
-    compute_phi_features,
-    compute_batch_baselines,
-    compute_metrics,
-    data_loader,
-    _DATA_FILEPATH,
-)
+
+# Fallback when a run folder has no code_snapshot_*.py (imported lazily in get_run_eval_context)
+from PEDS import _DATA_FILEPATH as _DEFAULT_DATA_FILEPATH
+
+MODULES_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(MODULES_DIR)
 
 # ── CONFIG: edit these paths once, here ────────────────────────────────────
-LOGS_ROOT = "RUNS/study_LHS_0.8_bounds"
+#"RUNS/bounds1000_70decayepochs"
 OUTPUT_DIRNAME = "testset_results"
 OUTPUT_FILENAME = "test_metrics_all_runs.csv"
 
 # Dataset path used to load arrays for evaluation.
 # Set to None to auto-detect from each run's code_snapshot_*.py.
-# Set to an explicit path (e.g. "../data/highfidelity/merged_lhs_0.8_1.2.npz")
 # to force every run to use the same file regardless of what the snapshot says.
 DATA_FILEPATH_OVERRIDE = None
+
+# If True, ignore per-run code_snapshot_*.py and use current modules/PEDS.py.
+USE_CURRENT_PEDS = False
 
 RUN_PATTERN = re.compile(r"^train_(\d+)_seed_(\d+)$")
 SNAPSHOT_DATA_RE = re.compile(r'_DATA_FILEPATH\s*=\s*os\.path\.join\([^)]*\)\s*$|_DATA_FILEPATH\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
 EVAL_BATCH_SIZE = 32
+
+_SNAPSHOT_MODULE_CACHE: dict[str, types.ModuleType] = {}
+
+
+class RunEvalContext:
+    """Symbols needed for test evaluation, loaded from a run's training snapshot."""
+
+    def __init__(self, source: str, snapshot_path: Optional[str], snapshot_hash: str, mod):
+        self.source = source
+        self.snapshot_path = snapshot_path
+        self.snapshot_hash = snapshot_hash
+        self.GEO = mod.GEO
+        self.PEDSModel = mod.PEDSModel
+        self._run_NT_solver = mod._run_NT_solver
+        self.compute_phi_features = mod.compute_phi_features
+        self.compute_batch_baselines = mod.compute_batch_baselines
+        self.compute_metrics = mod.compute_metrics
+        self.data_loader = mod.data_loader
+        self.LOG_RATIO_CLIP_LO = getattr(mod, "LOG_RATIO_CLIP_LO", None)
+        self.LOG_RATIO_CLIP_HI = getattr(mod, "LOG_RATIO_CLIP_HI", None)
+
+
+def _snapshot_hash(snapshot_path: str) -> str:
+    h = hashlib.sha1()
+    with open(snapshot_path, "rb") as f:
+        while True:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _find_snapshot_path(run_dir: str) -> Optional[str]:
+    snapshots = sorted(glob.glob(os.path.join(run_dir, "code_snapshot_*.py")))
+    return snapshots[0] if snapshots else None
+
+
+def load_snapshot_module(snapshot_path: str) -> types.ModuleType:
+    """
+    Import the run's code_snapshot_*.py as an isolated module.
+
+    Snapshots saved into run folders would otherwise set THIS_DIR to that folder
+    and break PARENT_DIR / data paths. Patch THIS_DIR to modules/ so paths match
+    training-time layout (modules/PEDS.py).
+    """
+    snapshot_path = os.path.abspath(snapshot_path)
+    if snapshot_path in _SNAPSHOT_MODULE_CACHE:
+        return _SNAPSHOT_MODULE_CACHE[snapshot_path]
+
+    with open(snapshot_path, encoding="utf-8") as f:
+        source = f.read()
+
+    source = source.replace(
+        "THIS_DIR   = os.path.dirname(os.path.abspath(__file__))",
+        f"THIS_DIR   = {repr(MODULES_DIR)}  # patched by evaluate_test_metrics",
+        1,
+    )
+
+    module_name = "peds_eval_" + hashlib.sha1(snapshot_path.encode()).hexdigest()[:12]
+    mod = types.ModuleType(module_name)
+    mod.__file__ = snapshot_path
+    mod.__dict__["__name__"] = module_name
+
+    real_makedirs = os.makedirs
+    os.makedirs = lambda *_args, **_kwargs: None
+    try:
+        code = compile(source, snapshot_path, "exec")
+        exec(code, mod.__dict__)  # noqa: S102 — intentional snapshot load
+    finally:
+        os.makedirs = real_makedirs
+
+    _SNAPSHOT_MODULE_CACHE[snapshot_path] = mod
+    return mod
+
+
+def get_run_eval_context(run_dir: str) -> RunEvalContext:
+    """Load evaluation symbols from the run's snapshot, or fall back to PEDS.py."""
+    if USE_CURRENT_PEDS:
+        import PEDS as mod
+        return RunEvalContext(
+            source="current PEDS.py (--use-current-peds)",
+            snapshot_path=None,
+            snapshot_hash="current_peds",
+            mod=mod,
+        )
+
+    snapshot_path = _find_snapshot_path(run_dir)
+    if snapshot_path is None:
+        print("  [warn] no code_snapshot_*.py — falling back to current PEDS.py")
+        import PEDS as mod
+        return RunEvalContext(
+            source="current PEDS.py (no snapshot)",
+            snapshot_path=None,
+            snapshot_hash="current_peds",
+            mod=mod,
+        )
+
+    snap_hash = _snapshot_hash(snapshot_path)
+    mod = load_snapshot_module(snapshot_path)
+    clip_info = ""
+    if hasattr(mod, "LOG_RATIO_CLIP_HI"):
+        clip_info = f", LOG_RATIO_CLIP_HI={mod.LOG_RATIO_CLIP_HI}"
+    print(f"  Eval code: {os.path.basename(snapshot_path)} (hash {snap_hash[:12]}{clip_info})")
+    return RunEvalContext(
+        source=f"snapshot:{os.path.basename(snapshot_path)}",
+        snapshot_path=snapshot_path,
+        snapshot_hash=snap_hash,
+        mod=mod,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -156,14 +267,12 @@ def _detect_data_filepath(run_dir):
             if quoted:
                 # The last quoted token is the filename (e.g. "complete_LHS_2900.npz")
                 filename = quoted[-1]
-                # Resolve: project root is two levels above THIS_DIR (modules/../..)
-                THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-                project_root = os.path.dirname(THIS_DIR)
-                candidate = os.path.join(project_root, "data", "highfidelity", filename)
+                # Resolve: project root is one level above modules/
+                candidate = os.path.join(PROJECT_ROOT, "data", "highfidelity", filename)
                 if os.path.exists(candidate):
                     return candidate
                 # Maybe the snapshot stored a full subpath like "data/highfidelity/x.npz"
-                candidate2 = os.path.join(project_root, filename)
+                candidate2 = os.path.join(PROJECT_ROOT, filename)
                 if os.path.exists(candidate2):
                     return candidate2
 
@@ -185,10 +294,10 @@ def load_dataset_arrays(run_dir=None):
             path = detected
             source = f"snapshot:{os.path.basename(path)}"
         else:
-            path = _DATA_FILEPATH
+            path = _DEFAULT_DATA_FILEPATH
             source = "PEDS default (snapshot not parsed)"
     else:
-        path = _DATA_FILEPATH
+        path = _DEFAULT_DATA_FILEPATH
         source = "PEDS default"
 
     print(f"  Dataset: {path}  [{source}]")
@@ -200,37 +309,39 @@ def load_dataset_arrays(run_dir=None):
     )
 
 
-def get_test_payload(geoms, keffs, rawparams, test_idx, split_source, cache):
+def get_test_payload(geoms, keffs, rawparams, test_idx, split_source, cache, ctx: RunEvalContext):
     """Build test payload from explicit test indices from split_log.csv."""
     sig = _indices_signature(test_idx)
-    if sig in cache:
-        return cache[sig]
+    cache_key = (sig, ctx.snapshot_hash)
+    if cache_key in cache:
+        return cache[cache_key]
 
     print(f"  Building TEST payload from {split_source} ({len(test_idx)} samples)…")
     test_geoms, test_keffs, test_rawparams = geoms[test_idx], keffs[test_idx], rawparams[test_idx]
-    test_phi_features = compute_phi_features(test_rawparams)
+    test_phi_features = ctx.compute_phi_features(test_rawparams)
 
     payload = dict(geoms=test_geoms, keffs=test_keffs, rawparams=test_rawparams,
                     phi_features=test_phi_features,
                     test_idx=test_idx,
                     split_source=split_source,
                     split_signature=sig)
-    cache[sig] = payload
+    cache[cache_key] = payload
     return payload
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Caching: per-(train_size, seed) normalization stats
 # ─────────────────────────────────────────────────────────────────────────────
-def get_or_build_norm_stats(LOGS_ROOT, train_size, seed, rawparams, train_idx):
+def get_or_build_norm_stats(LOGS_ROOT, train_size, seed, rawparams, train_idx, ctx: RunEvalContext):
     split_sig = _indices_signature(train_idx)
     cache_path = os.path.join(
-        LOGS_ROOT, "_evaluation_cache", f"norm_stats_train{train_size}_seed{seed}_{split_sig[:12]}.pkl"
+        LOGS_ROOT, "_evaluation_cache",
+        f"norm_stats_train{train_size}_seed{seed}_{ctx.snapshot_hash[:12]}_{split_sig[:12]}.pkl",
     )
     if os.path.exists(cache_path):
         with open(cache_path, "rb") as f:
             return pickle.load(f)
-    os.makedirs(os.path.dirname(cache_path), exist_ok=True)  # ← this line is missing
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
 
     print(
         f"  Recomputing normalization stats from split_log train indices "
@@ -238,11 +349,11 @@ def get_or_build_norm_stats(LOGS_ROOT, train_size, seed, rawparams, train_idx):
     )
     train_rawparams = rawparams[train_idx]
 
-    train_phi_features = compute_phi_features(train_rawparams)
+    train_phi_features = ctx.compute_phi_features(train_rawparams)
     phi_mean = train_phi_features.mean(axis=0).astype(np.float32)
     phi_std  = (train_phi_features.std(axis=0) + 1e-8).astype(np.float32)
 
-    train_xs_baselines = compute_batch_baselines(train_rawparams, GEO)
+    train_xs_baselines = ctx.compute_batch_baselines(train_rawparams, ctx.GEO)
     xs_np = np.array(train_xs_baselines)
     safe  = np.where(xs_np > 1e-10, xs_np, np.ones_like(xs_np))
     log_train = np.log(safe)
@@ -251,8 +362,7 @@ def get_or_build_norm_stats(LOGS_ROOT, train_size, seed, rawparams, train_idx):
 
     payload = dict(phi_mean=phi_mean, phi_std=phi_std,
                     log_xs_mean=log_xs_mean, log_xs_std=log_xs_std,
-                    split_signature=split_sig)
-    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                    split_signature=split_sig, snapshot_hash=ctx.snapshot_hash)
     with open(cache_path, "wb") as f:
         pickle.dump(payload, f)
     return payload
@@ -267,43 +377,43 @@ def load_checkpoint(ckpt_path):
     return payload["state"], payload.get("metadata", {})
 
 
-def build_model_from_metadata(metadata, seed_for_init=0):
+def build_model_from_metadata(ctx: RunEvalContext, metadata, seed_for_init=0):
     """Falls back to the v1 architecture defaults if metadata wasn't recorded."""
     hidden_sizes = metadata.get("hidden_sizes", [128, 256, 128])
     n_regions    = metadata.get("n_regions", 3)
-    G            = metadata.get("G", GEO.G)
-    n_phi_feats  = metadata.get("n_phi_feats", GEO.G * 3)
+    G            = metadata.get("G", ctx.GEO.G)
+    n_phi_feats  = metadata.get("n_phi_feats", ctx.GEO.G * 3)
     rngs = nnx.Rngs(seed_for_init)
-    return PEDSModel(hidden_sizes=hidden_sizes, n_regions=n_regions,
-                      G=G, n_phi_feats=n_phi_feats, rngs=rngs)
+    return ctx.PEDSModel(hidden_sizes=hidden_sizes, n_regions=n_regions,
+                         G=G, n_phi_feats=n_phi_feats, rngs=rngs)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Evaluation
 # ─────────────────────────────────────────────────────────────────────────────
-def evaluate_on_test(model, test_payload, norm_stats):
+def evaluate_on_test(ctx: RunEvalContext, model, test_payload, norm_stats):
     geoms     = test_payload["geoms"]
     keffs     = test_payload["keffs"]
     rawparams = test_payload["rawparams"]
 
     phi_norm = ((test_payload["phi_features"] - norm_stats["phi_mean"])
                 / norm_stats["phi_std"]).astype(np.float32)
-    xs_baselines  = compute_batch_baselines(rawparams, GEO)
+    xs_baselines  = ctx.compute_batch_baselines(rawparams, ctx.GEO)
     log_xs_mean_j = jnp.array(norm_stats["log_xs_mean"])
     log_xs_std_j  = jnp.array(norm_stats["log_xs_std"])
 
     k_pred_all = []
-    for bg, bk, br, bb, bphi in data_loader(
+    for bg, bk, br, bb, bphi in ctx.data_loader(
             geoms, keffs, rawparams, np.array(xs_baselines), phi_norm,
             batch_size=EVAL_BATCH_SIZE):
         xs_np = model.compute_xs(jnp.array(bg), jnp.array(bb), jnp.array(bphi),
                                   log_xs_mean_j, log_xs_std_j)
         for i in range(len(bg)):
-            k, _, _, _ = _run_NT_solver(xs_np[i], np.array(br[i]),
-                                         np.array([i], dtype=np.int32))
+            k, _, _, _ = ctx._run_NT_solver(xs_np[i], np.array(br[i]),
+                                            np.array([i], dtype=np.int32))
             k_pred_all.append(float(k))
 
-    return compute_metrics(np.array(k_pred_all), keffs)
+    return ctx.compute_metrics(np.array(k_pred_all), keffs)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -450,6 +560,7 @@ def main():
     for run_id, train_size, seed, ckpt_path, run_dir in runs:
         print(f"\n=== Evaluating {run_id} ===")
         try:
+            ctx = get_run_eval_context(run_dir)
             train_idx, _, test_idx, split_source = _read_indices_from_split_log(run_dir, train_size, seed)
 
             # Resolve and cache the dataset for this run.
@@ -457,7 +568,7 @@ def main():
                 dataset_key = DATA_FILEPATH_OVERRIDE
             else:
                 detected = _detect_data_filepath(run_dir)
-                dataset_key = detected if detected is not None else _DATA_FILEPATH
+                dataset_key = detected if detected is not None else _DEFAULT_DATA_FILEPATH
             if dataset_key not in dataset_cache:
                 dataset_cache[dataset_key] = load_dataset_arrays(run_dir)
             geoms, keffs, rawparams = dataset_cache[dataset_key]
@@ -466,17 +577,17 @@ def main():
             test_payload = get_test_payload(
                 geoms=geoms, keffs=keffs, rawparams=rawparams,
                 test_idx=test_idx, split_source=split_source,
-                cache=test_payload_cache,
+                cache=test_payload_cache, ctx=ctx,
             )
             norm_stats = get_or_build_norm_stats(
                 LOGS_ROOT=LOGS_ROOT, train_size=train_size, seed=seed,
-                rawparams=rawparams, train_idx=train_idx,
+                rawparams=rawparams, train_idx=train_idx, ctx=ctx,
             )
             state, meta = load_checkpoint(ckpt_path)
-            model = build_model_from_metadata(meta, seed_for_init=seed)
+            model = build_model_from_metadata(ctx, meta, seed_for_init=seed)
             nnx.update(model, jax.tree_util.tree_map(jnp.asarray, state))
 
-            m = evaluate_on_test(model, test_payload, norm_stats)
+            m = evaluate_on_test(ctx, model, test_payload, norm_stats)
         except Exception as e:
             print(f"  [FAILED] {run_id}: {e}")
             continue
@@ -504,6 +615,21 @@ def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Evaluate best checkpoints on the held-out test set using each run's code snapshot.",
+    )
+    parser.add_argument("logs_root", nargs="?",
+                        help="Path to LOGS_ROOT directory")
+    parser.add_argument("--out", default=OUTPUT_FILENAME)
+    parser.add_argument(
+        "--use-current-peds",
+        action="store_true",
+        help="Ignore per-run code_snapshot_*.py and evaluate with current modules/PEDS.py",
+    )
+    args = parser.parse_args()
+    LOGS_ROOT = args.logs_root
+    OUTPUT_FILENAME = args.out
+    USE_CURRENT_PEDS = args.use_current_peds
     main()
     csv_path = os.path.join(LOGS_ROOT, OUTPUT_DIRNAME, OUTPUT_FILENAME)
     band = "std"
