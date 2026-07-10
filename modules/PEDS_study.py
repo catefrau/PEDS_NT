@@ -71,11 +71,10 @@ LR_min     = 5e-6
 DECAY_EPOCHS = int(os.environ.get("PEDS_DECAY_EPOCHS", 70))
 
 EXP_NAME   = f"train_{TRAIN_SIZE}_seed_{SEED}"  #_decay{DECAY_EPOCHS}
-LOG_DIR = os.path.join(THIS_DIR, "RUNS", "different_ranges", "supercritical", EXP_NAME)    #f"decay_{DECAY_EPOCHS}_epoch_{EPOCHS}_lr_{LR_min}"
+LOG_DIR = os.path.join(THIS_DIR, "RUNS", "study_LHS_0.8_bounds", EXP_NAME)    #f"decay_{DECAY_EPOCHS}_epoch_{EPOCHS}_lr_{LR_min}"
 # ── data path — anchored to PARENT_DIR so it works from any cwd ─────────────
-_DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "lhs_0.85_1.15_bounds.npz")   #LHS_0.8_newbounds
-USE_SPLIT_CACHE = True
-CACHE_DIR_NAME = "split_cache/.split_cache_lhs_0.85_1.15_balanced"  # subdir under data/highfidelity for cached train/val/test splits
+_DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "LHS_0.8_newbounds.npz")
+CACHE_DIR_NAME = "split_cache/.split_cache_LHS_0.8_newbounds"  # subdir under data/highfidelity for cached train/val/test splits
 
 
 LOG_RATIO_CLIP_LO = -1.8
@@ -894,31 +893,22 @@ def _validate_split_indices(train_idx, val_idx, test_idx,
     return train_idx, val_idx, test_idx
 
 
-def _dataset_cache_tag(filepath: str) -> str:
-    """Stable dataset id used in cache filenames and metadata checks."""
-    return os.path.splitext(os.path.basename(filepath))[0]
-
-
-def _find_largest_smaller_cache(cache_dir, dataset_tag, train_seed, holdout_seed, val_size, test_size, train_size):
-    """Find the largest cached train_size < current request for this dataset only."""
-    pattern = os.path.join(
-        cache_dir,
-        f"split_ds{dataset_tag}_t*_ts{train_seed}_hs{holdout_seed}_v{val_size}_t{test_size}.pkl",
-    )
+def _find_largest_smaller_cache(cache_dir, train_seed, holdout_seed, val_size, test_size, train_size):
+    """Find the largest cached train_size < current request."""
+    pattern = os.path.join(cache_dir, f"split_t*_ts{train_seed}_hs{holdout_seed}_v{val_size}_t{test_size}.pkl")
     cached_files = glob.glob(pattern)
-
+    
     candidates = []
     for fpath in cached_files:
         fname = os.path.basename(fpath)
         try:
             parts = fname.split("_")
-            t_part = next(p for p in parts if p.startswith("t") and p[1:].isdigit())
-            t_val = int(t_part[1:])
+            t_val = int(parts[1][1:])  
             if t_val < train_size:
                 candidates.append((t_val, fpath))
-        except Exception:
+        except:
             continue
-
+    
     if not candidates:
         return None, None
     candidates.sort(reverse=True)
@@ -926,8 +916,7 @@ def _find_largest_smaller_cache(cache_dir, dataset_tag, train_seed, holdout_seed
 
 
 def load_or_create_split_cache(filepath, train_size, val_size, test_size,
-                                train_seed=42, holdout_seed=0, cache_path=None,
-                                use_cache=True):
+                                train_seed=42, holdout_seed=0, cache_path=None):
     """
     Load train/val/test splits from cache if available and compatible.
     If dataset grew: val/test stay the same, train extends with new samples.
@@ -935,41 +924,21 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
     Fallback: if exact train_size not found, looks for largest smaller train_size
     and extends from there.
     """
-    data = np.load(filepath, allow_pickle=True)
-    current_dataset_size = len(data['params'])
-    dataset_tag = _dataset_cache_tag(filepath)
-    print(f"  Split request: train={train_size}, val={val_size}, test={test_size}, "
-          f"train_seed={train_seed}, holdout_seed={holdout_seed}, "
-          f"dataset_size={current_dataset_size}")
-    print(f"  Dataset cache tag: {dataset_tag}")
-
-    if not use_cache:
-        print("  Split cache: DISABLED (USE_SPLIT_CACHE=False)")
-        print(f"  [cache bypass] computing fresh splits (train_seed={train_seed})…")
-        train_idx, val_idx, test_idx = derive_split_indices(
-            filepath, train_size, val_size, test_size, train_seed, holdout_seed
-        )
-        train_idx, val_idx, test_idx = _validate_split_indices(
-            train_idx, val_idx, test_idx,
-            dataset_size=current_dataset_size,
-            expected_train=train_size,
-            expected_val=val_size,
-            expected_test=test_size,
-            context="fresh split / cache disabled"
-        )
-        return train_idx, val_idx, test_idx
-
     if cache_path is None:
         cache_dir = os.path.join(os.path.dirname(filepath) or ".", ".split_cache")
     else:
-        cache_dir = cache_path
-
+        cache_dir = cache_path 
+    
     os.makedirs(cache_dir, exist_ok=True)
-
-    cache_fname = (
-        f"split_ds{dataset_tag}_t{train_size}_ts{train_seed}_hs{holdout_seed}_v{val_size}_t{test_size}.pkl"
-    )
+    
+    cache_fname = f"split_t{train_size}_ts{train_seed}_hs{holdout_seed}_v{val_size}_t{test_size}.pkl"
     cache_path = os.path.join(cache_dir, cache_fname)
+    
+    data = np.load(filepath, allow_pickle=True)
+    current_dataset_size = len(data['params'])
+    print(f"  Split request: train={train_size}, val={val_size}, test={test_size}, "
+          f"train_seed={train_seed}, holdout_seed={holdout_seed}, "
+          f"dataset_size={current_dataset_size}")
     print(f"  Split cache: {cache_path}")
     
     # ── Try to load EXACT cache ──────────────────────────────────────────────
@@ -983,10 +952,8 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
             old_test_idx  = cache["test_idx"]
             old_dataset_size = meta.get("dataset_size")
             
-            # Seeds + dataset identity match: cache belongs to this request
-            if (meta.get("dataset_tag") == dataset_tag and
-                meta.get("dataset_path") == os.path.abspath(filepath) and
-                meta.get("train_seed") == train_seed and
+            # Seeds match: cache is for the same holdout config
+            if (meta.get("train_seed") == train_seed and
                 meta.get("holdout_seed") == holdout_seed and
                 meta.get("val_size") == val_size and
                 meta.get("test_size") == test_size):
@@ -1061,7 +1028,7 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
     
     # ── Fallback: look for largest smaller cached train_size ─────────────────
     prev_train_size, prev_cache_path = _find_largest_smaller_cache(
-        cache_dir, dataset_tag, train_seed, holdout_seed, val_size, test_size, train_size
+        cache_dir, train_seed, holdout_seed, val_size, test_size, train_size
     )
     
     if prev_cache_path is not None:
@@ -1076,9 +1043,6 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
             old_val_idx   = cache["val_idx"]
             old_test_idx  = cache["test_idx"]
             old_dataset_size = meta.get("dataset_size")
-            if (meta.get("dataset_tag") != dataset_tag or
-                meta.get("dataset_path") != os.path.abspath(filepath)):
-                raise ValueError("fallback cache belongs to a different dataset")
             old_train_idx, old_val_idx, old_test_idx = _validate_split_indices(
                 old_train_idx, old_val_idx, old_test_idx,
                 dataset_size=old_dataset_size,
@@ -1146,15 +1110,12 @@ def load_or_create_split_cache(filepath, train_size, val_size, test_size,
         "train_size": train_size, "val_size": val_size, "test_size": test_size,
         "train_seed": train_seed, "holdout_seed": holdout_seed,
         "dataset_size": current_dataset_size,
-        "dataset_tag": dataset_tag,
-        "dataset_path": os.path.abspath(filepath),
     }
     _save_split_cache(cache_path, train_idx, val_idx, test_idx, meta)
     return train_idx, val_idx, test_idx
 
 def load_data(filepath, train_size, val_size, test_size,
-              train_seed=42, holdout_seed=0, split_cache_path=None, cache_dir=None,
-              use_split_cache=True):
+              train_seed=42, holdout_seed=0, split_cache_path=None, cache_dir=None):
 
     if split_cache_path is not None:
         cache_dir = os.path.dirname(split_cache_path)
@@ -1166,17 +1127,14 @@ def load_data(filepath, train_size, val_size, test_size,
     print(f"  Dataset loaded: {filepath}")
     print(f"  Requested split sizes: train={train_size}, val={val_size}, test={test_size}")
     print(f"  Split seeds: train_seed={train_seed}, holdout_seed={holdout_seed}")
-    if not use_split_cache:
-        print("  Split cache dir: <disabled>")
-    elif cache_dir is None:
+    if cache_dir is None:
         print("  Split cache dir: <default next to dataset>")
     else:
         print(f"  Split cache dir: {cache_dir}")
     print(f"  Dataset samples available: {len(geoms)}")
 
     train_idx, val_idx, test_idx = load_or_create_split_cache(
-        filepath, train_size, val_size, test_size, train_seed, holdout_seed,
-        cache_path=cache_dir, use_cache=use_split_cache)
+        filepath, train_size, val_size, test_size, train_seed, holdout_seed, cache_path=cache_dir)
 
     print(f"  Train k range: {keffs[train_idx].min():.3f} – {keffs[train_idx].max():.3f}")
     print(f"  Val   k range: {keffs[val_idx].min():.3f}  – {keffs[val_idx].max():.3f}")
@@ -1200,7 +1158,7 @@ def load_data_balanced_ranges(filepath, train_size, val_size, test_size,
                                bin_edges=None):
     """
     Fixed-range balanced split by k_eff.
-    Uses the same number of samples from every k_eff range for train, val, AND test.
+    Uses the same number of samples from every k_eff range.
 
     Returns the same outputs as your current loaddata().
     """
@@ -1211,162 +1169,73 @@ def load_data_balanced_ranges(filepath, train_size, val_size, test_size,
     rawparams = np.array(data["params_raw"], dtype=np.float32)
 
     if bin_edges is None:
-        bin_edges = np.array([0.85, 0.875, 0.90, 0.925, 0.95, 0.975,
-                              1.00, 1.025, 1.05, 1.075, 1.10, 1.125, 1.15], dtype=np.float32)
+        bin_edges = np.array([0.80, 0.85, 0.90, 0.95,
+                              1.00, 1.05, 1.10, 1.15, 1.20], dtype=np.float32)
 
     if split_cache_path is not None:
         cache_dir = os.path.dirname(split_cache_path)
 
-    train_rng = np.random.default_rng(train_seed)
+    rng = np.random.default_rng(train_seed)
+
     nbins = len(bin_edges) - 1
 
-    def allocate_counts(total: int, weights: np.ndarray, capacities: np.ndarray | None = None) -> np.ndarray:
-        """
-        Allocate an integer `total` across bins using largest-remainder rounding.
-        Optional `capacities` cap each bin; any overflow is redistributed.
-        """
-        if total < 0:
-            raise ValueError(f"total must be non-negative, got {total}")
-        if total == 0:
-            return np.zeros_like(weights, dtype=int)
+    if train_size % nbins != 0 or val_size % nbins != 0:
+        raise ValueError(
+            f"train_size={train_size} and val_size={val_size} must both be "
+            f"divisible by nbins={nbins}"
+        )
 
-        w = np.array(weights, dtype=np.float64)
-        if np.any(w < 0):
-            raise ValueError("weights must be non-negative")
-        if np.all(w == 0):
-            w = np.ones_like(w, dtype=np.float64)
-        w = w / w.sum()
+    train_per_bin = train_size // nbins   # 500 // 10 = 50
+    val_per_bin  = val_size  // nbins   # 100 // 10 = 10
 
-        raw = total * w
-        alloc = np.floor(raw).astype(int)
-        remainder = int(total - alloc.sum())
-        if remainder > 0:
-            order = np.argsort(-(raw - alloc))
-            alloc[order[:remainder]] += 1
+    trainidx, validx = [], []
 
-        if capacities is None:
-            return alloc
-
-        caps = np.array(capacities, dtype=int)
-        if np.any(caps < 0):
-            raise ValueError("capacities must be non-negative")
-
-        alloc = np.minimum(alloc, caps)
-        deficit = int(total - alloc.sum())
-        if deficit <= 0:
-            return alloc
-
-        while deficit > 0:
-            spare = caps - alloc
-            candidates = np.where(spare > 0)[0]
-            if len(candidates) == 0:
-                break
-            order = candidates[np.argsort(-spare[candidates])]
-            for b in order:
-                if deficit == 0:
-                    break
-                alloc[b] += 1
-                deficit -= 1
-
-        if alloc.sum() != total:
-            raise ValueError(
-                f"Could not allocate requested {total} samples under capacities "
-                f"(max possible {caps.sum()})."
-            )
-        return alloc
-
-    trainidx, validx, testidx = [], [], []
-    bin_indices = []
-    bin_labels = []
-
-    print("\n=== Balanced fixed-range split (train/val/test) ===")
-    print(f"Split seeds: train_seed={train_seed}, holdout_seed={holdout_seed}")
-
-    holdout_rng = np.random.default_rng(holdout_seed)
+    print("\n=== Balanced fixed-range split ===")
+    print(f"train_per_bin = {train_per_bin}, val_per_bin = {val_per_bin}")
 
     for b in range(nbins):
         lo = bin_edges[b]
         hi = bin_edges[b + 1]
+
         if b < nbins - 1:
             idx = np.where((keffs >= lo) & (keffs < hi))[0]
             label = f"[{lo:.2f}, {hi:.2f})"
         else:
             idx = np.where((keffs >= lo) & (keffs <= hi))[0]
             label = f"[{lo:.2f}, {hi:.2f}]"
-        holdout_rng.shuffle(idx)
-        bin_indices.append(idx)
-        bin_labels.append(label)
 
-    capacities = np.array([len(idx) for idx in bin_indices], dtype=int)
-    requested_total = int(train_size + val_size + test_size)
-    total_available = int(capacities.sum())
-    if requested_total > total_available:
-        raise ValueError(
-            f"Requested train+val+test={requested_total} exceeds available in bins={total_available}"
-        )
+        rng.shuffle(idx)
 
-    # Step 1: allocate train+val across bins evenly (capped by per-bin capacity)
-    uniform_weights = np.ones(nbins, dtype=np.float64)
-    requested_tv = int(train_size + val_size)
-    tv_counts = allocate_counts(requested_tv, uniform_weights, capacities=capacities)
+        needed = train_per_bin + val_per_bin
+        if len(idx) < needed:
+            raise ValueError(
+                f"Bin {label} has only {len(idx)} samples, but needs {needed}."
+            )
 
-    # Step 2: split each bin's tv allocation into val/train proportionally
-    val_counts = allocate_counts(val_size, tv_counts.astype(np.float64), capacities=tv_counts)
-    train_counts = tv_counts - val_counts
-
-    if int(train_counts.sum()) != int(train_size) or int(val_counts.sum()) != int(val_size):
-        raise ValueError(
-            "Internal split allocation mismatch: "
-            f"train={train_counts.sum()} (wanted {train_size}), "
-            f"val={val_counts.sum()} (wanted {val_size})"
-        )
-
-    # Step 3: allocate test evenly across bins, capped by whatever capacity is LEFT
-    # after train+val are removed from each bin.
-    remaining_capacity = capacities - tv_counts
-    test_counts = allocate_counts(test_size, uniform_weights, capacities=remaining_capacity)
-
-    if int(test_counts.sum()) != int(test_size):
-        raise ValueError(
-            "Internal split allocation mismatch: "
-            f"test={test_counts.sum()} (wanted {test_size})"
-        )
-
-    print(
-        f"Requested sizes: train={train_size}, val={val_size}, "
-        f"test={test_size}, nbins={nbins}"
-    )
-
-    for b in range(nbins):
-        idx = bin_indices[b]
-        n_val = int(val_counts[b])
-        n_train = int(train_counts[b])
-        n_test = int(test_counts[b])
-
-        # Keep val/test deterministic across train seeds by deriving holdouts first.
-        val_bin = idx[:n_val]
-        test_bin = idx[n_val:n_val + n_test]
-        train_pool = idx[n_val + n_test:]
-        train_pool = train_pool.copy()
-        train_rng.shuffle(train_pool)
-        train_bin = train_pool[:n_train]
+        val_bin = idx[:val_per_bin]
+        train_bin = idx[val_per_bin:val_per_bin + train_per_bin]
 
         validx.extend(val_bin.tolist())
         trainidx.extend(train_bin.tolist())
-        testidx.extend(test_bin.tolist())
 
-        print(
-            f"{bin_labels[b]}: available={len(idx):3d}, "
-            f"train={n_train:3d}, val={n_val:3d}, test={n_test:3d}"
-        )
+        print(f"{label}: available={len(idx):3d}, train={len(train_bin):2d}, val={len(val_bin):2d}")
 
     trainidx = np.array(trainidx, dtype=int)
     validx = np.array(validx, dtype=int)
-    testidx = np.array(testidx, dtype=int)
 
-    train_rng.shuffle(trainidx)
-    holdout_rng.shuffle(validx)
-    holdout_rng.shuffle(testidx)
+    rng.shuffle(trainidx)
+    rng.shuffle(validx)
+
+    selected = np.concatenate([trainidx, validx])
+    remaining = np.setdiff1d(np.arange(len(keffs), dtype=int), selected, assume_unique=False)
+    if len(remaining) < test_size:
+        raise ValueError(
+            f"Not enough remaining samples for test split: requested {test_size}, "
+            f"available {len(remaining)}"
+        )
+    rng_holdout = np.random.default_rng(holdout_seed)
+    rng_holdout.shuffle(remaining)
+    testidx = remaining[:test_size]
 
     print(f"\nFinal train size = {len(trainidx)}")
     print(f"Final val size   = {len(validx)}")
@@ -2075,9 +1944,8 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
     init_csv_logs()
         
     # ── 8.1 Data ─────────────────────────────────────────────────────────────
-    USE_BALANCED_RANGES = True
+    USE_BALANCED_RANGES = False
     print("Loading data …")
-    print(f"  Split cache enabled: {USE_SPLIT_CACHE}")
     if USE_BALANCED_RANGES: 
         (train_idx, train_geoms, train_keffs, train_rawparams, train_phi_features), \
         (val_idx, val_geoms, val_keffs, val_rawparams, val_phi_features), \
@@ -2092,8 +1960,7 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
         (test_idx, test_geoms,  test_keffs,  test_rawparams,  test_phi_features) = load_data(
             filepath, train_size, val_size, test_size,
             train_seed=seed, holdout_seed=HOLDOUT_SEED,
-            split_cache_path=None, cache_dir=split_cache_dir,
-            use_split_cache=USE_SPLIT_CACHE)
+            split_cache_path=None, cache_dir=split_cache_dir)
     train_size = len(train_geoms)
     val_size   = len(val_geoms)
     test_size  = len(test_geoms)
@@ -2240,8 +2107,8 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
     # Initialization: run epoch 1 first, then seed the EMA with that real value so
     # the warm-up bias from an arbitrary starting point is entirely avoided.
     EMA_ALPHA     = 0.15
-    MIN_SAVE_EPOCH = 30   # don't save before the model has passed early oscillations
-    PATIENCE = 25  # epochs without EMA improvement before stopping
+    MIN_SAVE_EPOCH = 40   # don't save before the model has passed early oscillations
+    PATIENCE = 35  # epochs without EMA improvement before stopping
     epochs_since_improvement = 0
     ema_val_mean_pcm = None   # will be set at end of epoch 1
     train_shuffle_rng = np.random.default_rng(seed)

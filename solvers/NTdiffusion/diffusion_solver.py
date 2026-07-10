@@ -27,8 +27,8 @@ from modules.NTcode_config_data.config_run import GEO_CYL as GEO
 HERE = Path(__file__).resolve().parent
 PROJECT_ROOT = HERE.parent.parent
 
-DATA_FOLDER = PROJECT_ROOT / "modules" / "reg_and_data" / "inputs" / "CR_1000samples"
-DATA_PATH = DATA_FOLDER / "1000_clean.csv"
+DATA_FOLDER = PROJECT_ROOT / "modules" / "reg_and_data" / "inputs" / "2k_samples_bounded"
+DATA_PATH = DATA_FOLDER / "LHS_XS_0.8-1.2.csv"
 REG_MODEL_PATH = DATA_FOLDER / "polyreg_model"
 
 PLOT_OUTPUT = PROJECT_ROOT / "LOGS" / "fluxes_plots" / "fixed_CR_fluxes.png"

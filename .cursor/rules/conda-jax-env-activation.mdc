@@ -1,0 +1,12 @@
+---
+description: Require activating jax-env before running terminal or Python commands
+alwaysApply: true
+---
+
+# Conda Environment Activation
+
+- Before running any shell command or Python command, activate the Conda environment:
+  - `conda activate jax-env`
+- If Conda is not initialized in the current shell, initialize it first and then activate:
+  - `source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate jax-env`
+- Treat this as a required pre-step for command execution in this project.

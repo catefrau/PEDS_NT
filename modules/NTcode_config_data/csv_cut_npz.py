@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 
-filename = "merged_good_lhs"
+filename = "lhs_rightbounds"
 csv_path = f"../FILES/{filename}.csv"
-CUT_NAME = "0.9_1.1_bounds"
+CUT_NAME = "lhs_0.85_1.15_bounds"
 output_path = f"../FILES/{filename}_{CUT_NAME}.npz"
 
 def csv_to_npz(
@@ -47,6 +47,10 @@ def csv_to_npz(
     bounds_lo = params_raw.min(axis=0)   # shape (P,)
     bounds_hi = params_raw.max(axis=0)   # shape (P,)
 
+    print("Final dataframe parameter bounds:")
+    for name, lo, hi in zip(param_cols, bounds_lo, bounds_hi):
+        print(f"  {name}: [{lo:.6g}, {hi:.6g}]")
+
     # Avoid division by zero for constant columns (edge case)
     span = bounds_hi - bounds_lo
     span[span == 0] = 1.0
@@ -58,6 +62,7 @@ def csv_to_npz(
         raise ValueError(f"keff column '{keff_col}' not found in CSV.")
 
     keffs = df[keff_col].to_numpy(dtype=np.float32)      # shape (N,)
+    print(f"keffs range: {keffs.min():.3f} – {keffs.max():.3f}")
 
     # ── 5. Save .npz ─────────────────────────────────────────────────────────
     np.savez(
@@ -83,8 +88,11 @@ def cut_dataset(csv_path: str, csv_path_filtered: str) -> None:
         (df["keff"] < 0.85) |
         (df["keff"] > 1.15) |
         (df["r0_b4c_rod_outer_radius"] > 6) |
-        (df["r1_fuel_annulus_f_mod"] < 0.4)
+        (df["r1_fuel_annulus_f_mod"] < 0.4) 
     )
+    #    (df["r1_fuel_annulus_outer_radius"] < 15) |
+    #    (df["r1_fuel_annulus_enrichment"] > 8) |
+    #    (df["r1_fuel_annulus_f_mod"] > 0.75)
 
     df_filtered = df[~condition_remove]  # ~ means "NOT" — keep everything else
     print(f"Filtered dataset size: {len(df_filtered)} samples")

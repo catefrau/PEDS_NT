@@ -2,14 +2,15 @@ import os
 import glob
 import numpy as np
 import pandas as pd
+import re
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
 
-ROOT_DIR = "../LOGS/train_500_seeds"
+#ROOT_DIR = "../RUNS/different_ranges/lhs_0.85_1.15_balanced/"
+ROOT_DIR = "../RUNS/study_LHS_0.8_bounds/"
 CSV_NAME = "split_log.csv"
 
-OUT_PNG = os.path.join(ROOT_DIR, "keff_split_kde_overlay.png")
-OUT_PDF = os.path.join(ROOT_DIR, "keff_split_kde_overlay.pdf")
+OUT_PNG = os.path.join(ROOT_DIR, "KDE_1000.png")
 
 COL_SAMPLE = "sample_idx"
 COL_SPLIT = "split"
@@ -32,9 +33,14 @@ LINEWIDTH_MAIN = 2.2
 
 GRID_SIZE = 500
 BW_METHOD = None
-BW_ADJUST = 0.9  # 0.7 gives sharper curve, while 1.1 gives smoother curve
+BW_ADJUST = 0.8  # 0.7 gives sharper curve, while 1.1 gives smoother curve
 
 def find_split_logs(root_dir, csv_name):
+    pattern = os.path.join(root_dir, "train_1000_seed_*", csv_name)
+    files = sorted(glob.glob(pattern))
+    return [f for f in files if os.path.isfile(f)]
+
+def find_split_logs_all(root_dir, csv_name):
     pattern = os.path.join(root_dir, "**", csv_name)
     files = sorted(glob.glob(pattern, recursive=True))
     return [f for f in files if os.path.isfile(f)]
@@ -104,7 +110,9 @@ for path in csv_files:
     df[COL_KEFF] = pd.to_numeric(df[COL_KEFF], errors="raise")
 
     exp_name = os.path.basename(os.path.dirname(path))
-    experiment_data.append((exp_name, path, df))
+    m = re.search(r"seed_(\d+)", exp_name)
+    legend_name = f"seed {m.group(1)}" if m else exp_name
+    experiment_data.append((legend_name, path, df))
 
 print(f"Found {len(experiment_data)} experiments.")
 
@@ -168,11 +176,12 @@ ax.fill_between(xgrid, 0, y_val, color=VAL_COLOR, alpha=VAL_ALPHA_FILL)
 ax.plot(xgrid, y_test, color=TEST_COLOR, lw=LINEWIDTH_MAIN, label="test (shared)")
 ax.fill_between(xgrid, 0, y_test, color=TEST_COLOR, alpha=TEST_ALPHA_FILL)
 
-ax.set_title("keff distribution by split across experiments")
-ax.set_xlabel("keff")
-ax.set_ylabel("Density")
+#ax.set_title("keff distribution by split across experiments")
+ax.set_xlabel("keff", fontsize=14)
+ax.set_ylabel("Density", fontsize=14)
+ax.tick_params(axis="both", labelsize=14)   # try 12, 13, 14...
 ax.grid(True, alpha=0.25)
-ax.legend(fontsize=9, ncol=2)
+ax.legend(fontsize=12, ncol=2)
 fig.tight_layout()
 
 fig.savefig(OUT_PNG, dpi=300, bbox_inches="tight")

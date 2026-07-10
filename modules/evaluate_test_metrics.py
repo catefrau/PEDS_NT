@@ -54,6 +54,19 @@ from PEDS import _DATA_FILEPATH as _DEFAULT_DATA_FILEPATH
 MODULES_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(MODULES_DIR)
 
+sys.path.insert(0, os.path.join(MODULES_DIR, "plot_functions"))
+from plots_all import plot_keff_scatter, plot_parallel_coords  # noqa: E402
+
+# rawparams column order → names expected by plots_all's plot_parallel_coords (PARAMS).
+PARAM_COLS = [
+    "r0_b4c_rod_outer_radius",
+    "r0_b4c_rod_cr_fraction",
+    "r1_fuel_annulus_outer_radius",
+    "r1_fuel_annulus_enrichment",
+    "r1_fuel_annulus_f_mod",
+    "r2_water_outer_radius",
+]
+
 # ── CONFIG: edit these paths once, here ────────────────────────────────────
 #"RUNS/bounds1000_70decayepochs"
 OUTPUT_DIRNAME = "testset_results"
@@ -413,7 +426,100 @@ def evaluate_on_test(ctx: RunEvalContext, model, test_payload, norm_stats):
                                             np.array([i], dtype=np.int32))
             k_pred_all.append(float(k))
 
-    return ctx.compute_metrics(np.array(k_pred_all), keffs)
+    k_pred_all = np.array(k_pred_all)
+    return ctx.compute_metrics(k_pred_all, keffs), k_pred_all
+
+
+def compute_baseline_keffs(ctx: RunEvalContext, rawparams: np.ndarray) -> np.ndarray:
+    """keff from running the physics solver directly on the un-corrected
+    (baseline, polynomial-regression) XS — i.e. no NN correction at all.
+    This is the "initial" prediction used as the pre-training reference point."""
+    xs_baselines = np.array(ctx.compute_batch_baselines(rawparams, ctx.GEO))
+    k_pred = []
+    for i in range(len(rawparams)):
+        k, _, _, _ = ctx._run_NT_solver(xs_baselines[i], rawparams[i], np.array([i], dtype=np.int32))
+        k_pred.append(float(k))
+    return np.array(k_pred)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Representative-seed initial-vs-final keff comparison
+# (mirrors plots_all.py's plot_keff_scatter / plot_parallel_coords, epoch 0 vs
+#  best epoch, but computed directly on the held-out TEST set for one seed).
+# ─────────────────────────────────────────────────────────────────────────────
+def select_representative_runs(df_rows: pd.DataFrame, metric: str = "test_mean_pcm") -> dict:
+    """For each train_size group, pick the run whose `metric` is closest to
+    that group's mean across seeds — a single seed representative of typical
+    behaviour at that training-set size."""
+    reps = {}
+    for train_size, grp in df_rows.groupby("train_size"):
+        group_mean = grp[metric].mean()
+        idx = (grp[metric] - group_mean).abs().idxmin()
+        reps[train_size] = grp.loc[idx, "run_id"]
+    return reps
+
+
+def build_keff_comparison_df(test_payload, k_initial, k_final, best_epoch):
+    rawparams = test_payload["rawparams"]
+    keffs = test_payload["keffs"]
+    test_idx = test_payload["test_idx"]
+    records = []
+    for epoch_label, k_pred in ((0, k_initial), (best_epoch, k_final)):
+        for i in range(len(keffs)):
+            kp, kr = float(k_pred[i]), float(keffs[i])
+            dr = abs(kp - kr) / (kp * kr) * 1e5
+            rec = dict(epoch=epoch_label, sample_idx=int(test_idx[i]),
+                       keff_openmc=kr, keff_peds=kp, delta_rho_pcm=dr)
+            for j, col in enumerate(PARAM_COLS):
+                rec[col] = float(rawparams[i, j])
+            records.append(rec)
+    return pd.DataFrame(records)
+
+
+def generate_representative_comparison_plots(df_rows: pd.DataFrame, run_eval_cache: dict, out_dir: str):
+    if df_rows.empty:
+        return
+    reps = select_representative_runs(df_rows)
+    for train_size, run_id in sorted(reps.items()):
+        info = run_eval_cache.get(run_id)
+        if info is None:
+            print(f"  [warn] representative run {run_id} missing from eval cache — skipping")
+            continue
+
+        seed = info["seed"]
+        best_epoch = info["best_epoch"]
+        try:
+            best_epoch = int(best_epoch)
+        except (TypeError, ValueError):
+            best_epoch = 1
+        print(f"\n=== Representative case for train_size={train_size}: {run_id} "
+              f"(closest to group-mean test_mean_pcm) ===")
+
+        ctx = info["ctx"]
+        test_payload = info["test_payload"]
+        rawparams = test_payload["rawparams"]
+
+        print("  Running solver on baseline (uncorrected) XS for the test set …")
+        k_initial = compute_baseline_keffs(ctx, rawparams)
+        k_final = info["k_pred_final"]
+
+        comp_df = build_keff_comparison_df(test_payload, k_initial, k_final, best_epoch)
+
+        prefix = f"rep_train{train_size}_seed{seed}"
+        comp_df.to_csv(os.path.join(out_dir, f"{prefix}_keff_comparison.csv"), index=False)
+
+        both = comp_df[comp_df["epoch"].isin([0, best_epoch])]
+        vmin, vmax = both["delta_rho_pcm"].min(), both["delta_rho_pcm"].max()
+        os.makedirs(os.path.join(out_dir,"representative_plots"), exist_ok=True)
+        plot_keff_scatter(comp_df, epoch=0, vmin=vmin, vmax=vmax,
+                           save_path=os.path.join(out_dir,"representative_plots" , f"{prefix}_keff_scatter_initial.png"))
+        plot_keff_scatter(comp_df, epoch=best_epoch, vmin=vmin, vmax=vmax,
+                           save_path=os.path.join(out_dir,"representative_plots" , f"{prefix}_keff_scatter_final.png"))
+
+        plot_parallel_coords(comp_df, epoch=0,
+                              save_path=os.path.join(out_dir,"representative_plots" , f"{prefix}_parallel_coords_initial.png"))
+        plot_parallel_coords(comp_df, epoch=best_epoch,
+                              save_path=os.path.join(out_dir,"representative_plots" , f"{prefix}_parallel_coords_final.png"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -434,13 +540,14 @@ def summarize(csv_path, out_csv=None):
     agg = df.groupby("train_size")[METRIC_COLS].agg(["mean", "std"])
     agg.columns = ["_".join(c) for c in agg.columns]
     agg = agg.join(n_seeds).reset_index().sort_values("train_size")
+    agg["nn_correction"] = "yes"
 
     priority_metrics = ["test_mean_pcm", "test_median_pcm",
                          "test_frac_below_650", "test_frac_below_100"]
     other_metrics = ["test_mse_k", "test_mae_k"]
     remaining_metrics = ["test_p95_pcm", "test_std_pcm"]
 
-    ordered_cols = ["train_size", "n_seeds"]
+    ordered_cols = ["train_size", "n_seeds", "nn_correction"]
     for m in priority_metrics:
         ordered_cols += [f"{m}_mean", f"{m}_std"]
     for m in other_metrics:
@@ -450,13 +557,58 @@ def summarize(csv_path, out_csv=None):
 
     agg = agg[ordered_cols]
 
+    rep_pattern = os.path.join(
+        os.path.dirname(csv_path) or ".",
+        "rep_train*_seed*_keff_comparison.csv",
+    )
+    baseline_rows = []
+    for rep_path in sorted(glob.glob(rep_pattern)):
+        m = re.search(r"rep_train(\d+)_seed(\d+)_keff_comparison\.csv$", os.path.basename(rep_path))
+        if m is None:
+            continue
+        train_size = int(m.group(1))
+        rep_df = pd.read_csv(rep_path)
+        rep_df = rep_df[rep_df["epoch"] == 0].copy()
+        if rep_df.empty:
+            continue
+
+        k_ref = rep_df["keff_openmc"].astype(float).to_numpy()
+        k_pred = rep_df["keff_peds"].astype(float).to_numpy()
+        delta_pcm = rep_df["delta_rho_pcm"].astype(float).to_numpy()
+        baseline_rows.append({
+            "train_size": train_size,
+            "n_seeds": 1,
+            "nn_correction": "no",
+            "test_mean_pcm_mean": float(np.mean(delta_pcm)),
+            "test_mean_pcm_std": 0.0,
+            "test_median_pcm_mean": float(np.median(delta_pcm)),
+            "test_median_pcm_std": 0.0,
+            "test_frac_below_650_mean": float(np.mean(delta_pcm < 650.0)),
+            "test_frac_below_650_std": 0.0,
+            "test_frac_below_100_mean": float(np.mean(delta_pcm < 100.0)),
+            "test_frac_below_100_std": 0.0,
+            "test_mse_k_mean": float(np.mean((k_pred - k_ref) ** 2)),
+            "test_mse_k_std": 0.0,
+            "test_mae_k_mean": float(np.mean(np.abs(k_pred - k_ref))),
+            "test_mae_k_std": 0.0,
+            "test_p95_pcm_mean": float(np.percentile(delta_pcm, 95.0)),
+            "test_p95_pcm_std": 0.0,
+            "test_std_pcm_mean": float(np.std(delta_pcm)),
+            "test_std_pcm_std": 0.0,
+        })
+
+    if baseline_rows:
+        agg = pd.concat([agg, pd.DataFrame(baseline_rows)], ignore_index=True)
+        agg = agg.sort_values(["train_size", "nn_correction"]).reset_index(drop=True)
+        print(f"Added epoch-0 baseline rows for {len(baseline_rows)} train sizes.")
+
     if out_csv is None:
         out_csv = os.path.join(os.path.dirname(csv_path) or ".",
                                 "new_test_metrics_summary_by_train_size.csv")
     agg.to_csv(out_csv, index=False)
 
     print(f"Summary saved → {out_csv}\n")
-    cols_to_show = ["train_size", "n_seeds", "test_mean_pcm_mean", "test_mean_pcm_std",
+    cols_to_show = ["train_size", "nn_correction", "n_seeds", "test_mean_pcm_mean", "test_mean_pcm_std",
                      "test_median_pcm_mean", "test_frac_below_650_mean"]
     print(agg[cols_to_show].to_string(index=False))
     return agg
@@ -556,6 +708,7 @@ def main():
     dataset_cache = {}
     test_payload_cache = {}
     rows = []
+    run_eval_cache = {}
 
     for run_id, train_size, seed, ckpt_path, run_dir in runs:
         print(f"\n=== Evaluating {run_id} ===")
@@ -587,7 +740,7 @@ def main():
             model = build_model_from_metadata(ctx, meta, seed_for_init=seed)
             nnx.update(model, jax.tree_util.tree_map(jnp.asarray, state))
 
-            m = evaluate_on_test(ctx, model, test_payload, norm_stats)
+            m, k_pred_final = evaluate_on_test(ctx, model, test_payload, norm_stats)
         except Exception as e:
             print(f"  [FAILED] {run_id}: {e}")
             continue
@@ -601,6 +754,10 @@ def main():
             test_p95_pcm=m["p95_pcm"], test_std_pcm=m["std_pcm"],
             test_frac_below_650=m["frac_below_650"], test_frac_below_100=m["frac_below_100"],
         ))
+        run_eval_cache[run_id] = dict(
+            ctx=ctx, test_payload=test_payload, k_pred_final=k_pred_final,
+            train_size=train_size, seed=seed, best_epoch=meta.get("epoch", ""),
+        )
         print(f"  best_epoch={meta.get('epoch','?')}  "
               f"test_mean_pcm={m['mean_pcm']:.1f}  test_median_pcm={m['median_pcm']:.1f}")
 
@@ -612,6 +769,9 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
     print(f"\nSaved aggregate test metrics for {len(rows)} runs → {out_csv}")
+
+    print("\nGenerating representative-seed initial-vs-final keff comparison plots …")
+    generate_representative_comparison_plots(pd.DataFrame(rows), run_eval_cache, out_dir)
 
 
 if __name__ == "__main__":
@@ -636,13 +796,14 @@ if __name__ == "__main__":
 
     agg = summarize(csv_path)
     out_dir = os.path.join(LOGS_ROOT, OUTPUT_DIRNAME)
+    agg_plot = agg[agg["nn_correction"] == "yes"].copy() if "nn_correction" in agg.columns else agg
 
-    if agg.empty:
+    if agg_plot.empty:
         print("No successful runs — skipping plots.")
     else:
-        plot_scaling(agg, os.path.join(out_dir, "scaling_mean_pcm.png"),
+        plot_scaling(agg_plot, os.path.join(out_dir, "scaling_mean_pcm.png"),
                      metric="test_mean_pcm", band=band)
-        plot_scaling(agg, os.path.join(out_dir, "scaling_median_pcm.png"),
+        plot_scaling(agg_plot, os.path.join(out_dir, "scaling_median_pcm.png"),
                      metric="test_median_pcm", band=band)
-        plot_scaling(agg, os.path.join(out_dir, "scaling_frac_below_650.png"),
+        plot_scaling(agg_plot, os.path.join(out_dir, "scaling_frac_below_650.png"),
                      metric="test_frac_below_650", band=band, logx=True)

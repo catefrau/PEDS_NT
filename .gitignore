@@ -33,7 +33,7 @@ modules/fullcode_perp.py
 modules/NThelper.py
 modules/RUNS/
 modules/density_report/
-mpdules/slurm_logs/
+modules/slurm_logs/
 
 reg_and_data/inputs/heter_regre_files/
 reg_and_data/inputs/HOM/
