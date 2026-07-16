@@ -60,22 +60,28 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
 TRAIN_SIZE   = int(os.environ.get("PEDS_TRAIN_SIZE", 500))
-VAL_SIZE     = 100    # used every epoch — was previously called val_SIZE
-TEST_SIZE    = 100    # held out, evaluated only once at the very end
+VAL_SIZE     = 400    # used every epoch — was previously called val_SIZE
+TEST_SIZE    = 400    # held out, evaluated only once at the very end
 HOLDOUT_SEED = 0      # FIXED — keeps val/test identical across all runs
 BATCH_SIZE = 32
-EPOCHS     = 70
+EPOCHS     = 80
 SEED       = int(os.environ.get("PEDS_SEED", 0))
-LR_max     = 5e-4   # cosine schedule peak learning rate
+LR_max     = 2e-4   # cosine schedule peak learning rate
 LR_min     = 5e-6
 DECAY_EPOCHS = int(os.environ.get("PEDS_DECAY_EPOCHS", 70))
 
 EXP_NAME   = f"train_{TRAIN_SIZE}_seed_{SEED}"  #_decay{DECAY_EPOCHS}
-LOG_DIR = os.path.join(THIS_DIR, "RUNS", "different_ranges", "supercritical", EXP_NAME)    #f"decay_{DECAY_EPOCHS}_epoch_{EPOCHS}_lr_{LR_min}"
+LOG_DIR = os.path.join(THIS_DIR, "RUNS", "cutR_polyadj", f"decay_{DECAY_EPOCHS}_EPOCHS_{EPOCHS}", EXP_NAME)    #f"decay_{DECAY_EPOCHS}_epoch_{EPOCHS}_lr_{LR_min}"
 # ── data path — anchored to PARENT_DIR so it works from any cwd ─────────────
-_DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "lhs_0.85_1.15_bounds.npz")   #LHS_0.8_newbounds
-USE_SPLIT_CACHE = True
-CACHE_DIR_NAME = "split_cache/.split_cache_lhs_0.85_1.15_balanced"  # subdir under data/highfidelity for cached train/val/test splits
+_DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "13jul_merged_bigR.npz")  # "13jul_merged_bigR  different_keffrange/13jul_merged_subcritical_new LHS_0.8_newbounds
+USE_SPLIT_CACHE = False
+USE_BALANCED_RANGES = False
+# If True, stratify train/val/test over input-parameter space (not keff).
+# Mutually exclusive with USE_BALANCED_RANGES (param stratification wins if both True).
+USE_PARAM_STRATIFIED = True
+# Quantile bins per input parameter for fuel_r-primary stratified splits.
+PARAM_STRAT_BINS = 5
+CACHE_DIR_NAME = "split_cache/.split_cache_"  # subdir under data/highfidelity for cached train/val/test splits
 
 
 LOG_RATIO_CLIP_LO = -1.8
@@ -541,10 +547,15 @@ def _solve_sample_worker(args):
 # SECTION 3: Neural Network
 # ─────────────────────────────────────────────────────────────────────────────
 
-def clip_ste(x, lo, hi):
-    clipped = jnp.clip(x, lo, hi)
-    # forward: use clipped value. backward: gradient flows as if x passed through unchanged.
-    return x + jax.lax.stop_gradient(clipped - x)
+def clip_log_ratios(x, lo, hi):
+    """Hard clip log-ratio corrections in forward *and* backward.
+
+    Prefer this over a straight-through estimator: STE clips only the
+    forward value, so Adam keeps receiving unbounded grads that push the
+    network further past the bounds — updates then behave as if the clip
+    were missing. Hard clip zeros the local gradient outside [lo, hi].
+    """
+    return jnp.clip(x, lo, hi)
 
 class GeneratorNN(nnx.Module):
     """
@@ -677,8 +688,9 @@ class PEDSModel(nnx.Module):
             log_base    = self._log_baselines(xs_baselines,  log_xs_mean, log_xs_std)
         with timer("NN generated XS log ratios", verbose=False):
             log_ratios  = self.generator(geoms, log_base, phi_norm, training=False)
-        # ── v1: NO clip, NO warmup ─────────────────────────────────────────
-        log_ratios = clip_ste(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)  # now consistent
+        # Same hard clip as the training path (__call__) so pre-solve XS
+        # matches the XS that the custom VJP / loss actually uses.
+        log_ratios = clip_log_ratios(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)
         xs_final = jnp.exp(log_ratios) * xs_baselines * XS_MASK_J
         xs_final = self._normalize_chi(xs_final, xs_baselines)
         return np.array(xs_final)  # concrete numpy, exits JAX world
@@ -689,7 +701,7 @@ class PEDSModel(nnx.Module):
             batch_size = geoms.shape[0]
             log_base = self._log_baselines(xs_baselines, log_xs_mean, log_xs_std)
             log_ratios = self.generator(geoms, log_base, phi_norm, training=False)
-            log_ratios = clip_ste(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)
+            log_ratios = clip_log_ratios(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)
             return np.array(log_ratios)
     
     def __call__(self, geoms, params_raw, xs_baselines, phi_norm,
@@ -699,7 +711,7 @@ class PEDSModel(nnx.Module):
         log_base   = self._log_baselines(xs_baselines, log_xs_mean, log_xs_std)
         phi = jnp.reshape(phi_norm, (batch_size, -1))
         log_ratios = self.generator(geoms, log_base, phi, training)
-        log_ratios = clip_ste(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)  # exp(±0.7) ≈ 0.5x to 2x
+        log_ratios = clip_log_ratios(log_ratios, LOG_RATIO_CLIP_LO, LOG_RATIO_CLIP_HI)
 
         xs_final = jnp.exp(log_ratios) * xs_baselines * XS_MASK_J # [batch, 3, 12]
         xs_final = self._normalize_chi(xs_final, xs_baselines)
@@ -824,6 +836,335 @@ def derive_split_indices(filepath, train_size, val_size, test_size,
             f"Got: train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)}"
         )
     return train_idx, val_idx, test_idx
+
+
+def _allocate_counts(total: int, weights: np.ndarray,
+                     capacities: np.ndarray | None = None) -> np.ndarray:
+    """
+    Allocate an integer `total` across bins using largest-remainder rounding.
+    Optional `capacities` cap each bin; any overflow is redistributed.
+    """
+    if total < 0:
+        raise ValueError(f"total must be non-negative, got {total}")
+    if total == 0:
+        return np.zeros_like(weights, dtype=int)
+
+    w = np.array(weights, dtype=np.float64)
+    if np.any(w < 0):
+        raise ValueError("weights must be non-negative")
+    if np.all(w == 0):
+        w = np.ones_like(w, dtype=np.float64)
+    w = w / w.sum()
+
+    raw = total * w
+    alloc = np.floor(raw).astype(int)
+    remainder = int(total - alloc.sum())
+    if remainder > 0:
+        order = np.argsort(-(raw - alloc))
+        alloc[order[:remainder]] += 1
+
+    if capacities is None:
+        return alloc
+
+    caps = np.array(capacities, dtype=int)
+    if np.any(caps < 0):
+        raise ValueError("capacities must be non-negative")
+
+    alloc = np.minimum(alloc, caps)
+    deficit = int(total - alloc.sum())
+    if deficit <= 0:
+        return alloc
+
+    while deficit > 0:
+        spare = caps - alloc
+        candidates = np.where(spare > 0)[0]
+        if len(candidates) == 0:
+            break
+        order = candidates[np.argsort(-spare[candidates])]
+        for b in order:
+            if deficit == 0:
+                break
+            alloc[b] += 1
+            deficit -= 1
+
+    if alloc.sum() != total:
+        raise ValueError(
+            f"Could not allocate requested {total} samples under capacities "
+            f"(max possible {caps.sum()})."
+        )
+    return alloc
+
+
+def _assign_param_strata(rawparams: np.ndarray,
+                         n_bins_per_param: int = 2,
+                         bin_edges_per_param=None):
+    """
+    Digitize each parameter into bins and (optionally) pack a joint id.
+
+    Default: equal-count (quantile) bins per parameter.
+    Optional `bin_edges_per_param`: list of length n_params, each an array of
+    edges (length n_bins+1) for fixed-width / custom ranges.
+
+    Returns
+    -------
+    stratum_ids : np.ndarray[int64], shape [N]  (joint id; diagnostic only)
+    edges_list  : list of edge arrays actually used (one per parameter)
+    bin_matrix  : np.ndarray[int], shape [N, n_params] per-parameter bin index
+    """
+    rawparams = np.asarray(rawparams, dtype=np.float64)
+    if rawparams.ndim != 2:
+        raise ValueError(f"rawparams must be 2D [N, P], got shape {rawparams.shape}")
+    n, n_params = rawparams.shape
+    if n_bins_per_param < 1 and bin_edges_per_param is None:
+        raise ValueError("n_bins_per_param must be >= 1")
+
+    edges_list = []
+    bin_cols = []
+    for p in range(n_params):
+        if bin_edges_per_param is not None:
+            edges = np.asarray(bin_edges_per_param[p], dtype=np.float64)
+            if edges.ndim != 1 or len(edges) < 2:
+                raise ValueError(
+                    f"bin_edges_per_param[{p}] must be 1D with >= 2 edges, got {edges.shape}"
+                )
+        else:
+            qs = np.linspace(0.0, 1.0, int(n_bins_per_param) + 1)
+            edges = np.quantile(rawparams[:, p], qs).astype(np.float64)
+            # Break ties so digitize bins stay well-defined.
+            for i in range(1, len(edges)):
+                if edges[i] <= edges[i - 1]:
+                    edges[i] = np.nextafter(edges[i - 1], np.inf)
+
+        edges_list.append(edges)
+        b = np.digitize(rawparams[:, p], edges[1:-1], right=False)
+        b = np.clip(b, 0, len(edges) - 2)
+        bin_cols.append(b.astype(np.int64))
+
+    bin_matrix = np.stack(bin_cols, axis=1)  # [N, P]
+    n_bins = np.array([len(e) - 1 for e in edges_list], dtype=np.int64)
+    # Pack multi-index into a single integer stratum id (diagnostics / legacy).
+    stratum_ids = bin_matrix[:, 0].copy()
+    for p in range(1, n_params):
+        stratum_ids = stratum_ids * int(n_bins[p]) + bin_matrix[:, p]
+    return stratum_ids.astype(np.int64), edges_list, bin_matrix
+
+
+def _param_label_matrix(bin_matrix: np.ndarray, n_bins_per_param: int):
+    """
+    One-hot multi-label matrix over per-parameter bins.
+
+    label index = param_index * n_bins + bin_index
+    Shape: [N, n_params * n_bins]
+    """
+    bin_matrix = np.asarray(bin_matrix, dtype=np.int64)
+    n, n_params = bin_matrix.shape
+    n_bins = int(n_bins_per_param)
+    n_labels = n_params * n_bins
+    labels = np.zeros((n, n_labels), dtype=bool)
+    for p in range(n_params):
+        b = np.clip(bin_matrix[:, p], 0, n_bins - 1)
+        labels[np.arange(n), p * n_bins + b] = True
+    return labels
+
+
+def _even_spaced_indices(n: int, k: int) -> np.ndarray:
+    """Pick k distinct positions spread across range(n)."""
+    if k <= 0:
+        return np.array([], dtype=np.int64)
+    if k > n:
+        raise ValueError(f"Cannot pick k={k} distinct indices from n={n}")
+    if k == n:
+        return np.arange(n, dtype=np.int64)
+    # linspace then uniquify / repair collisions by shifting
+    raw = np.round(np.linspace(0, n - 1, k)).astype(np.int64)
+    raw = np.clip(raw, 0, n - 1)
+    chosen = []
+    used = set()
+    for p in raw:
+        q = int(p)
+        while q in used and q + 1 < n:
+            q += 1
+        while q in used and q - 1 >= 0:
+            q -= 1
+        if q in used:
+            # fallback scan
+            for r in range(n):
+                if r not in used:
+                    q = r
+                    break
+        used.add(q)
+        chosen.append(q)
+    return np.array(chosen, dtype=np.int64)
+
+
+def derive_split_indices_by_params(filepath, train_size, val_size, test_size,
+                                   train_seed=42, holdout_seed=0,
+                                   n_bins_per_param=2, bin_edges_per_param=None,
+                                   balanced=False,
+                                   fuel_r_idx=2, fuel_r_weight=None):
+    """
+    Stratified train/val/test selection over input-parameter marginals.
+
+    Priority:
+      1. Hard equal coverage of every ``fuel_r`` quantile bin in train/val/test.
+      2. Within each fuel_r bin, sort by the other parameters' bins and take
+         evenly spaced holdouts so secondary ranges stay covered too.
+
+    Holdout semantics: ``holdout_seed`` fixes val/test; ``train_seed`` selects
+    train from the remaining pool inside each fuel_r bin.
+    """
+    del balanced, fuel_r_weight
+
+    data = np.load(filepath, allow_pickle=True)
+    rawparams = np.array(data["params_raw"], dtype=np.float32)
+    n_samples = len(rawparams)
+    requested_total = int(train_size + val_size + test_size)
+    if requested_total > n_samples:
+        raise ValueError(
+            f"Requested train+val+test={requested_total} exceeds available "
+            f"samples={n_samples}"
+        )
+
+    _, edges_list, bin_matrix = _assign_param_strata(
+        rawparams,
+        n_bins_per_param=n_bins_per_param,
+        bin_edges_per_param=bin_edges_per_param,
+    )
+    n_params = bin_matrix.shape[1]
+    n_bins = int(n_bins_per_param)
+    fuel_r_idx = int(fuel_r_idx)
+    if not (0 <= fuel_r_idx < n_params):
+        raise ValueError(f"fuel_r_idx={fuel_r_idx} out of range for n_params={n_params}")
+
+    secondary_params = [p for p in range(n_params) if p != fuel_r_idx]
+    fuel_bins = bin_matrix[:, fuel_r_idx]
+    bin_members = [np.where(fuel_bins == b)[0].astype(np.int64) for b in range(n_bins)]
+    capacities = np.array([len(m) for m in bin_members], dtype=int)
+
+    uniform = np.ones(n_bins, dtype=np.float64)
+    holdout_total = int(val_size + test_size)
+    holdout_counts = _allocate_counts(holdout_total, uniform, capacities=capacities)
+    val_counts = _allocate_counts(
+        int(val_size), holdout_counts.astype(np.float64), capacities=holdout_counts
+    )
+    test_counts = holdout_counts - val_counts
+    remaining_cap = capacities - holdout_counts
+    train_counts = _allocate_counts(
+        int(train_size), uniform, capacities=remaining_cap
+    )
+
+    if (int(train_counts.sum()) != int(train_size)
+            or int(val_counts.sum()) != int(val_size)
+            or int(test_counts.sum()) != int(test_size)):
+        raise ValueError(
+            "fuel_r primary allocation mismatch: "
+            f"train={train_counts.sum()} (wanted {train_size}), "
+            f"val={val_counts.sum()} (wanted {val_size}), "
+            f"test={test_counts.sum()} (wanted {test_size})"
+        )
+
+    holdout_rng = np.random.default_rng(holdout_seed)
+    train_rng = np.random.default_rng(train_seed)
+
+    train_parts, val_parts, test_parts = [], [], []
+    for b in range(n_bins):
+        members = bin_members[b].copy()
+        n_val = int(val_counts[b])
+        n_test = int(test_counts[b])
+        n_train = int(train_counts[b])
+        need_here = n_val + n_test + n_train
+        if need_here == 0:
+            continue
+        if len(members) < need_here:
+            raise ValueError(
+                f"fuel_r bin {b}: have {len(members)}, need {need_here}"
+            )
+
+        # Sort by secondary param bins so even spacing covers their ranges.
+        # Tiny holdout-seeded jitter breaks ties without destroying order.
+        h_rng = np.random.default_rng(holdout_rng.integers(0, 2**31 - 1))
+        jitter = h_rng.random(len(members))
+        sort_keys = [jitter]
+        for p in reversed(secondary_params):
+            sort_keys.append(bin_matrix[members, p].astype(np.float64))
+        order = np.lexsort(sort_keys)  # last key is primary
+        sorted_members = members[order]
+
+        holdout_n = n_val + n_test
+        if holdout_n > 0:
+            holdout_pos = _even_spaced_indices(len(sorted_members), holdout_n)
+            holdout_pos_sorted = np.sort(holdout_pos)
+            holdout_samples = sorted_members[holdout_pos_sorted]
+            # Round-robin into val/test along the spaced sequence so both
+            # track the same secondary sweep.
+            val_b, test_b = [], []
+            nv, nt = n_val, n_test
+            for s in holdout_samples:
+                if nv > 0 and nv >= nt:
+                    val_b.append(int(s)); nv -= 1
+                elif nt > 0:
+                    test_b.append(int(s)); nt -= 1
+                elif nv > 0:
+                    val_b.append(int(s)); nv -= 1
+            val_b = np.array(val_b, dtype=np.int64)
+            test_b = np.array(test_b, dtype=np.int64)
+        else:
+            val_b = np.array([], dtype=np.int64)
+            test_b = np.array([], dtype=np.int64)
+
+        held = set(val_b.tolist()) | set(test_b.tolist())
+        pool = np.array([int(i) for i in members.tolist() if int(i) not in held],
+                        dtype=np.int64)
+        t_rng = np.random.default_rng(train_rng.integers(0, 2**31 - 1))
+        t_rng.shuffle(pool)
+        if len(pool) < n_train:
+            raise ValueError(
+                f"fuel_r bin {b}: train pool {len(pool)} < need {n_train}"
+            )
+        # Prefer evenly spaced train picks from pool sorted by secondary bins
+        # so train also covers secondary ranges uniformly inside the bin.
+        if n_train > 0 and len(pool) > n_train:
+            pool_jitter = t_rng.random(len(pool))
+            pool_keys = [pool_jitter]
+            for p in reversed(secondary_params):
+                pool_keys.append(bin_matrix[pool, p].astype(np.float64))
+            pool_order = np.lexsort(pool_keys)
+            pool_sorted = pool[pool_order]
+            train_pos = _even_spaced_indices(len(pool_sorted), n_train)
+            train_b = pool_sorted[train_pos]
+        else:
+            train_b = pool[:n_train].astype(np.int64)
+
+        train_parts.append(train_b)
+        val_parts.append(val_b)
+        test_parts.append(test_b)
+
+    train_idx = np.concatenate(train_parts) if train_parts else np.array([], dtype=np.int64)
+    val_idx = np.concatenate(val_parts) if val_parts else np.array([], dtype=np.int64)
+    test_idx = np.concatenate(test_parts) if test_parts else np.array([], dtype=np.int64)
+
+    train_rng.shuffle(train_idx)
+    holdout_rng.shuffle(val_idx)
+    holdout_rng.shuffle(test_idx)
+
+    full_label_mat = _param_label_matrix(bin_matrix, n_bins)
+    meta = {
+        "n_strata": int(n_bins),
+        "n_labels": int(n_params * n_bins),
+        "n_bins_per_param": n_bins,
+        "balanced": True,
+        "method": "fuel_r_primary_even_spaced",
+        "fuel_r_idx": fuel_r_idx,
+        "edges_list": edges_list,
+        "fuel_r_train_counts": train_counts,
+        "fuel_r_val_counts": val_counts,
+        "fuel_r_test_counts": test_counts,
+        "train_label_counts": full_label_mat[train_idx].sum(axis=0).astype(int),
+        "val_label_counts": full_label_mat[val_idx].sum(axis=0).astype(int),
+        "test_label_counts": full_label_mat[test_idx].sum(axis=0).astype(int),
+    }
+    return train_idx, val_idx, test_idx, meta
+
 
 def _save_split_cache(cache_path, train_idx, val_idx, test_idx, metadata):
     """Save splits to disk for reuse across runs."""
@@ -1211,69 +1552,15 @@ def load_data_balanced_ranges(filepath, train_size, val_size, test_size,
     rawparams = np.array(data["params_raw"], dtype=np.float32)
 
     if bin_edges is None:
-        bin_edges = np.array([0.85, 0.875, 0.90, 0.925, 0.95, 0.975,
-                              1.00, 1.025, 1.05, 1.075, 1.10, 1.125, 1.15], dtype=np.float32)
+        bin_edges = np.array([0.80, 0.85, 0.875, 0.90, 0.925, 0.95, 0.975,
+                              1.00, 1.025, 1.05, 1.075, 1.10, 1.125, 1.15, 
+                              1.175, 1.20, 1.225, 1.25, 1.275, 1.30, 1.35], dtype=np.float32)
 
     if split_cache_path is not None:
         cache_dir = os.path.dirname(split_cache_path)
 
     train_rng = np.random.default_rng(train_seed)
     nbins = len(bin_edges) - 1
-
-    def allocate_counts(total: int, weights: np.ndarray, capacities: np.ndarray | None = None) -> np.ndarray:
-        """
-        Allocate an integer `total` across bins using largest-remainder rounding.
-        Optional `capacities` cap each bin; any overflow is redistributed.
-        """
-        if total < 0:
-            raise ValueError(f"total must be non-negative, got {total}")
-        if total == 0:
-            return np.zeros_like(weights, dtype=int)
-
-        w = np.array(weights, dtype=np.float64)
-        if np.any(w < 0):
-            raise ValueError("weights must be non-negative")
-        if np.all(w == 0):
-            w = np.ones_like(w, dtype=np.float64)
-        w = w / w.sum()
-
-        raw = total * w
-        alloc = np.floor(raw).astype(int)
-        remainder = int(total - alloc.sum())
-        if remainder > 0:
-            order = np.argsort(-(raw - alloc))
-            alloc[order[:remainder]] += 1
-
-        if capacities is None:
-            return alloc
-
-        caps = np.array(capacities, dtype=int)
-        if np.any(caps < 0):
-            raise ValueError("capacities must be non-negative")
-
-        alloc = np.minimum(alloc, caps)
-        deficit = int(total - alloc.sum())
-        if deficit <= 0:
-            return alloc
-
-        while deficit > 0:
-            spare = caps - alloc
-            candidates = np.where(spare > 0)[0]
-            if len(candidates) == 0:
-                break
-            order = candidates[np.argsort(-spare[candidates])]
-            for b in order:
-                if deficit == 0:
-                    break
-                alloc[b] += 1
-                deficit -= 1
-
-        if alloc.sum() != total:
-            raise ValueError(
-                f"Could not allocate requested {total} samples under capacities "
-                f"(max possible {caps.sum()})."
-            )
-        return alloc
 
     trainidx, validx, testidx = [], [], []
     bin_indices = []
@@ -1308,10 +1595,10 @@ def load_data_balanced_ranges(filepath, train_size, val_size, test_size,
     # Step 1: allocate train+val across bins evenly (capped by per-bin capacity)
     uniform_weights = np.ones(nbins, dtype=np.float64)
     requested_tv = int(train_size + val_size)
-    tv_counts = allocate_counts(requested_tv, uniform_weights, capacities=capacities)
+    tv_counts = _allocate_counts(requested_tv, uniform_weights, capacities=capacities)
 
     # Step 2: split each bin's tv allocation into val/train proportionally
-    val_counts = allocate_counts(val_size, tv_counts.astype(np.float64), capacities=tv_counts)
+    val_counts = _allocate_counts(val_size, tv_counts.astype(np.float64), capacities=tv_counts)
     train_counts = tv_counts - val_counts
 
     if int(train_counts.sum()) != int(train_size) or int(val_counts.sum()) != int(val_size):
@@ -1324,7 +1611,7 @@ def load_data_balanced_ranges(filepath, train_size, val_size, test_size,
     # Step 3: allocate test evenly across bins, capped by whatever capacity is LEFT
     # after train+val are removed from each bin.
     remaining_capacity = capacities - tv_counts
-    test_counts = allocate_counts(test_size, uniform_weights, capacities=remaining_capacity)
+    test_counts = _allocate_counts(test_size, uniform_weights, capacities=remaining_capacity)
 
     if int(test_counts.sum()) != int(test_size):
         raise ValueError(
@@ -1389,6 +1676,82 @@ def load_data_balanced_ranges(filepath, train_size, val_size, test_size,
         (testidx, geoms[testidx], keffs[testidx], rawparams[testidx], testphifeatures),
     )
 
+
+def load_data_param_stratified(filepath, train_size, val_size, test_size,
+                               train_seed=42, holdout_seed=0,
+                               n_bins_per_param=None, bin_edges_per_param=None,
+                               balanced=False):
+    """
+    Load dataset and split train/val/test by stratifying over input parameters
+    (params_raw), not keff.
+
+    Primary: equal coverage of every fuel_r quantile bin in train/val/test.
+    Secondary: within each fuel_r bin, evenly spaced samples across the other
+    parameter bins so no geometry sub-range is left only in train.
+
+    Returns the same nested tuple layout as load_data().
+    """
+    if n_bins_per_param is None:
+        n_bins_per_param = PARAM_STRAT_BINS
+
+    data = np.load(filepath, allow_pickle=True)
+    geoms = np.array(data["params"], dtype=np.float32)
+    keffs = np.array(data["keffs"], dtype=np.float32)
+    rawparams = np.array(data["params_raw"], dtype=np.float32)
+
+    print("\n=== Parameter-stratified split (fuel_r primary + even-spaced) ===")
+    print(f"  Dataset loaded: {filepath}")
+    print(f"  Requested sizes: train={train_size}, val={val_size}, test={test_size}")
+    print(f"  Split seeds: train_seed={train_seed}, holdout_seed={holdout_seed}")
+    print(f"  Bins per parameter: {n_bins_per_param}")
+    print(f"  Primary param: fuel_r (hard coverage per bin)")
+    print(f"  Parameters: {PARAM_NAMES}")
+    print(f"  Dataset samples available: {len(geoms)}")
+
+    train_idx, val_idx, test_idx, meta = derive_split_indices_by_params(
+        filepath, train_size, val_size, test_size,
+        train_seed=train_seed, holdout_seed=holdout_seed,
+        n_bins_per_param=n_bins_per_param,
+        bin_edges_per_param=bin_edges_per_param,
+        balanced=balanced,
+        fuel_r_idx=PARAM_NAMES.index("fuel_r") if "fuel_r" in PARAM_NAMES else 2,
+    )
+    train_idx, val_idx, test_idx = _validate_split_indices(
+        train_idx, val_idx, test_idx,
+        dataset_size=len(geoms),
+        expected_train=train_size,
+        expected_val=val_size,
+        expected_test=test_size,
+        context="param-stratified split",
+    )
+
+    print(f"  Method: {meta.get('method')} | primary fuel_r bins={meta.get('n_strata')}")
+    if "fuel_r_train_counts" in meta:
+        print(f"  fuel_r bin quotas train/val/test: "
+              f"{meta['fuel_r_train_counts'].tolist()} / "
+              f"{meta['fuel_r_val_counts'].tolist()} / "
+              f"{meta['fuel_r_test_counts'].tolist()}")
+    print(f"  Final sizes: train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)}")
+    print(f"  Train k range: {keffs[train_idx].min():.3f} – {keffs[train_idx].max():.3f}")
+    print(f"  Val   k range: {keffs[val_idx].min():.3f} – {keffs[val_idx].max():.3f}")
+    print(f"  Test  k range: {keffs[test_idx].min():.3f} – {keffs[test_idx].max():.3f}")
+
+    print_param_bin_counts("TRAIN", rawparams[train_idx], edges_list=meta["edges_list"])
+    print_param_bin_counts("VAL",   rawparams[val_idx],   edges_list=meta["edges_list"])
+    print_param_bin_counts("TEST",  rawparams[test_idx],  edges_list=meta["edges_list"])
+
+    print("Precomputing φ_reg features (done once)…")
+    train_phi_features = compute_phi_features(rawparams[train_idx])
+    val_phi_features = compute_phi_features(rawparams[val_idx])
+    test_phi_features = compute_phi_features(rawparams[test_idx])
+
+    return (
+        (train_idx, geoms[train_idx], keffs[train_idx], rawparams[train_idx], train_phi_features),
+        (val_idx, geoms[val_idx], keffs[val_idx], rawparams[val_idx], val_phi_features),
+        (test_idx, geoms[test_idx], keffs[test_idx], rawparams[test_idx], test_phi_features),
+    )
+
+
 def print_keff_bin_counts(name, keffs):
     edges = np.array([0.75, 0.80, 0.85, 0.90, 0.95,
                       1.00, 1.05, 1.10, 1.15, 1.20, 1.25], dtype=np.float32)
@@ -1402,6 +1765,40 @@ def print_keff_bin_counts(name, keffs):
             n = np.sum((keffs >= lo) & (keffs <= hi))
             label = f"[{lo:.2f}, {hi:.2f}]"
         print(f"{label}: {n}")
+
+
+def print_param_bin_counts(name, rawparams, edges_list=None, n_bins=None):
+    """
+    Print per-parameter bin occupancy for a split (marginal coverage check).
+    Uses the same edges as the stratified split when `edges_list` is provided.
+    """
+    rawparams = np.asarray(rawparams, dtype=np.float64)
+    if rawparams.size == 0:
+        print(f"\n{name} param bin counts: (empty)")
+        return
+    n_params = rawparams.shape[1]
+    if edges_list is None:
+        if n_bins is None:
+            n_bins = PARAM_STRAT_BINS
+        _, edges_list, _ = _assign_param_strata(rawparams, n_bins_per_param=n_bins)
+
+    print(f"\n{name} param bin counts (marginal):")
+    for p in range(min(n_params, len(PARAM_NAMES))):
+        edges = np.asarray(edges_list[p], dtype=np.float64)
+        nb = len(edges) - 1
+        pname = PARAM_NAMES[p] if p < len(PARAM_NAMES) else f"param_{p}"
+        parts = []
+        for b in range(nb):
+            lo, hi = edges[b], edges[b + 1]
+            if b < nb - 1:
+                n = int(np.sum((rawparams[:, p] >= lo) & (rawparams[:, p] < hi)))
+                label = f"[{lo:.3g},{hi:.3g})"
+            else:
+                n = int(np.sum((rawparams[:, p] >= lo) & (rawparams[:, p] <= hi)))
+                label = f"[{lo:.3g},{hi:.3g}]"
+            parts.append(f"{label}:{n}")
+        print(f"  {pname}: " + "  ".join(parts))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 5: Metrics
@@ -2075,17 +2472,28 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
     init_csv_logs()
         
     # ── 8.1 Data ─────────────────────────────────────────────────────────────
-    USE_BALANCED_RANGES = True
     print("Loading data …")
     print(f"  Split cache enabled: {USE_SPLIT_CACHE}")
-    if USE_BALANCED_RANGES: 
+    if USE_PARAM_STRATIFIED:
+        print(f"  Split mode: parameter-stratified fuel_r-primary (bins/param={PARAM_STRAT_BINS})")
+        (train_idx, train_geoms, train_keffs, train_rawparams, train_phi_features), \
+        (val_idx, val_geoms, val_keffs, val_rawparams, val_phi_features), \
+        (test_idx, test_geoms, test_keffs, test_rawparams, test_phi_features) = load_data_param_stratified(
+            filepath, train_size, val_size, test_size,
+            train_seed=seed, holdout_seed=HOLDOUT_SEED,
+            n_bins_per_param=PARAM_STRAT_BINS,
+            balanced=False,
+        )
+    elif USE_BALANCED_RANGES:
+        print("  Split mode: keff balanced fixed-range")
         (train_idx, train_geoms, train_keffs, train_rawparams, train_phi_features), \
         (val_idx, val_geoms, val_keffs, val_rawparams, val_phi_features), \
         (test_idx, test_geoms, test_keffs, test_rawparams, test_phi_features) = load_data_balanced_ranges(
             filepath, train_size, val_size, test_size,
             train_seed=seed, holdout_seed=HOLDOUT_SEED,
         )
-    else:    
+    else:
+        print("  Split mode: keff quantile-stratified (cached)")
         split_cache_dir = os.path.join(PARENT_DIR, "data", "highfidelity", CACHE_DIR_NAME)
         (train_idx, train_geoms, train_keffs, train_rawparams, train_phi_features), \
         (val_idx, val_geoms,   val_keffs,   val_rawparams,   val_phi_features),  \
@@ -2113,7 +2521,7 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
     test_phi_norm = ((test_phi_features - phi_mean) / phi_std).astype(np.float32)   # add this
 
     n_phi_feats = GEO.G * 3
-    # ── 8.2 Model — v1: plain Adam, constant LR, NO grad clip ────────────────
+    # ── 8.2 Model — Adam + cosine/warmup LR + global-norm grad clip ───────────
     rngs      = nnx.Rngs(seed)
     model     = PEDSModel(hidden_sizes=hidden_sizes, n_regions=n_regions, G=G, n_phi_feats=n_phi_feats, rngs=rngs)
     # Cosine-to-floor up to `decay_epochs`, then hold LR at lr_min.
@@ -2128,10 +2536,18 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
         alpha=lr_min / lr_max,   # final lr = lr_max * alpha = lr_min
     )
     hold_schedule = optax.constant_schedule(lr_min)
-    lr_schedule = optax.join_schedules(
+    warmup_steps = int(0.1 * decay_steps)  # ~10% of training
+    lr_schedule = optax.warmup_cosine_decay_schedule(
+        init_value=lr_min,       # start near zero, not zero, to avoid divide issues
+        peak_value=lr_max,
+        warmup_steps=warmup_steps,
+        decay_steps=decay_steps,
+        end_value=lr_min,
+    )
+    """ lr_schedule = optax.join_schedules(
         schedules=[cosine_schedule, hold_schedule],
         boundaries=[decay_steps],
-    )
+    ) """
     print(
         "LR schedule: cosine decay for "
         f"{decay_epochs} epochs ({decay_steps} steps), then hold at {lr_min:.2e}"
@@ -2196,7 +2612,6 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
     best_epoch = 0
 
     print(f"\nTraining for {epochs} epochs …")
-    epoch_grad_norms = []
 
     # ── Epoch 0: true pre-training baseline ──────────────────
     print("Computing epoch 0 baseline for train set...")
@@ -2239,9 +2654,9 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
     # responsive enough to track genuine improvement.
     # Initialization: run epoch 1 first, then seed the EMA with that real value so
     # the warm-up bias from an arbitrary starting point is entirely avoided.
-    EMA_ALPHA     = 0.15
+    EMA_ALPHA     = 0.1
     MIN_SAVE_EPOCH = 30   # don't save before the model has passed early oscillations
-    PATIENCE = 25  # epochs without EMA improvement before stopping
+    PATIENCE = 20  # epochs without EMA improvement before stopping
     epochs_since_improvement = 0
     ema_val_mean_pcm = None   # will be set at end of epoch 1
     train_shuffle_rng = np.random.default_rng(seed)
@@ -2260,6 +2675,7 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
 
         epoch_loss = 0.0
         all_kp_train, all_kr_train, all_sample_ids  = [], [], []
+        epoch_grad_norms = []  # reset each epoch (pre-clip norms for diagnostics)
 
         for batch_idx, (bg, bk, br, bb, bphi, bsid) in enumerate(data_loader(
                 t_geoms, t_keffs, t_raw, t_base, t_phi, t_sample_ids, batch_size=batch_size)):
@@ -2289,9 +2705,10 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
                     model, bp, bkj, br, bxs, b_phi_j,
                     log_xs_mean_j, log_xs_std_j,
                 )
+            # Pre-clip norm (clip_by_global_norm runs inside optimizer.tx).
             grad_norm = float(optax.global_norm(grads))
             epoch_grad_norms.append(grad_norm)
-            optimizer.update(model, grads)
+            optimizer.update(model, grads)  # every batch: clip → Adam → apply
 
             epoch_loss    += float(loss)
             all_kp_train.extend(np.array(keff_preds_batch).tolist())
