@@ -27,6 +27,16 @@ USAGE
     python evaluate_test_metrics.py /path/to/LOGS
     python evaluate_test_metrics.py /path/to/LOGS --out my_summary.csv
     python evaluate_test_metrics.py /path/to/LOGS --use-current-peds
+
+Per-seed alternate tests (after generate_alt_test_splits.py):
+    python evaluate_test_metrics.py /path/to/LOGS \\
+        --split-log alt_split_log.csv \\
+        --results-dirname testset_results_alt
+
+    python evaluate_test_metrics.py /path/to/LOGS \
+        --with-val-study \
+        --split-log alt_split_log.csv \
+        --results-dirname testset_results_alt
 =========================================================================
 """
 import os
@@ -55,7 +65,7 @@ MODULES_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(MODULES_DIR)
 
 sys.path.insert(0, os.path.join(MODULES_DIR, "plot_functions"))
-from plots_all import plot_keff_scatter, plot_parallel_coords  # noqa: E402
+from plots_all import plot_keff_scatter, plot_parallel_coords, plot_error_vs_keff  # noqa: E402
 
 # rawparams column order → names expected by plots_all's plot_parallel_coords (PARAMS).
 PARAM_COLS = [
@@ -71,6 +81,7 @@ PARAM_COLS = [
 #"RUNS/bounds1000_70decayepochs"
 OUTPUT_DIRNAME = "testset_results"
 OUTPUT_FILENAME = "test_metrics_all_runs.csv"
+SPLIT_LOG_NAME = "split_log.csv"  # override via --split-log (e.g. alt_split_log.csv)
 
 # Dataset path used to load arrays for evaluation.
 # Set to None to auto-detect from each run's code_snapshot_*.py.
@@ -79,6 +90,18 @@ DATA_FILEPATH_OVERRIDE = None
 
 # If True, ignore per-run code_snapshot_*.py and use current modules/PEDS.py.
 USE_CURRENT_PEDS = False
+SCALING_PLOTS = False
+# Optional extras (off by default) — enable via CLI flags --with-error-scatter / --with-val-study.
+GENERATE_ERROR_VS_KEFF_PLOTS = False
+GENERATE_VAL_STUDY = False
+ERROR_VS_KEFF_RED_FRAC = 0.05      # worst 5% -> red
+ERROR_VS_KEFF_ORANGE_FRAC = 0.10   # next slice up to worst 10% (cumulative) -> orange
+VAL_STUDY_DIRNAME = "valset_results"
+VAL_KEFF_MATCH_TOL = 1e-4          # tolerance (in keff units) for backtracing val-log samples to dataset params
+
+# keff-distribution analysis across train / val / test (cheap; uses logged CSVs)
+N_KEFF_BINS = 10
+GENERATE_KEFF_DIST_ONLY = False   # set True via --keff-dist-only (skip checkpoint evaluation)
 
 RUN_PATTERN = re.compile(r"^train_(\d+)_seed_(\d+)$")
 SNAPSHOT_DATA_RE = re.compile(r'_DATA_FILEPATH\s*=\s*os\.path\.join\([^)]*\)\s*$|_DATA_FILEPATH\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
@@ -98,6 +121,9 @@ class RunEvalContext:
         self.PEDSModel = mod.PEDSModel
         self._run_NT_solver = mod._run_NT_solver
         self.compute_phi_features = mod.compute_phi_features
+        # Older snapshots (pre feature-engineering) won't define this — fall
+        # back to None so phi-only behavior is preserved for those runs.
+        self.compute_interaction_features = getattr(mod, "compute_interaction_features", None)
         self.compute_batch_baselines = mod.compute_batch_baselines
         self.compute_metrics = mod.compute_metrics
         self.data_loader = mod.data_loader
@@ -221,11 +247,14 @@ def _indices_signature(indices):
     return hashlib.sha1(arr.tobytes()).hexdigest()
 
 
-def _read_indices_from_split_log(run_dir, train_size, seed):
-    """Load train/val/test sample indices from split_log.csv in this run folder."""
-    csv_path = os.path.join(run_dir, "split_log.csv")
+def _read_indices_from_split_log(run_dir, train_size, seed, split_log_name=None):
+    """Load train/val/test sample indices from a split CSV in this run folder."""
+    name = split_log_name if split_log_name is not None else SPLIT_LOG_NAME
+    csv_path = os.path.join(run_dir, name)
     if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"split_log.csv not found for run train={train_size}, seed={seed}: {csv_path}")
+        raise FileNotFoundError(
+            f"{name} not found for run train={train_size}, seed={seed}: {csv_path}"
+        )
     train_idx, val_idx, test_idx = [], [], []
     with open(csv_path, newline="") as f:
         reader = csv.DictReader(f)
@@ -240,12 +269,12 @@ def _read_indices_from_split_log(run_dir, train_size, seed):
                 test_idx.append(idx)
     if not train_idx or not test_idx:
         raise ValueError(
-            f"split_log.csv for run train={train_size}, seed={seed} is missing "
+            f"{name} for run train={train_size}, seed={seed} is missing "
             f"required split rows (train={len(train_idx)}, test={len(test_idx)})"
         )
     if len(train_idx) != train_size:
         print(
-            f"  [warn] split_log train count ({len(train_idx)}) != folder train_size ({train_size}) "
+            f"  [warn] {name} train count ({len(train_idx)}) != folder train_size ({train_size}) "
             f"for seed={seed}"
         )
     return (
@@ -322,6 +351,15 @@ def load_dataset_arrays(run_dir=None):
     )
 
 
+def _phi_plus_interaction_features(ctx: RunEvalContext, rawparams, phi_features):
+    """Append engineered interaction features (if this snapshot defines them)
+    to the phi features, matching the concatenation done in PEDS.py train()."""
+    if ctx.compute_interaction_features is None:
+        return phi_features
+    interaction_features = ctx.compute_interaction_features(rawparams)
+    return np.concatenate([phi_features, interaction_features], axis=1)
+
+
 def get_test_payload(geoms, keffs, rawparams, test_idx, split_source, cache, ctx: RunEvalContext):
     """Build test payload from explicit test indices from split_log.csv."""
     sig = _indices_signature(test_idx)
@@ -332,6 +370,7 @@ def get_test_payload(geoms, keffs, rawparams, test_idx, split_source, cache, ctx
     print(f"  Building TEST payload from {split_source} ({len(test_idx)} samples)…")
     test_geoms, test_keffs, test_rawparams = geoms[test_idx], keffs[test_idx], rawparams[test_idx]
     test_phi_features = ctx.compute_phi_features(test_rawparams)
+    test_phi_features = _phi_plus_interaction_features(ctx, test_rawparams, test_phi_features)
 
     payload = dict(geoms=test_geoms, keffs=test_keffs, rawparams=test_rawparams,
                     phi_features=test_phi_features,
@@ -363,6 +402,7 @@ def get_or_build_norm_stats(LOGS_ROOT, train_size, seed, rawparams, train_idx, c
     train_rawparams = rawparams[train_idx]
 
     train_phi_features = ctx.compute_phi_features(train_rawparams)
+    train_phi_features = _phi_plus_interaction_features(ctx, train_rawparams, train_phi_features)
     phi_mean = train_phi_features.mean(axis=0).astype(np.float32)
     phi_std  = (train_phi_features.std(axis=0) + 1e-8).astype(np.float32)
 
@@ -467,9 +507,10 @@ def build_keff_comparison_df(test_payload, k_initial, k_final, best_epoch):
     for epoch_label, k_pred in ((0, k_initial), (best_epoch, k_final)):
         for i in range(len(keffs)):
             kp, kr = float(k_pred[i]), float(keffs[i])
-            dr = abs(kp - kr) / (kp * kr) * 1e5
+            signed_dr = (kp - kr) / (kp * kr) * 1e5
             rec = dict(epoch=epoch_label, sample_idx=int(test_idx[i]),
-                       keff_openmc=kr, keff_peds=kp, delta_rho_pcm=dr)
+                       keff_openmc=kr, keff_peds=kp, delta_rho_pcm=abs(signed_dr),
+                       signed_delta_rho_pcm=signed_dr)
             for j, col in enumerate(PARAM_COLS):
                 rec[col] = float(rawparams[i, j])
             records.append(rec)
@@ -521,6 +562,426 @@ def generate_representative_comparison_plots(df_rows: pd.DataFrame, run_eval_cac
         plot_parallel_coords(comp_df, epoch=best_epoch,
                               save_path=os.path.join(out_dir,"representative_plots" , f"{prefix}_parallel_coords_final.png"))
 
+        if GENERATE_ERROR_VS_KEFF_PLOTS:
+            plot_error_vs_keff(comp_df, epoch=0,
+                                red_frac=ERROR_VS_KEFF_RED_FRAC, orange_frac=ERROR_VS_KEFF_ORANGE_FRAC,
+                                save_path=os.path.join(out_dir, "representative_plots", f"{prefix}_error_vs_keff_initial.png"))
+            plot_error_vs_keff(comp_df, epoch=best_epoch,
+                                red_frac=ERROR_VS_KEFF_RED_FRAC, orange_frac=ERROR_VS_KEFF_ORANGE_FRAC,
+                                save_path=os.path.join(out_dir, "representative_plots", f"{prefix}_error_vs_keff_final.png"))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# keff distribution across train / val / test (representative seed)
+# Overall mean/median keff per split, plus 10 shared keff bins with sample %,
+# mean keff, and mean |delta_rho| before (epoch 0) / after (best epoch).
+# ─────────────────────────────────────────────────────────────────────────────
+def _pair_before_after_from_epoch_log(log_path, best_epoch=None):
+    """Return DataFrame with keff_openmc, delta_rho_before, delta_rho_after.
+
+    Rows are matched on the local per-split sample_idx within the epoch log.
+    """
+    if not os.path.exists(log_path):
+        return None
+    df = pd.read_csv(log_path)
+    if df.empty or "epoch" not in df.columns:
+        return None
+    max_epoch = int(df["epoch"].max())
+    final_epoch = max_epoch
+    if best_epoch is not None:
+        try:
+            be = int(best_epoch)
+            if (df["epoch"] == be).any():
+                final_epoch = be
+        except (TypeError, ValueError):
+            pass
+
+    d0 = df[df["epoch"] == 0][["sample_idx", "keff_openmc", "delta_rho_pcm"]].copy()
+    dF = df[df["epoch"] == final_epoch][["sample_idx", "delta_rho_pcm"]].copy()
+    if d0.empty or dF.empty:
+        return None
+    d0 = d0.rename(columns={"delta_rho_pcm": "delta_rho_before"})
+    dF = dF.rename(columns={"delta_rho_pcm": "delta_rho_after"})
+    merged = d0.merge(dF, on="sample_idx", how="inner")
+    return merged[["keff_openmc", "delta_rho_before", "delta_rho_after"]]
+
+
+def _pair_before_after_from_comparison_csv(comp_path):
+    """Pair epoch-0 / final rows from a rep_*_keff_comparison.csv."""
+    if not os.path.exists(comp_path):
+        return None
+    df = pd.read_csv(comp_path)
+    if df.empty:
+        return None
+    epochs = sorted(df["epoch"].unique())
+    if len(epochs) < 2:
+        return None
+    e0, eF = int(epochs[0]), int(epochs[-1])
+    d0 = df[df["epoch"] == e0][["sample_idx", "keff_openmc", "delta_rho_pcm"]].copy()
+    dF = df[df["epoch"] == eF][["sample_idx", "delta_rho_pcm"]].copy()
+    d0 = d0.rename(columns={"delta_rho_pcm": "delta_rho_before"})
+    dF = dF.rename(columns={"delta_rho_pcm": "delta_rho_after"})
+    merged = d0.merge(dF, on="sample_idx", how="inner")
+    return merged[["keff_openmc", "delta_rho_before", "delta_rho_after"]]
+
+
+def _keff_bin_edges(all_keffs, n_bins=N_KEFF_BINS):
+    lo, hi = float(np.min(all_keffs)), float(np.max(all_keffs))
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        hi = lo + 1e-6
+    return np.linspace(lo, hi, n_bins + 1)
+
+
+def _summarize_keff_distribution(split_frames, n_bins=N_KEFF_BINS):
+    """
+    split_frames: dict {split_name: DataFrame[keff_openmc, delta_rho_before, delta_rho_after]}
+
+    Returns (overall_df, bins_df, edges).
+    """
+    overall_rows = []
+    for split, frame in split_frames.items():
+        k = frame["keff_openmc"].astype(float).to_numpy()
+        overall_rows.append({
+            "split": split,
+            "n_samples": int(len(k)),
+            "keff_mean": float(np.mean(k)),
+            "keff_median": float(np.median(k)),
+            "keff_std": float(np.std(k)),
+            "keff_min": float(np.min(k)),
+            "keff_max": float(np.max(k)),
+            "delta_rho_before_mean": float(frame["delta_rho_before"].mean()),
+            "delta_rho_before_median": float(frame["delta_rho_before"].median()),
+            "delta_rho_after_mean": float(frame["delta_rho_after"].mean()),
+            "delta_rho_after_median": float(frame["delta_rho_after"].median()),
+        })
+    overall_df = pd.DataFrame(overall_rows)
+
+    all_keffs = np.concatenate([
+        f["keff_openmc"].astype(float).to_numpy() for f in split_frames.values()
+    ])
+    edges = _keff_bin_edges(all_keffs, n_bins=n_bins)
+    bin_rows = []
+    for split, frame in split_frames.items():
+        k = frame["keff_openmc"].astype(float).to_numpy()
+        before = frame["delta_rho_before"].astype(float).to_numpy()
+        after = frame["delta_rho_after"].astype(float).to_numpy()
+        # rightmost edge inclusive
+        bin_idx = np.digitize(k, edges[1:-1], right=False)
+        bin_idx = np.clip(bin_idx, 0, n_bins - 1)
+        n_tot = max(len(k), 1)
+        for b in range(n_bins):
+            mask = bin_idx == b
+            n = int(mask.sum())
+            bin_rows.append({
+                "split": split,
+                "bin": b,
+                "keff_lo": float(edges[b]),
+                "keff_hi": float(edges[b + 1]),
+                "n_samples": n,
+                "pct_samples": 100.0 * n / n_tot,
+                "avg_keff": float(np.mean(k[mask])) if n else np.nan,
+                "avg_delta_rho_before": float(np.mean(before[mask])) if n else np.nan,
+                "avg_delta_rho_after": float(np.mean(after[mask])) if n else np.nan,
+                "median_delta_rho_before": float(np.median(before[mask])) if n else np.nan,
+                "median_delta_rho_after": float(np.median(after[mask])) if n else np.nan,
+            })
+    bins_df = pd.DataFrame(bin_rows)
+    return overall_df, bins_df, edges
+
+
+def _plot_keff_distribution(bins_df, overall_df, out_path, title):
+    """Two-panel figure: sample % by keff bin × split, and avg |Δρ| before/after."""
+    splits = [s for s in ("train", "val", "test") if s in set(bins_df["split"])]
+    colors = {"train": "#4C72B0", "val": "#DD8452", "test": "#55A868"}
+    bins = sorted(bins_df["bin"].unique())
+    x = np.arange(len(bins))
+    width = 0.8 / max(len(splits), 1)
+
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
+    for i, split in enumerate(splits):
+        sub = bins_df[bins_df["split"] == split].set_index("bin").reindex(bins)
+        ax0.bar(x + (i - (len(splits) - 1) / 2) * width, sub["pct_samples"].fillna(0).values,
+                width=width, color=colors.get(split, f"C{i}"), label=split, edgecolor="white")
+    ax0.set_ylabel("% of samples in split")
+    ax0.legend(fontsize=10)
+    ax0.grid(True, axis="y", alpha=0.3)
+    ax0.set_title(title)
+
+    # before/after Δρ — one marker style per split, solid=after dashed=before
+    for i, split in enumerate(splits):
+        sub = bins_df[bins_df["split"] == split].set_index("bin").reindex(bins)
+        c = colors.get(split, f"C{i}")
+        ax1.plot(x, sub["avg_delta_rho_before"].values, ls="--", marker="o", color=c,
+                 alpha=0.75, label=f"{split} before")
+        ax1.plot(x, sub["avg_delta_rho_after"].values, ls="-", marker="s", color=c,
+                 label=f"{split} after")
+    ax1.axhline(650, ls=":", color="grey", alpha=0.7, label="β_eff = 650 pcm")
+    ax1.set_ylabel("mean |Δρ| (pcm)")
+    ax1.set_xlabel("keff bin")
+    ax1.legend(fontsize=8, ncol=2)
+    ax1.grid(True, alpha=0.3)
+    ax1.set_ylim(bottom=0)
+
+    # tick labels from first split's edges
+    edge_src = bins_df[bins_df["split"] == splits[0]].set_index("bin").reindex(bins)
+    labels = [f"[{lo:.3f},{hi:.3f})" for lo, hi in zip(edge_src["keff_lo"], edge_src["keff_hi"])]
+    if labels:
+        # close last interval visually
+        labels[-1] = labels[-1][:-1] + "]"
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels, rotation=35, ha="right", fontsize=8)
+
+    # small annotation of overall mean/median
+    note = "  |  ".join(
+        f"{r['split']}: μ={r['keff_mean']:.3f}, med={r['keff_median']:.3f} (n={r['n_samples']})"
+        for _, r in overall_df.iterrows()
+    )
+    fig.text(0.5, 0.01, note, ha="center", va="bottom", fontsize=8, color="dimgray")
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"  Plot saved → {out_path}")
+
+
+def generate_keff_distribution_analysis(logs_root, out_dir, df_rows=None, run_eval_cache=None):
+    """
+    For each train_size's representative seed, summarize keff across train/val/test:
+      - overall mean / median (and before/after |Δρ|)
+      - 10 shared keff bins with %, avg keff, avg |Δρ| before & after
+
+    Uses keff_epoch_log_{train,val}.csv and the representative test comparison CSV
+    (written by generate_representative_comparison_plots, or already on disk).
+    """
+    if df_rows is None:
+        metrics_csv = os.path.join(out_dir, OUTPUT_FILENAME)
+        if not os.path.exists(metrics_csv):
+            print(f"[keff-dist] no metrics CSV at {metrics_csv} — skip")
+            return
+        df_rows = pd.read_csv(metrics_csv)
+    if df_rows is None or df_rows.empty:
+        print("[keff-dist] empty run metrics — skip")
+        return
+
+    run_eval_cache = run_eval_cache or {}
+    reps = select_representative_runs(df_rows)
+    os.makedirs(out_dir, exist_ok=True)
+
+    all_overall, all_bins = [], []
+    for train_size, run_id in sorted(reps.items()):
+        info = run_eval_cache.get(run_id, {})
+        seed = info.get("seed")
+        best_epoch = info.get("best_epoch")
+        run_dir = info.get("run_dir")
+        if seed is None:
+            row = df_rows[df_rows["run_id"] == run_id]
+            if row.empty:
+                # fall back: parse from run_id folder name
+                m = RUN_PATTERN.search(run_id.replace("/", "_"))
+                if not m:
+                    print(f"  [keff-dist] cannot resolve seed for {run_id} — skip")
+                    continue
+                seed = int(m.group(2))
+                best_epoch = None
+            else:
+                seed = int(row.iloc[0]["seed"])
+                best_epoch = row.iloc[0].get("best_epoch", None)
+        if run_dir is None:
+            run_dir = os.path.join(logs_root, run_id)
+            if not os.path.isdir(run_dir):
+                # run_id may already be relative; also try basename form
+                alt = os.path.join(logs_root, f"train_{train_size}_seed_{seed}")
+                run_dir = alt if os.path.isdir(alt) else run_dir
+        if not os.path.isdir(run_dir):
+            print(f"  [keff-dist] missing run dir for {run_id} — skip")
+            continue
+
+        print(f"\n=== keff distribution (train/val/test) for train_size={train_size}, "
+              f"rep={run_id} ===")
+
+        split_frames = {}
+        for split in ("train", "val"):
+            paired = _pair_before_after_from_epoch_log(
+                os.path.join(run_dir, f"keff_epoch_log_{split}.csv"),
+                best_epoch=best_epoch,
+            )
+            if paired is None or paired.empty:
+                print(f"  [warn] no usable {split} epoch log in {run_dir}")
+                continue
+            split_frames[split] = paired
+
+        # Prefer the representative comparison CSV for the test set (has epoch 0 + final).
+        comp_path = os.path.join(out_dir, f"rep_train{train_size}_seed{seed}_keff_comparison.csv")
+        if not os.path.exists(comp_path):
+            # tolerate older leftover seed files for this train_size
+            matches = sorted(glob.glob(os.path.join(
+                out_dir, f"rep_train{train_size}_seed*_keff_comparison.csv")))
+            if matches:
+                comp_path = max(matches, key=os.path.getmtime)
+        test_paired = _pair_before_after_from_comparison_csv(comp_path)
+        if test_paired is not None and not test_paired.empty:
+            split_frames["test"] = test_paired
+        else:
+            print(f"  [warn] no test comparison CSV at {comp_path}")
+
+        if len(split_frames) < 1:
+            print("  [keff-dist] nothing to analyze — skip")
+            continue
+
+        overall_df, bins_df, _edges = _summarize_keff_distribution(split_frames, n_bins=N_KEFF_BINS)
+        overall_df.insert(0, "train_size", train_size)
+        overall_df.insert(1, "seed", seed)
+        overall_df.insert(2, "run_id", run_id)
+        bins_df.insert(0, "train_size", train_size)
+        bins_df.insert(1, "seed", seed)
+        bins_df.insert(2, "run_id", run_id)
+        all_overall.append(overall_df)
+        all_bins.append(bins_df)
+
+        prefix = f"rep_train{train_size}_seed{seed}"
+        overall_path = os.path.join(out_dir, f"{prefix}_keff_dist_overall.csv")
+        bins_path = os.path.join(out_dir, f"{prefix}_keff_dist_bins.csv")
+        overall_df.to_csv(overall_path, index=False)
+        bins_df.to_csv(bins_path, index=False)
+        print(f"  Overall keff by split → {overall_path}")
+        print(overall_df[["split", "n_samples", "keff_mean", "keff_median",
+                          "delta_rho_before_mean", "delta_rho_after_mean"]].to_string(index=False))
+        print(f"  Binned keff stats → {bins_path}")
+
+        _plot_keff_distribution(
+            bins_df, overall_df,
+            out_path=os.path.join(out_dir, f"{prefix}_keff_dist_by_split.png"),
+            title=f"keff distribution by split (train_size={train_size}, seed={seed})",
+        )
+
+    if all_overall:
+        cat_overall = pd.concat(all_overall, ignore_index=True)
+        cat_bins = pd.concat(all_bins, ignore_index=True)
+        cat_overall.to_csv(os.path.join(out_dir, "keff_dist_overall_by_split.csv"), index=False)
+        cat_bins.to_csv(os.path.join(out_dir, "keff_dist_bins_by_split.csv"), index=False)
+        print(f"\n[keff-dist] aggregate tables → {out_dir}/keff_dist_{{overall,bins}}_by_split.csv")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validation-set study (optional)
+# Mirrors the representative test-set comparison, but reads keff_epoch_log_val.csv
+# directly (epoch 0 and best epoch) instead of re-running the solver — those
+# keff_peds values were already logged at training time. Since that log's
+# "sample_idx" is a LOCAL index into the validation subset (not the global
+# dataset index), the 6 parameters are recovered by matching keff_openmc
+# against the full dataset's keffs array (values are unique per geometry).
+# ─────────────────────────────────────────────────────────────────────────────
+def _match_keff_to_dataset(target_keff, keffs_full, tol=VAL_KEFF_MATCH_TOL):
+    """Find the dataset row whose keff is closest to target_keff.
+    Returns (idx, diff) or (None, diff) if the closest match exceeds tol."""
+    diffs = np.abs(keffs_full - target_keff)
+    idx = int(np.argmin(diffs))
+    best_diff = float(diffs[idx])
+    n_close = int(np.sum(diffs <= tol))
+    if best_diff > tol:
+        return None, best_diff, n_close
+    return idx, best_diff, n_close
+
+
+def build_val_keff_comparison_df(run_dir, best_epoch, keffs_full, rawparams_full,
+                                  tol=VAL_KEFF_MATCH_TOL):
+    """Build the initial-vs-final comparison dataframe for the validation set,
+    sourced from keff_epoch_log_val.csv (epoch 0 and best_epoch rows only),
+    backtracing parameters via keff matching against the full dataset."""
+    log_path = os.path.join(run_dir, "keff_epoch_log_val.csv")
+    if not os.path.exists(log_path):
+        print(f"  [warn] no keff_epoch_log_val.csv found in {run_dir} — skipping val study for this run")
+        return None
+
+    val_df = pd.read_csv(log_path)
+    val_df = val_df[val_df["epoch"].isin([0, best_epoch])].copy()
+    if val_df.empty:
+        print(f"  [warn] keff_epoch_log_val.csv has no rows for epoch 0 or {best_epoch} — skipping")
+        return None
+
+    n_dropped, n_ambiguous = 0, 0
+    records = []
+    for _, row in val_df.iterrows():
+        idx, diff, n_close = _match_keff_to_dataset(float(row["keff_openmc"]), keffs_full, tol=tol)
+        if idx is None:
+            n_dropped += 1
+            continue
+        if n_close > 1:
+            n_ambiguous += 1
+        kp, kr = float(row["keff_peds"]), float(row["keff_openmc"])
+        signed_dr = (kp - kr) / (kp * kr) * 1e5
+        rec = dict(epoch=int(row["epoch"]), sample_idx=idx,
+                   keff_openmc=kr, keff_peds=kp, delta_rho_pcm=abs(signed_dr),
+                   signed_delta_rho_pcm=signed_dr)
+        for j, col in enumerate(PARAM_COLS):
+            rec[col] = float(rawparams_full[idx, j])
+        records.append(rec)
+
+    if n_dropped:
+        print(f"  [warn] {n_dropped} val-log sample(s) had no keff match within tol={tol} — dropped")
+    if n_ambiguous:
+        print(f"  [warn] {n_ambiguous} val-log sample(s) matched multiple dataset rows within tol={tol} "
+              f"— used the closest match")
+
+    return pd.DataFrame(records)
+
+
+def generate_val_representative_outputs(df_rows: pd.DataFrame, run_eval_cache: dict, val_out_dir: str):
+    """Validation-set counterpart of generate_representative_comparison_plots.
+    Reuses the SAME representative run already chosen from test-set metrics,
+    reads its keff_epoch_log_val.csv instead of re-running the solver, and
+    produces the same representative-only outputs (comparison CSV, keff
+    scatter, parallel coords, and optionally the error-vs-keff plot)."""
+    if df_rows.empty:
+        return
+    os.makedirs(val_out_dir, exist_ok=True)
+    reps = select_representative_runs(df_rows)
+    for train_size, run_id in sorted(reps.items()):
+        info = run_eval_cache.get(run_id)
+        if info is None:
+            print(f"  [warn] representative run {run_id} missing from eval cache — skipping val study")
+            continue
+
+        seed = info["seed"]
+        best_epoch = info["best_epoch"]
+        try:
+            best_epoch = int(best_epoch)
+        except (TypeError, ValueError):
+            best_epoch = 1
+        print(f"\n=== Validation-set study for train_size={train_size}: {run_id} "
+              f"(same representative run as test set) ===")
+
+        comp_df = build_val_keff_comparison_df(
+            run_dir=info["run_dir"], best_epoch=best_epoch,
+            keffs_full=info["keffs_full"], rawparams_full=info["rawparams_full"],
+        )
+        if comp_df is None or comp_df.empty:
+            continue
+
+        prefix = f"rep_train{train_size}_seed{seed}"
+        comp_df.to_csv(os.path.join(val_out_dir, f"{prefix}_keff_comparison.csv"), index=False)
+
+        both = comp_df[comp_df["epoch"].isin([0, best_epoch])]
+        vmin, vmax = both["delta_rho_pcm"].min(), both["delta_rho_pcm"].max()
+        os.makedirs(os.path.join(val_out_dir, "representative_plots"), exist_ok=True)
+        plot_keff_scatter(comp_df, epoch=0, vmin=vmin, vmax=vmax,
+                           save_path=os.path.join(val_out_dir, "representative_plots", f"{prefix}_keff_scatter_initial.png"))
+        plot_keff_scatter(comp_df, epoch=best_epoch, vmin=vmin, vmax=vmax,
+                           save_path=os.path.join(val_out_dir, "representative_plots", f"{prefix}_keff_scatter_final.png"))
+
+        plot_parallel_coords(comp_df, epoch=0,
+                              save_path=os.path.join(val_out_dir, "representative_plots", f"{prefix}_parallel_coords_initial.png"))
+        plot_parallel_coords(comp_df, epoch=best_epoch,
+                              save_path=os.path.join(val_out_dir, "representative_plots", f"{prefix}_parallel_coords_final.png"))
+
+        if GENERATE_ERROR_VS_KEFF_PLOTS:
+            plot_error_vs_keff(comp_df, epoch=0,
+                                red_frac=ERROR_VS_KEFF_RED_FRAC, orange_frac=ERROR_VS_KEFF_ORANGE_FRAC,
+                                save_path=os.path.join(val_out_dir, "representative_plots", f"{prefix}_error_vs_keff_initial.png"))
+            plot_error_vs_keff(comp_df, epoch=best_epoch,
+                                red_frac=ERROR_VS_KEFF_RED_FRAC, orange_frac=ERROR_VS_KEFF_ORANGE_FRAC,
+                                save_path=os.path.join(val_out_dir, "representative_plots", f"{prefix}_error_vs_keff_final.png"))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Plotting functions
@@ -561,12 +1022,22 @@ def summarize(csv_path, out_csv=None):
         os.path.dirname(csv_path) or ".",
         "rep_train*_seed*_keff_comparison.csv",
     )
-    baseline_rows = []
-    for rep_path in sorted(glob.glob(rep_pattern)):
+    # A folder can accumulate stale rep_train<N>_seed<S>_*.csv files from earlier
+    # runs where a different seed was picked as the representative for that
+    # train_size. Keep only the most-recently-written file per train_size.
+    latest_rep_by_train_size = {}
+    for rep_path in glob.glob(rep_pattern):
         m = re.search(r"rep_train(\d+)_seed(\d+)_keff_comparison\.csv$", os.path.basename(rep_path))
         if m is None:
             continue
         train_size = int(m.group(1))
+        mtime = os.path.getmtime(rep_path)
+        prev = latest_rep_by_train_size.get(train_size)
+        if prev is None or mtime > prev[1]:
+            latest_rep_by_train_size[train_size] = (rep_path, mtime)
+
+    baseline_rows = []
+    for train_size, (rep_path, _mtime) in sorted(latest_rep_by_train_size.items()):
         rep_df = pd.read_csv(rep_path)
         rep_df = rep_df[rep_df["epoch"] == 0].copy()
         if rep_df.empty:
@@ -699,10 +1170,20 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     out_csv = os.path.join(out_dir, OUTPUT_FILENAME)
 
+    if GENERATE_KEFF_DIST_ONLY:
+        print(f"[keff-dist-only] skipping checkpoint eval; analyzing existing outputs under {out_dir}")
+        metrics_csv = os.path.join(out_dir, OUTPUT_FILENAME)
+        df_rows = pd.read_csv(metrics_csv) if os.path.exists(metrics_csv) else None
+        generate_keff_distribution_analysis(LOGS_ROOT, out_dir, df_rows=df_rows)
+        return
+
     runs = list(find_runs(LOGS_ROOT))
     if not runs:
         print(f"No runs found under {LOGS_ROOT}")
         return
+
+    print(f"Using split log: {SPLIT_LOG_NAME}")
+    print(f"Results dirname: {OUTPUT_DIRNAME}")
 
     # Cache loaded dataset arrays by resolved path (avoid reloading the same file).
     dataset_cache = {}
@@ -714,7 +1195,9 @@ def main():
         print(f"\n=== Evaluating {run_id} ===")
         try:
             ctx = get_run_eval_context(run_dir)
-            train_idx, _, test_idx, split_source = _read_indices_from_split_log(run_dir, train_size, seed)
+            train_idx, _, test_idx, split_source = _read_indices_from_split_log(
+                run_dir, train_size, seed, split_log_name=SPLIT_LOG_NAME,
+            )
 
             # Resolve and cache the dataset for this run.
             if DATA_FILEPATH_OVERRIDE is not None:
@@ -757,6 +1240,7 @@ def main():
         run_eval_cache[run_id] = dict(
             ctx=ctx, test_payload=test_payload, k_pred_final=k_pred_final,
             train_size=train_size, seed=seed, best_epoch=meta.get("epoch", ""),
+            run_dir=run_dir, keffs_full=keffs, rawparams_full=rawparams,
         )
         print(f"  best_epoch={meta.get('epoch','?')}  "
               f"test_mean_pcm={m['mean_pcm']:.1f}  test_median_pcm={m['median_pcm']:.1f}")
@@ -773,6 +1257,16 @@ def main():
     print("\nGenerating representative-seed initial-vs-final keff comparison plots …")
     generate_representative_comparison_plots(pd.DataFrame(rows), run_eval_cache, out_dir)
 
+    print("\nGenerating keff distribution analysis across train / val / test …")
+    generate_keff_distribution_analysis(
+        LOGS_ROOT, out_dir, df_rows=pd.DataFrame(rows), run_eval_cache=run_eval_cache,
+    )
+
+    if GENERATE_VAL_STUDY:
+        val_out_dir = os.path.join(LOGS_ROOT, VAL_STUDY_DIRNAME)
+        print(f"\nGenerating validation-set study (representative runs) → {val_out_dir} …")
+        generate_val_representative_outputs(pd.DataFrame(rows), run_eval_cache, val_out_dir)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -782,15 +1276,55 @@ if __name__ == "__main__":
                         help="Path to LOGS_ROOT directory")
     parser.add_argument("--out", default=OUTPUT_FILENAME)
     parser.add_argument(
+        "--split-log",
+        default=SPLIT_LOG_NAME,
+        help="Split CSV filename inside each run folder "
+             f"(default {SPLIT_LOG_NAME}; use alt_split_log.csv for per-seed alt tests)",
+    )
+    parser.add_argument(
+        "--results-dirname",
+        default=OUTPUT_DIRNAME,
+        help=f"Subdirectory under LOGS_ROOT for outputs (default {OUTPUT_DIRNAME})",
+    )
+    parser.add_argument(
         "--use-current-peds",
         action="store_true",
         help="Ignore per-run code_snapshot_*.py and evaluate with current modules/PEDS.py",
     )
+    parser.add_argument(
+        "--with-error-scatter",
+        action="store_true",
+        help="Also generate the (prediction - target) vs. target-keff scatter plot, "
+             "with the worst 5%% in red and the next slice up to 10%% in orange, "
+             "for each representative run at epoch 0 and best epoch.",
+    )
+    parser.add_argument(
+        "--with-val-study",
+        action="store_true",
+        help="Also run the validation-set study: for each representative run (same "
+             "one selected from test-set metrics), reads keff_epoch_log_val.csv at "
+             "epoch 0 and best epoch, backtraces parameters via keff matching, and "
+             f"saves comparison CSV/plots to LOGS_ROOT/{VAL_STUDY_DIRNAME}/.",
+    )
+    parser.add_argument(
+        "--keff-dist-only",
+        action="store_true",
+        help="Skip checkpoint evaluation; only rebuild the train/val/test keff "
+             "distribution tables/plots from existing epoch logs and "
+             "rep_*_keff_comparison.csv under --results-dirname.",
+    )
     args = parser.parse_args()
     LOGS_ROOT = args.logs_root
     OUTPUT_FILENAME = args.out
+    SPLIT_LOG_NAME = args.split_log
+    OUTPUT_DIRNAME = args.results_dirname
     USE_CURRENT_PEDS = args.use_current_peds
+    GENERATE_ERROR_VS_KEFF_PLOTS = args.with_error_scatter
+    GENERATE_VAL_STUDY = args.with_val_study
+    GENERATE_KEFF_DIST_ONLY = args.keff_dist_only
     main()
+    if GENERATE_KEFF_DIST_ONLY:
+        raise SystemExit(0)
     csv_path = os.path.join(LOGS_ROOT, OUTPUT_DIRNAME, OUTPUT_FILENAME)
     band = "std"
 
@@ -798,8 +1332,8 @@ if __name__ == "__main__":
     out_dir = os.path.join(LOGS_ROOT, OUTPUT_DIRNAME)
     agg_plot = agg[agg["nn_correction"] == "yes"].copy() if "nn_correction" in agg.columns else agg
 
-    if agg_plot.empty:
-        print("No successful runs — skipping plots.")
+    if agg_plot.empty or not SCALING_PLOTS:
+        print("plots not wanted or not possible upsi")
     else:
         plot_scaling(agg_plot, os.path.join(out_dir, "scaling_mean_pcm.png"),
                      metric="test_mean_pcm", band=band)

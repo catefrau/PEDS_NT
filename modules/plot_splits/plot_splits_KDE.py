@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
 
 #ROOT_DIR = "../RUNS/different_ranges/lhs_0.85_1.15_balanced/"
-ROOT_DIR = "../RUNS/study_LHS_0.8_bounds/"
+ROOT_DIR = "../RUNS/1000reference/newDF_cut_R"
 CSV_NAME = "split_log.csv"
 
 OUT_PNG = os.path.join(ROOT_DIR, "KDE_1000.png")
