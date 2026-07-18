@@ -34,6 +34,7 @@ modules/NThelper.py
 modules/RUNS/
 modules/density_report/
 modules/slurm_logs/
+old_stuff/
 
 reg_and_data/inputs/heter_regre_files/
 reg_and_data/inputs/HOM/

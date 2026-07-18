@@ -157,8 +157,9 @@ def Aphi_Fphi_scan(xs_tensor, geo_data, lay, phi):
         phi_ip1 = phi2d[:, jnp.minimum(i + 1, I)]                   # safe at i=I-1
 
         # ── A @ phi contribution at row (g, i) ─────────────────────────
-        # Σ_s_out[g] = sum_{g'≠g} Σ_s[g, g']  (scatter out of g)
-        Sig_s_out = jnp.sum(Sig_s, axis=0) - jnp.diag(Sig_s)        # [G]
+        # Σ_s_out[g] = sum_{g'≠g} Σ_s[g, g']  (scatter FROM g TO g'; row sum)
+        # Matches MG1D: Sig_s_out = sum_gp≠g Sigma_s[g, gp]
+        Sig_s_out = jnp.sum(Sig_s, axis=1) - jnp.diag(Sig_s)        # [G]
         diag_coef = Dplus * S[i+1] / (Delta_r * V[i]) + Sig_a + Sig_s_out
 
         Aphi_i  = diag_coef * phi_i                                  # diagonal
@@ -272,70 +273,61 @@ def Aphi_Fphi_vjp(xs_tensor, geo_data, lay, phi_fwd, v_A, v_F):
         grad_chi = vF_i * nusigf_phi                   # [G]
 
         # ── Gradient w.r.t. Sigma_s[reg, :] (reshaped as [G,G]) ──────
-        # Scatter-out term: Sig_s_out[g] = sum_{g'≠g} Sig_s[g,g']
-        #   => (A@phi)[g,i] += Sig_s_out[g] * phi_i[g]
-        #   => d/dSig_s[g,gp] (gp≠g) = phi_i[g]
-        #   => grad: vA_i[g] * phi_i[g]  for off-diagonal [g, gp]
+        # Scatter-out: Sig_s_out[g] = sum_{gp≠g} Sig_s[g, gp]
+        #   (A@phi)[g] += Sig_s_out[g] * phi[g]
+        #   => grad[g, gp] += vA[g] * phi[g]
         #
-        # Scatter-in term: (A@phi)[g,i] -= sum_{g'≠g} Sig_s[g',g] * phi[g',i]
-        #   => d/dSig_s[gp, g] (gp≠g) = -phi[gp, i]  contributing to row g
-        #   combined: grad_Sig_s[g, gp] += vA_i[g]*phi_i[g]  (out)
-        #                                - vA_i[gp]*phi_i[g]  (in, index swap)
-        # Written as outer products:
+        # Scatter-in: (A@phi)[gp] -= Sig_s[g, gp] * phi[g]   (gp≠g)
+        #   => grad[g, gp] += -vA[gp] * phi[g]
+        #
+        # Combined off-diagonal: grad[g,gp] = phi[g]*(vA[g] - vA[gp])
         grad_Sig_s_out = jnp.outer(vA_i * phi_i, jnp.ones(G))   # [G,G]
-        grad_Sig_s_in  = jnp.outer(vA_i, phi_i)                  # [G,G]
-        # zero the diagonal (self-scatter doesn't appear in Sig_s_out or scatter-in)
+        grad_Sig_s_in  = jnp.outer(phi_i, vA_i)                  # [G,G]
         diag_mask = jnp.eye(G, dtype=jnp.bool_)
         grad_Sig_s = jnp.where(diag_mask, 0.0, grad_Sig_s_out - grad_Sig_s_in)
 
         # ── Gradient w.r.t. D[reg, g] ────────────────────────────────
-        # Dplus = 2*D[reg,g]*D[reg_next,g] / (D[reg,g] + D[reg_next,g])
-        # This is trickier because D appears in Dplus (and Dminus of next cell).
-        # We use the chain rule through Dplus:
-        # d(Dplus[g])/d(D[reg,g]) = 2*D_next^2 / (D+D_next)^2
+        # Right interface: Dplus = 2*D[reg]*D[reg_next] / (D+D_next)
         dDplus_dD      = 2 * D_g_next**2 / (D_g + D_g_next + 1e-30)**2   # [G]
         dDplus_dD_next = 2 * D_g**2      / (D_g + D_g_next + 1e-30)**2   # [G]
-
-        # Contribution of Dplus to (A@phi)[g,i]:
-        #   coef_plus = Dplus * S[i+1] / (Delta_r * V[i])
-        #   (A@phi)[g,i] += coef_plus*(phi_i - phi_ip1) + Dminus*(phi_i-phi_im1)*(i>0)
-        # d(A@phi)[g,i]/d(Dplus[g]) = S[i+1]/(Delta_r*V[i]) * (phi_i[g] - phi_ip1[g])
         dAphi_dDplus = S[i+1] / (Delta_r * V[i]) * (phi_i - phi_ip1)   # [G]
-        # Also Dminus of cell i+1 = Dplus of cell i, but that's handled when
-        # scan processes cell i+1 (Dplus_prev carry). We handle it here by
-        # computing the contribution to grad_D from Dplus only (Dminus contribution
-        # is already in Dplus_prev when that cell is processed).
-        # For the current cell's Dminus contribution:
+
+        # Left interface: Dminus = 2*D[reg_prev]*D[reg] / (D_prev+D)
+        # (equals Dplus of cell i-1). Must be differentiated here — it was
+        # previously computed but never accumulated into grad_D.
+        reg_prev = jax.lax.cond(
+            i > 0,
+            lambda: region_of_cell[i - 1],
+            lambda: region_of_cell[i],
+        )
+        D_g_prev = xs_tensor[reg_prev, lay['D']]
+        dDminus_dD_prev = 2 * D_g**2      / (D_g_prev + D_g + 1e-30)**2
+        dDminus_dD_curr = 2 * D_g_prev**2 / (D_g_prev + D_g + 1e-30)**2
         dAphi_dDminus = jnp.where(
             i > 0,
             S[i] / (Delta_r * V[i]) * (phi_i - phi_im1),
-            jnp.zeros(G)
-        )   # [G]
+            jnp.zeros(G),
+        )
 
-        grad_D_reg      = vA_i * (dAphi_dDplus * dDplus_dD)           # [G]
-        # D[reg_next] contributes via Dplus through dDplus_dD_next:
-        grad_D_reg_next = vA_i * (dAphi_dDplus * dDplus_dD_next)      # [G]
-
-        # ── Accumulate into xs_grad ───────────────────────────────────
-        # We need scatter-add: xs_grad[reg, lay['X']] += grad_X
-        # JAX doesn't allow dynamic indexing with scatter in lax.scan carry
-        # directly, so we return the per-cell gradients and their region indices,
-        # then accumulate outside the scan.
-        # Pack into a flat "contribution" array for this cell.
+        grad_D_reg = vA_i * (
+            dAphi_dDplus * dDplus_dD + dAphi_dDminus * dDminus_dD_curr
+        )
+        grad_D_reg_next = vA_i * (dAphi_dDplus * dDplus_dD_next)
+        grad_D_reg_prev = vA_i * (dAphi_dDminus * dDminus_dD_prev)
 
         # Return as structured output rather than accumulating in carry
         # (dynamic scatter into carry causes recompilation issues)
         return (Dplus, xs_grad), (
-            reg, reg_next,
+            reg, reg_next, reg_prev,
             grad_Sig_a, grad_nuSigf, grad_chi,
             grad_Sig_s.ravel(),
-            grad_D_reg, grad_D_reg_next,
+            grad_D_reg, grad_D_reg_next, grad_D_reg_prev,
         )
 
-    (_, _), (regs, regs_next,
+    (_, _), (regs, regs_next, regs_prev,
              grad_sig_a_all, grad_nusigf_all, grad_chi_all,
              grad_sigs_all,
-             grad_D_all, grad_D_next_all) = jax.lax.scan(
+             grad_D_all, grad_D_next_all, grad_D_prev_all) = jax.lax.scan(
         body, (jnp.zeros(G), xs_grad), jnp.arange(I)
     )
     # All outputs: shape [I, G] or [I, G*G] or [I] for regs
@@ -368,7 +360,8 @@ def Aphi_Fphi_vjp(xs_tensor, geo_data, lay, phi_fwd, v_A, v_F):
 
     D_start = lay['D'].start
     D_grad  = acc(grad_D_all,      regs)                    # [num_regions, G]
-    D_grad += acc(grad_D_next_all, regs_next)               # D_next contribution
+    D_grad += acc(grad_D_next_all, regs_next)               # D_next via Dplus
+    D_grad += acc(grad_D_prev_all, regs_prev)               # D_prev via Dminus
     xs_grad = xs_grad.at[:, D_start:D_start+G].add(D_grad)
 
     return xs_grad
@@ -449,33 +442,54 @@ def Aphi_Fphi_vjp_padded(
         grad_chi   = vF_i * nusigf_phi                               # [G]
 
         # ── grad w.r.t. Sigma_s ──────────────────────────────────────────
+        # Off-diagonal: grad[g,gp] = phi[g]*(vA[g] - vA[gp])
         grad_Sig_s_out = jnp.outer(vA_i * phi_i, jnp.ones(G))       # [G, G]
-        grad_Sig_s_in  = jnp.outer(vA_i, phi_i)                     # [G, G]
+        grad_Sig_s_in  = jnp.outer(phi_i, vA_i)                     # [G, G]
         diag_mask      = jnp.eye(G, dtype=jnp.bool_)
         grad_Sig_s     = jnp.where(diag_mask, 0.0,
                                    grad_Sig_s_out - grad_Sig_s_in)  # [G, G]
 
         # ── grad w.r.t. D ────────────────────────────────────────────────
+        # Right interface (Dplus) and left interface (Dminus = prev Dplus)
         dDplus_dD      = 2 * D_g_next**2 / (D_g + D_g_next + 1e-30)**2
         dDplus_dD_next = 2 * D_g**2      / (D_g + D_g_next + 1e-30)**2
         dAphi_dDplus   = S_pad[i+1] / (Delta_r * V_pad[i]) * (phi_i - phi_ip1)
-        grad_D_reg      = vA_i * (dAphi_dDplus * dDplus_dD)
+
+        reg_prev = jax.lax.cond(
+            i > 0,
+            lambda: roc_pad[i - 1],
+            lambda: roc_pad[i],
+        )
+        D_g_prev = xs_tensor[reg_prev, lay['D']]
+        dDminus_dD_prev = 2 * D_g**2      / (D_g_prev + D_g + 1e-30)**2
+        dDminus_dD_curr = 2 * D_g_prev**2 / (D_g_prev + D_g + 1e-30)**2
+        dAphi_dDminus = jnp.where(
+            i > 0,
+            S_pad[i] / (Delta_r * V_pad[i]) * (phi_i - phi_im1),
+            jnp.zeros(G),
+        )
+
+        grad_D_reg = vA_i * (
+            dAphi_dDplus * dDplus_dD + dAphi_dDminus * dDminus_dD_curr
+        )
         grad_D_reg_next = vA_i * (dAphi_dDplus * dDplus_dD_next)
+        grad_D_reg_prev = vA_i * (dAphi_dDminus * dDminus_dD_prev)
 
         return Dplus, (
-            reg, reg_next,
+            reg, reg_next, reg_prev,
             valid * grad_Sig_a,
             valid * grad_nuSigf,
             valid * grad_chi,
             valid * grad_Sig_s.ravel(),
             valid * grad_D_reg,
             valid * grad_D_reg_next,
+            valid * grad_D_reg_prev,
         )
 
-    _, (regs, regs_next,
+    _, (regs, regs_next, regs_prev,
         grad_sig_a_all, grad_nusigf_all, grad_chi_all,
         grad_sigs_all,
-        grad_D_all, grad_D_next_all) = jax.lax.scan(
+        grad_D_all, grad_D_next_all, grad_D_prev_all) = jax.lax.scan(
         body, jnp.zeros(G), jnp.arange(I_max)
     )
 
@@ -498,7 +512,9 @@ def Aphi_Fphi_vjp_padded(
     xs_grad   = xs_grad.at[:, ss_start:ss_start+G*G].add(acc(grad_sigs_all, regs))
 
     D_start = lay['D'].start
-    D_grad  = acc(grad_D_all, regs) + acc(grad_D_next_all, regs_next)
+    D_grad  = (acc(grad_D_all, regs)
+               + acc(grad_D_next_all, regs_next)
+               + acc(grad_D_prev_all, regs_prev))
     xs_grad = xs_grad.at[:, D_start:D_start+G].add(D_grad)
 
     return xs_grad
