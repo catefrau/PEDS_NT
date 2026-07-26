@@ -59,19 +59,23 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 0: Global constants
 # ─────────────────────────────────────────────────────────────────────────────
-TRAIN_SIZE   = int(os.environ.get("PEDS_TRAIN_SIZE", 500))
-VAL_SIZE     = 200    # used every epoch — was previously called val_SIZE
-TEST_SIZE    = 200    # held out, evaluated only once at the very end
-HOLDOUT_SEED = 0      # FIXED — keeps val/test identical across all runs
+TRAIN_SIZE   = int(os.environ.get("PEDS_TRAIN_SIZE", 1000))
+VAL_SIZE     = 500    # used every epoch — was previously called val_SIZE
+TEST_SIZE    = 300    # held out, evaluated only once at the very end
+# Seeds: train + val vary with PEDS_SEED; TEST stays fixed across the study.
+SEED         = int(os.environ.get("PEDS_SEED", 0))
+TRAIN_SEED   = SEED
+VAL_SEED     = SEED
+TEST_SEED    = int(os.environ.get("PEDS_TEST_SEED", 0))  # FIXED across runs
+HOLDOUT_SEED = TEST_SEED  # legacy alias used by non-param-stratified loaders
 BATCH_SIZE = 32
 EPOCHS     = 70
-SEED       = int(os.environ.get("PEDS_SEED", 0))
 LR_max     = 2e-4   # cosine schedule peak learning rate
 LR_min     = 5e-6
 DECAY_EPOCHS = int(os.environ.get("PEDS_DECAY_EPOCHS", 70))
 
 EXP_NAME   = f"train_{TRAIN_SIZE}_seed_{SEED}"  #_decay{DECAY_EPOCHS}
-LOG_DIR = os.path.join(THIS_DIR, "RUNS", "final_rune", EXP_NAME)    #f"decay_{DECAY_EPOCHS}_epoch_{EPOCHS}_lr_{LR_min}"
+LOG_DIR = os.path.join(THIS_DIR, "RUNS", "precise_param_strat2", EXP_NAME)
 # ── data path — anchored to PARENT_DIR so it works from any cwd ─────────────
 _DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "17jul_0.8_1.2.npz")  # "13jul_merged_bigR  different_keffrange/13jul_merged_subcritical_new LHS_0.8_newbounds
 USE_SPLIT_CACHE = False
@@ -157,6 +161,7 @@ from PEDS_subdivision.data_loading import (
     _save_split_cache, load_or_create_split_cache,
     load_data, load_data_balanced_ranges, load_data_param_stratified,
     print_keff_bin_counts, print_param_bin_counts,
+    check_keff_split_representation, check_keff_bin_geometry_dominance,
 )
 from PEDS_subdivision.metrics import (
     compute_delta_rho_pcm, compute_metrics, print_metrics,
@@ -418,13 +423,16 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
     # ── 8.1 Data ─────────────────────────────────────────────────────────────
     print("Loading data …")
     print(f"  Split cache enabled: {USE_SPLIT_CACHE}")
+    print(f"  Split seeds: train_seed={TRAIN_SEED}, val_seed={VAL_SEED}, "
+          f"test_seed={TEST_SEED} (test fixed across runs)")
     if USE_PARAM_STRATIFIED:
         print(f"  Split mode: parameter-stratified fuel_r-primary (bins/param={PARAM_STRAT_BINS})")
         (train_idx, train_geoms, train_keffs, train_rawparams, train_phi_features), \
         (val_idx, val_geoms, val_keffs, val_rawparams, val_phi_features), \
         (test_idx, test_geoms, test_keffs, test_rawparams, test_phi_features) = load_data_param_stratified(
             filepath, train_size, val_size, test_size,
-            train_seed=seed, holdout_seed=HOLDOUT_SEED,
+            train_seed=TRAIN_SEED, val_seed=VAL_SEED, test_seed=TEST_SEED,
+            holdout_seed=HOLDOUT_SEED,
             n_bins_per_param=PARAM_STRAT_BINS,
             balanced=False,
         )
@@ -434,7 +442,7 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
         (val_idx, val_geoms, val_keffs, val_rawparams, val_phi_features), \
         (test_idx, test_geoms, test_keffs, test_rawparams, test_phi_features) = load_data_balanced_ranges(
             filepath, train_size, val_size, test_size,
-            train_seed=seed, holdout_seed=HOLDOUT_SEED,
+            train_seed=TRAIN_SEED, holdout_seed=HOLDOUT_SEED,
         )
     else:
         print("  Split mode: keff quantile-stratified (cached)")
@@ -443,7 +451,7 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
         (val_idx, val_geoms,   val_keffs,   val_rawparams,   val_phi_features),  \
         (test_idx, test_geoms,  test_keffs,  test_rawparams,  test_phi_features) = load_data(
             filepath, train_size, val_size, test_size,
-            train_seed=seed, holdout_seed=HOLDOUT_SEED,
+            train_seed=TRAIN_SEED, holdout_seed=HOLDOUT_SEED,
             split_cache_path=None, cache_dir=split_cache_dir,
             use_split_cache=USE_SPLIT_CACHE)
     train_size = len(train_geoms)
@@ -452,10 +460,19 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
     log_splits(train_idx, train_keffs, val_idx, val_keffs, test_idx, test_keffs)
 
     print(f"Actual train size: {train_size}")
-    print(f"Actual test size:  {val_size}")
+    print(f"Actual val size:   {val_size}")
+    print(f"Actual test size:  {test_size}")
     print_keff_bin_counts("TRAIN", train_keffs)
     print_keff_bin_counts("VAL", val_keffs)
     print_keff_bin_counts("TEST", test_keffs)
+    # Re-print representation diagnostics even for non-param-stratified modes.
+    if not USE_PARAM_STRATIFIED:
+        check_keff_split_representation(train_keffs, val_keffs, test_keffs)
+        check_keff_bin_geometry_dominance(
+            ("TRAIN", train_keffs, train_rawparams),
+            ("VAL",   val_keffs,   val_rawparams),
+            ("TEST",  test_keffs,  test_rawparams),
+        )
 
     # ── Optional: custom VJP vs finite-difference (before any training) ──────
     if RUN_GRAD_CHECK:
@@ -958,7 +975,8 @@ if __name__ == "__main__":
         )
         print(
             f"Starting PEDS training with train size = {TRAIN_SIZE}, "
-            f"seed = {SEED}, decay_epochs = {DECAY_EPOCHS}…"
+            f"seed = {SEED} (train/val), test_seed = {TEST_SEED}, "
+            f"decay_epochs = {DECAY_EPOCHS}…"
         )
         model, history = train(**HP)
         print("\nDone.")
