@@ -31,7 +31,7 @@ GEO_CYL = GeometryConfig(
     bc = BoundaryCondition(
         bc_type = 'vacuum',          # zero-flux at outer surface
     ),
-    mesh_size = 1,                 # cm per spatial cell
+    mesh_size = 1.,                 # cm per spatial cell
 ) 
 
 GEO_HET = GeometryConfig(

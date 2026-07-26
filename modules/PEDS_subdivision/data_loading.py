@@ -279,26 +279,217 @@ def _even_spaced_indices(n: int, k: int) -> np.ndarray:
     return np.array(chosen, dtype=np.int64)
 
 
+# Shared keff edges for diagnostics + soft matching inside param-stratified splits.
+# Not a hard rebalance: natural hard-sub under-representation is preserved.
+DEFAULT_KEFF_EDGES = np.array(
+    [0.75, 0.80, 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.20, 1.25],
+    dtype=np.float32,
+)
+
+
+def _keff_bin_ids(keffs, edges=None) -> np.ndarray:
+    """Digitize keff into DEFAULT_KEFF_EDGES-style bins (last edge inclusive)."""
+    keffs = np.asarray(keffs, dtype=np.float64)
+    edges = DEFAULT_KEFF_EDGES if edges is None else np.asarray(edges, dtype=np.float64)
+    # digitize with interior edges; clip into [0, nbins-1]
+    ids = np.digitize(keffs, edges[1:-1], right=False)
+    return np.clip(ids, 0, len(edges) - 2).astype(np.int64)
+
+
+def _pick_param_diverse(members, bin_matrix, secondary_params, n_pick, rng):
+    """
+    Pick ``n_pick`` indices from ``members`` with nested secondary coverage.
+
+    1. Allocate across the first secondary param's bins (proportional to capacity).
+    2. Within each secondary bin, shuffle with ``rng`` then take the quota.
+       Quotas keep geometry sub-ranges covered; the shuffle makes train/val
+       actually change across seeds (even-spacing alone was too deterministic).
+    """
+    members = np.asarray(members, dtype=np.int64)
+    n_pick = int(n_pick)
+    if n_pick <= 0:
+        return np.array([], dtype=np.int64)
+    if n_pick >= len(members):
+        return members.copy()
+
+    if not secondary_params:
+        order = rng.permutation(len(members))
+        return members[order[:n_pick]]
+
+    sec0 = int(secondary_params[0])
+    rest = list(secondary_params[1:])
+    sec_bins = bin_matrix[members, sec0]
+    n_sec = int(sec_bins.max()) + 1 if len(sec_bins) else 0
+    groups = [members[sec_bins == b] for b in range(n_sec)]
+    caps = np.array([len(g) for g in groups], dtype=int)
+    alloc = _allocate_counts(
+        n_pick, np.maximum(caps.astype(np.float64), 1e-12), capacities=caps
+    )
+
+    picks = []
+    for b, group in enumerate(groups):
+        need = int(alloc[b])
+        if need <= 0:
+            continue
+        g = np.asarray(group, dtype=np.int64)
+        if need >= len(g):
+            picks.append(g)
+            continue
+        g_rng = np.random.default_rng(int(rng.integers(0, 2**31 - 1)))
+        if rest:
+            # Light secondary coverage: sort by remaining params, then take
+            # evenly spaced positions after a seed-dependent rotation.
+            jitter = g_rng.random(len(g))
+            sort_keys = [jitter]
+            for p in reversed(rest):
+                sort_keys.append(bin_matrix[g, p].astype(np.float64))
+            order = np.lexsort(sort_keys)
+            sorted_g = g[order]
+            # Rotate starting offset so different seeds pick different samples
+            # while still spanning the sorted secondary range.
+            offset = int(g_rng.integers(0, len(sorted_g)))
+            rotated = np.concatenate([sorted_g[offset:], sorted_g[:offset]])
+            pos = _even_spaced_indices(len(rotated), need)
+            picks.append(rotated[pos])
+        else:
+            order = g_rng.permutation(len(g))
+            picks.append(g[order[:need]])
+
+    if not picks:
+        return np.array([], dtype=np.int64)
+    return np.concatenate(picks).astype(np.int64)
+
+
+def _split_fuel_r_bin_keff_matched(members, keff_ids, bin_matrix, secondary_params,
+                                   n_test, n_val, n_train,
+                                   test_rng, val_rng, train_rng,
+                                   n_keff_bins):
+    """
+    Inside one fuel_r bin, allocate TEST/VAL/TRAIN so each mirrors the same
+    natural keff mix (proportional to local keff capacity), then pick with
+    secondary-param diversity inside each keff cell.
+
+    Does NOT flatten keff bins globally — hard-sub stays under-represented if
+    it is scarce in this fuel_r bin.
+    """
+    members = np.asarray(members, dtype=np.int64)
+    keff_ids = np.asarray(keff_ids, dtype=np.int64)
+    n_test, n_val, n_train = int(n_test), int(n_val), int(n_train)
+    total_need = n_test + n_val + n_train
+    if total_need == 0:
+        empty = np.array([], dtype=np.int64)
+        return empty, empty, empty
+
+    # Local keff capacities among this fuel_r bin's members.
+    caps = np.bincount(keff_ids, minlength=n_keff_bins).astype(int)
+    take = _allocate_counts(
+        total_need, np.maximum(caps.astype(np.float64), 1e-12), capacities=caps
+    )
+    # Lock split ratios inside each keff cell: test first (fixed seed), then val.
+    test_k = _allocate_counts(
+        n_test, np.maximum(take.astype(np.float64), 1e-12), capacities=take
+    )
+    rem_after_test = take - test_k
+    val_k = _allocate_counts(
+        n_val, np.maximum(rem_after_test.astype(np.float64), 1e-12),
+        capacities=rem_after_test,
+    )
+    train_k = rem_after_test - val_k
+
+    if (int(test_k.sum()) != n_test or int(val_k.sum()) != n_val
+            or int(train_k.sum()) != n_train):
+        raise ValueError(
+            "keff-matched allocation mismatch inside fuel_r bin: "
+            f"test={test_k.sum()}/{n_test}, val={val_k.sum()}/{n_val}, "
+            f"train={train_k.sum()}/{n_train}"
+        )
+
+    test_parts, val_parts, train_parts = [], [], []
+    for k in range(n_keff_bins):
+        cell = members[keff_ids == k]
+        if len(cell) == 0:
+            continue
+        nt, nv, ntr = int(test_k[k]), int(val_k[k]), int(train_k[k])
+        need = nt + nv + ntr
+        if need == 0:
+            continue
+        if len(cell) < need:
+            raise ValueError(
+                f"keff cell {k}: have {len(cell)}, need {need}"
+            )
+
+        cell_test_rng = np.random.default_rng(int(test_rng.integers(0, 2**31 - 1)))
+        test_c = _pick_param_diverse(
+            cell, bin_matrix, secondary_params, nt, cell_test_rng
+        )
+        held = set(int(i) for i in test_c.tolist())
+        pool = np.array([int(i) for i in cell.tolist() if int(i) not in held],
+                        dtype=np.int64)
+
+        cell_val_rng = np.random.default_rng(int(val_rng.integers(0, 2**31 - 1)))
+        val_c = _pick_param_diverse(
+            pool, bin_matrix, secondary_params, nv, cell_val_rng
+        )
+        held |= set(int(i) for i in val_c.tolist())
+        pool = np.array([int(i) for i in cell.tolist() if int(i) not in held],
+                        dtype=np.int64)
+
+        cell_train_rng = np.random.default_rng(int(train_rng.integers(0, 2**31 - 1)))
+        train_c = _pick_param_diverse(
+            pool, bin_matrix, secondary_params, ntr, cell_train_rng
+        )
+
+        if nt:
+            test_parts.append(test_c)
+        if nv:
+            val_parts.append(val_c)
+        if ntr:
+            train_parts.append(train_c)
+
+    def _cat(parts):
+        return np.concatenate(parts) if parts else np.array([], dtype=np.int64)
+
+    return _cat(train_parts), _cat(val_parts), _cat(test_parts)
+
+
 def derive_split_indices_by_params(filepath, train_size, val_size, test_size,
                                    train_seed=42, holdout_seed=0,
+                                   val_seed=None, test_seed=None,
                                    n_bins_per_param=2, bin_edges_per_param=None,
                                    balanced=False,
-                                   fuel_r_idx=2, fuel_r_weight=None):
+                                   fuel_r_idx=2, fuel_r_weight=None,
+                                   keff_edges=None):
     """
     Stratified train/val/test selection over input-parameter marginals.
 
     Priority:
       1. Hard equal coverage of every ``fuel_r`` quantile bin in train/val/test.
-      2. Within each fuel_r bin, sort by the other parameters' bins and take
-         evenly spaced holdouts so secondary ranges stay covered too.
+      2. Within each fuel_r bin, match the *same natural keff mix* across
+         train/val/test (soft; does not flatten hard-sub under-representation).
+      3. Within each (fuel_r, keff) cell, nested secondary-param diversity.
 
-    Holdout semantics: ``holdout_seed`` fixes val/test; ``train_seed`` selects
-    train from the remaining pool inside each fuel_r bin.
+    Seed semantics (study mode):
+      - ``test_seed``  — fixed across runs → identical TEST set
+      - ``val_seed``   — varies with run  → different VAL sets
+      - ``train_seed`` — varies with run  → different TRAIN sets
+
+    Selection order is TEST → VAL → TRAIN so a fixed test seed is never
+    disturbed by train/val resampling. Legacy ``holdout_seed`` is used as
+    the default for both val and test when ``val_seed`` / ``test_seed`` are
+    omitted (old coupled-holdout behaviour).
     """
     del balanced, fuel_r_weight
 
+    if test_seed is None:
+        test_seed = holdout_seed
+    if val_seed is None:
+        val_seed = holdout_seed
+    if keff_edges is None:
+        keff_edges = DEFAULT_KEFF_EDGES
+
     data = np.load(filepath, allow_pickle=True)
     rawparams = np.array(data["params_raw"], dtype=np.float32)
+    keffs = np.array(data["keffs"], dtype=np.float32)
     n_samples = len(rawparams)
     requested_total = int(train_size + val_size + test_size)
     if requested_total > n_samples:
@@ -318,22 +509,32 @@ def derive_split_indices_by_params(filepath, train_size, val_size, test_size,
     if not (0 <= fuel_r_idx < n_params):
         raise ValueError(f"fuel_r_idx={fuel_r_idx} out of range for n_params={n_params}")
 
-    secondary_params = [p for p in range(n_params) if p != fuel_r_idx]
+    # Prefer enrichment / cr_frac as the first secondary axis when present —
+    # these drove the worst overlap in the previous param_stratified report.
+    preferred_secondary = []
+    for name in ("enrichment", "cr_frac", "b4c_r", "f_mod", "water_r"):
+        if name in context.PARAM_NAMES:
+            idx = context.PARAM_NAMES.index(name)
+            if idx != fuel_r_idx:
+                preferred_secondary.append(idx)
+    secondary_params = preferred_secondary + [
+        p for p in range(n_params)
+        if p != fuel_r_idx and p not in preferred_secondary
+    ]
+
     fuel_bins = bin_matrix[:, fuel_r_idx]
     bin_members = [np.where(fuel_bins == b)[0].astype(np.int64) for b in range(n_bins)]
     capacities = np.array([len(m) for m in bin_members], dtype=int)
+    all_keff_ids = _keff_bin_ids(keffs, edges=keff_edges)
+    n_keff_bins = len(np.asarray(keff_edges)) - 1
 
     uniform = np.ones(n_bins, dtype=np.float64)
-    holdout_total = int(val_size + test_size)
-    holdout_counts = _allocate_counts(holdout_total, uniform, capacities=capacities)
-    val_counts = _allocate_counts(
-        int(val_size), holdout_counts.astype(np.float64), capacities=holdout_counts
-    )
-    test_counts = holdout_counts - val_counts
-    remaining_cap = capacities - holdout_counts
-    train_counts = _allocate_counts(
-        int(train_size), uniform, capacities=remaining_cap
-    )
+    # Allocate TEST first (fixed seed), then VAL, then TRAIN from remaining.
+    test_counts = _allocate_counts(int(test_size), uniform, capacities=capacities)
+    rem_after_test = capacities - test_counts
+    val_counts = _allocate_counts(int(val_size), uniform, capacities=rem_after_test)
+    rem_after_val = rem_after_test - val_counts
+    train_counts = _allocate_counts(int(train_size), uniform, capacities=rem_after_val)
 
     if (int(train_counts.sum()) != int(train_size)
             or int(val_counts.sum()) != int(val_size)
@@ -345,14 +546,15 @@ def derive_split_indices_by_params(filepath, train_size, val_size, test_size,
             f"test={test_counts.sum()} (wanted {test_size})"
         )
 
-    holdout_rng = np.random.default_rng(holdout_seed)
+    test_rng = np.random.default_rng(test_seed)
+    val_rng = np.random.default_rng(val_seed)
     train_rng = np.random.default_rng(train_seed)
 
     train_parts, val_parts, test_parts = [], [], []
     for b in range(n_bins):
         members = bin_members[b].copy()
-        n_val = int(val_counts[b])
         n_test = int(test_counts[b])
+        n_val = int(val_counts[b])
         n_train = int(train_counts[b])
         need_here = n_val + n_test + n_train
         if need_here == 0:
@@ -362,60 +564,15 @@ def derive_split_indices_by_params(filepath, train_size, val_size, test_size,
                 f"fuel_r bin {b}: have {len(members)}, need {need_here}"
             )
 
-        # Sort by secondary param bins so even spacing covers their ranges.
-        # Tiny holdout-seeded jitter breaks ties without destroying order.
-        h_rng = np.random.default_rng(holdout_rng.integers(0, 2**31 - 1))
-        jitter = h_rng.random(len(members))
-        sort_keys = [jitter]
-        for p in reversed(secondary_params):
-            sort_keys.append(bin_matrix[members, p].astype(np.float64))
-        order = np.lexsort(sort_keys)  # last key is primary
-        sorted_members = members[order]
-
-        holdout_n = n_val + n_test
-        if holdout_n > 0:
-            holdout_pos = _even_spaced_indices(len(sorted_members), holdout_n)
-            holdout_pos_sorted = np.sort(holdout_pos)
-            holdout_samples = sorted_members[holdout_pos_sorted]
-            # Round-robin into val/test along the spaced sequence so both
-            # track the same secondary sweep.
-            val_b, test_b = [], []
-            nv, nt = n_val, n_test
-            for s in holdout_samples:
-                if nv > 0 and nv >= nt:
-                    val_b.append(int(s)); nv -= 1
-                elif nt > 0:
-                    test_b.append(int(s)); nt -= 1
-                elif nv > 0:
-                    val_b.append(int(s)); nv -= 1
-            val_b = np.array(val_b, dtype=np.int64)
-            test_b = np.array(test_b, dtype=np.int64)
-        else:
-            val_b = np.array([], dtype=np.int64)
-            test_b = np.array([], dtype=np.int64)
-
-        held = set(val_b.tolist()) | set(test_b.tolist())
-        pool = np.array([int(i) for i in members.tolist() if int(i) not in held],
-                        dtype=np.int64)
-        t_rng = np.random.default_rng(train_rng.integers(0, 2**31 - 1))
-        t_rng.shuffle(pool)
-        if len(pool) < n_train:
-            raise ValueError(
-                f"fuel_r bin {b}: train pool {len(pool)} < need {n_train}"
-            )
-        # Prefer evenly spaced train picks from pool sorted by secondary bins
-        # so train also covers secondary ranges uniformly inside the bin.
-        if n_train > 0 and len(pool) > n_train:
-            pool_jitter = t_rng.random(len(pool))
-            pool_keys = [pool_jitter]
-            for p in reversed(secondary_params):
-                pool_keys.append(bin_matrix[pool, p].astype(np.float64))
-            pool_order = np.lexsort(pool_keys)
-            pool_sorted = pool[pool_order]
-            train_pos = _even_spaced_indices(len(pool_sorted), n_train)
-            train_b = pool_sorted[train_pos]
-        else:
-            train_b = pool[:n_train].astype(np.int64)
+        b_test_rng = np.random.default_rng(int(test_rng.integers(0, 2**31 - 1)))
+        b_val_rng = np.random.default_rng(int(val_rng.integers(0, 2**31 - 1)))
+        b_train_rng = np.random.default_rng(int(train_rng.integers(0, 2**31 - 1)))
+        train_b, val_b, test_b = _split_fuel_r_bin_keff_matched(
+            members, all_keff_ids[members], bin_matrix, secondary_params,
+            n_test, n_val, n_train,
+            b_test_rng, b_val_rng, b_train_rng,
+            n_keff_bins,
+        )
 
         train_parts.append(train_b)
         val_parts.append(val_b)
@@ -426,8 +583,8 @@ def derive_split_indices_by_params(filepath, train_size, val_size, test_size,
     test_idx = np.concatenate(test_parts) if test_parts else np.array([], dtype=np.int64)
 
     train_rng.shuffle(train_idx)
-    holdout_rng.shuffle(val_idx)
-    holdout_rng.shuffle(test_idx)
+    val_rng.shuffle(val_idx)
+    test_rng.shuffle(test_idx)
 
     full_label_mat = _param_label_matrix(bin_matrix, n_bins)
     meta = {
@@ -435,9 +592,14 @@ def derive_split_indices_by_params(filepath, train_size, val_size, test_size,
         "n_labels": int(n_params * n_bins),
         "n_bins_per_param": n_bins,
         "balanced": True,
-        "method": "fuel_r_primary_even_spaced",
+        "method": "fuel_r_primary_keff_matched_nested_secondary",
         "fuel_r_idx": fuel_r_idx,
+        "secondary_params": secondary_params,
+        "keff_edges": np.asarray(keff_edges, dtype=np.float32),
         "edges_list": edges_list,
+        "train_seed": int(train_seed),
+        "val_seed": int(val_seed),
+        "test_seed": int(test_seed),
         "fuel_r_train_counts": train_counts,
         "fuel_r_val_counts": val_counts,
         "fuel_r_test_counts": test_counts,
@@ -961,6 +1123,7 @@ def load_data_balanced_ranges(filepath, train_size, val_size, test_size,
 
 def load_data_param_stratified(filepath, train_size, val_size, test_size,
                                train_seed=42, holdout_seed=0,
+                               val_seed=None, test_seed=None,
                                n_bins_per_param=None, bin_edges_per_param=None,
                                balanced=False):
     """
@@ -968,23 +1131,32 @@ def load_data_param_stratified(filepath, train_size, val_size, test_size,
     (params_raw), not keff.
 
     Primary: equal coverage of every fuel_r quantile bin in train/val/test.
-    Secondary: within each fuel_r bin, evenly spaced samples across the other
-    parameter bins so no geometry sub-range is left only in train.
+    Secondary: within each fuel_r bin, nested secondary-param allocation so
+    geometry sub-ranges stay covered in every split.
+
+    Seed semantics: ``test_seed`` fixed → identical TEST; ``val_seed`` /
+    ``train_seed`` vary across runs. Legacy ``holdout_seed`` fills both when
+    ``val_seed`` / ``test_seed`` are omitted.
 
     Returns the same nested tuple layout as load_data().
     """
     if n_bins_per_param is None:
         n_bins_per_param = context.PARAM_STRAT_BINS
+    if test_seed is None:
+        test_seed = holdout_seed
+    if val_seed is None:
+        val_seed = holdout_seed
 
     data = np.load(filepath, allow_pickle=True)
     geoms = np.array(data["params"], dtype=np.float32)
     keffs = np.array(data["keffs"], dtype=np.float32)
     rawparams = np.array(data["params_raw"], dtype=np.float32)
 
-    print("\n=== Parameter-stratified split (fuel_r primary + even-spaced) ===")
+    print("\n=== Parameter-stratified split (fuel_r + keff-matched + nested secondary) ===")
     print(f"  Dataset loaded: {filepath}")
     print(f"  Requested sizes: train={train_size}, val={val_size}, test={test_size}")
-    print(f"  Split seeds: train_seed={train_seed}, holdout_seed={holdout_seed}")
+    print(f"  Split seeds: train_seed={train_seed}, val_seed={val_seed}, "
+          f"test_seed={test_seed} (holdout_seed legacy={holdout_seed})")
     print(f"  Bins per parameter: {n_bins_per_param}")
     print(f"  Primary param: fuel_r (hard coverage per bin)")
     print(f"  Parameters: {context.PARAM_NAMES}")
@@ -993,6 +1165,7 @@ def load_data_param_stratified(filepath, train_size, val_size, test_size,
     train_idx, val_idx, test_idx, meta = derive_split_indices_by_params(
         filepath, train_size, val_size, test_size,
         train_seed=train_seed, holdout_seed=holdout_seed,
+        val_seed=val_seed, test_seed=test_seed,
         n_bins_per_param=n_bins_per_param,
         bin_edges_per_param=bin_edges_per_param,
         balanced=balanced,
@@ -1022,6 +1195,17 @@ def load_data_param_stratified(filepath, train_size, val_size, test_size,
     print_param_bin_counts("VAL",   rawparams[val_idx],   edges_list=meta["edges_list"])
     print_param_bin_counts("TEST",  rawparams[test_idx],  edges_list=meta["edges_list"])
 
+    # Diagnostics only — do NOT rebalance by keff (natural hard-sub under-rep kept).
+    check_keff_split_representation(
+        keffs[train_idx], keffs[val_idx], keffs[test_idx],
+    )
+    check_keff_bin_geometry_dominance(
+        ("TRAIN", keffs[train_idx], rawparams[train_idx]),
+        ("VAL",   keffs[val_idx],   rawparams[val_idx]),
+        ("TEST",  keffs[test_idx],  rawparams[test_idx]),
+        edges_list=meta["edges_list"],
+    )
+
     print("Precomputing φ_reg features (done once)…")
     train_phi_features = compute_phi_features(rawparams[train_idx])
     val_phi_features = compute_phi_features(rawparams[val_idx])
@@ -1034,9 +1218,8 @@ def load_data_param_stratified(filepath, train_size, val_size, test_size,
     )
 
 
-def print_keff_bin_counts(name, keffs):
-    edges = np.array([0.75, 0.80, 0.85, 0.90, 0.95,
-                      1.00, 1.05, 1.10, 1.15, 1.20, 1.25], dtype=np.float32)
+def print_keff_bin_counts(name, keffs, edges=None):
+    edges = DEFAULT_KEFF_EDGES if edges is None else np.asarray(edges, dtype=np.float32)
     print(f"\n{name} bin counts:")
     for b in range(len(edges) - 1):
         lo, hi = edges[b], edges[b + 1]
@@ -1047,6 +1230,121 @@ def print_keff_bin_counts(name, keffs):
             n = np.sum((keffs >= lo) & (keffs <= hi))
             label = f"[{lo:.2f}, {hi:.2f}]"
         print(f"{label}: {n}")
+
+
+def _keff_bin_masks(keffs, edges):
+    keffs = np.asarray(keffs, dtype=np.float32)
+    edges = np.asarray(edges, dtype=np.float32)
+    masks = []
+    labels = []
+    for b in range(len(edges) - 1):
+        lo, hi = float(edges[b]), float(edges[b + 1])
+        if b < len(edges) - 2:
+            m = (keffs >= lo) & (keffs < hi)
+            labels.append(f"[{lo:.2f}, {hi:.2f})")
+        else:
+            m = (keffs >= lo) & (keffs <= hi)
+            labels.append(f"[{lo:.2f}, {hi:.2f}]")
+        masks.append(m)
+    return masks, labels
+
+
+def check_keff_split_representation(train_keffs, val_keffs, test_keffs,
+                                    edges=None, max_pct_diff=3.0):
+    """
+    Diagnostic: compare keff-bin *percentages* across train/val/test.
+
+    Does NOT rebalance — only reports whether representation is similar.
+    Natural hard-sub under-representation is expected and kept.
+    """
+    edges = DEFAULT_KEFF_EDGES if edges is None else np.asarray(edges, dtype=np.float32)
+    sets = {
+        "TRAIN": np.asarray(train_keffs, dtype=np.float32),
+        "VAL":   np.asarray(val_keffs, dtype=np.float32),
+        "TEST":  np.asarray(test_keffs, dtype=np.float32),
+    }
+    pcts = {}
+    labels = None
+    print("\n=== keff bin representation check (% of each split) ===")
+    print(f"  (warn if |split_a% - split_b%| > {max_pct_diff:.1f} pp; soft match, not flatten)")
+    header = f"  {'bin':18s}  {'TRAIN%':>7s}  {'VAL%':>7s}  {'TEST%':>7s}  note"
+    print(header)
+    for name, keffs in sets.items():
+        masks, labels = _keff_bin_masks(keffs, edges)
+        n = max(len(keffs), 1)
+        pcts[name] = np.array([100.0 * float(m.sum()) / n for m in masks], dtype=np.float64)
+
+    warnings = 0
+    for b, label in enumerate(labels):
+        tr, va, te = pcts["TRAIN"][b], pcts["VAL"][b], pcts["TEST"][b]
+        diffs = [abs(tr - va), abs(tr - te), abs(va - te)]
+        note = ""
+        if max(diffs) > max_pct_diff and max(tr, va, te) > 0.0:
+            note = f"WARN Δ={max(diffs):.1f}pp"
+            warnings += 1
+        print(f"  {label:18s}  {tr:6.1f}%  {va:6.1f}%  {te:6.1f}%  {note}")
+    if warnings == 0:
+        print("  OK: train/val/test keff-bin percentages are similar.")
+    else:
+        print(f"  {warnings} bin(s) differ by >{max_pct_diff:.1f} pp across splits "
+              f"(expected some noise; not forcing balance).")
+    return pcts
+
+
+def check_keff_bin_geometry_dominance(*named_splits, edges=None, edges_list=None,
+                                     fuel_r_idx=None, max_fuel_frac=0.55,
+                                     n_fuel_bins=None):
+    """
+    Diagnostic: within each keff bin of each split, check that samples are not
+    dominated by a single fuel_r quantile sub-region.
+    """
+    edges = DEFAULT_KEFF_EDGES if edges is None else np.asarray(edges, dtype=np.float32)
+    if fuel_r_idx is None:
+        fuel_r_idx = (
+            context.PARAM_NAMES.index("fuel_r")
+            if "fuel_r" in context.PARAM_NAMES else 2
+        )
+    if n_fuel_bins is None:
+        n_fuel_bins = context.PARAM_STRAT_BINS
+
+    print("\n=== keff × fuel_r dominance check ===")
+    print(f"  (warn if one fuel_r bin holds >{100*max_fuel_frac:.0f}% of a keff bin "
+          f"with ≥8 samples)")
+
+    # Shared fuel_r edges across splits when provided by the stratified split.
+    if edges_list is not None:
+        fuel_edges = np.asarray(edges_list[fuel_r_idx], dtype=np.float64)
+    else:
+        all_raw = np.concatenate(
+            [np.asarray(raw, dtype=np.float64) for _, _, raw in named_splits], axis=0
+        )
+        _, elist, _ = _assign_param_strata(all_raw, n_bins_per_param=n_fuel_bins)
+        fuel_edges = np.asarray(elist[fuel_r_idx], dtype=np.float64)
+
+    n_fb = len(fuel_edges) - 1
+    any_warn = False
+    for set_name, keffs, rawparams in named_splits:
+        keffs = np.asarray(keffs, dtype=np.float32)
+        rawparams = np.asarray(rawparams, dtype=np.float64)
+        fuel = rawparams[:, fuel_r_idx]
+        fuel_bin = np.digitize(fuel, fuel_edges[1:-1], right=False)
+        fuel_bin = np.clip(fuel_bin, 0, n_fb - 1)
+        k_masks, k_labels = _keff_bin_masks(keffs, edges)
+        for km, klab in zip(k_masks, k_labels):
+            n_k = int(km.sum())
+            if n_k < 8:
+                continue
+            counts = np.bincount(fuel_bin[km], minlength=n_fb)
+            frac = counts.max() / float(n_k)
+            if frac > max_fuel_frac:
+                any_warn = True
+                dom = int(np.argmax(counts))
+                print(
+                    f"  WARN {set_name} {klab}: fuel_r bin {dom} has "
+                    f"{100*frac:.0f}% ({counts[dom]}/{n_k})"
+                )
+    if not any_warn:
+        print("  OK: no keff bin dominated by a single fuel_r sub-region.")
 
 
 def print_param_bin_counts(name, rawparams, edges_list=None, n_bins=None):

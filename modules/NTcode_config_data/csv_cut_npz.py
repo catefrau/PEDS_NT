@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 
-filename = "lhs_rightbounds"
+filename = "17jul_boundsand13jul"
 csv_path = f"../FILES/{filename}.csv"
-CUT_NAME = "lhs_0.85_1.15_bounds"
+CUT_NAME = "0.8_1.2"
 output_path = f"../FILES/{filename}_{CUT_NAME}.npz"
 
 def csv_to_npz(
@@ -85,10 +85,11 @@ def cut_dataset(csv_path: str, csv_path_filtered: str) -> None:
 
     # --- Define your filtering conditions ---
     condition_remove = (
-        (df["keff"] < 0.85) |
-        (df["keff"] > 1.15) |
+        (df["keff"] < 0.8) |
+        (df["keff"] > 1.2) |
         (df["r0_b4c_rod_outer_radius"] > 6) |
-        (df["r1_fuel_annulus_f_mod"] < 0.4) 
+        (df["r1_fuel_annulus_f_mod"] < 0.4) |
+        (df["r1_fuel_annulus_outer_radius"] < 10)
     )
     #    (df["r1_fuel_annulus_outer_radius"] < 15) |
     #    (df["r1_fuel_annulus_enrichment"] > 8) |

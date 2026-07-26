@@ -192,6 +192,95 @@ def plot_keff_scatter(df, epoch = None, save_path=None, vmin=None, vmax=None):
 
 
 # ──────────────────────────────────────────────
+# 3b. PLOT 2b — signed error (pred - target) vs. target keff,
+#     with the worst cases highlighted in tiers.
+# ──────────────────────────────────────────────
+
+def plot_error_vs_keff(df, epoch=None, save_path=None, red_frac=0.05, orange_frac=0.10,
+                        hline_pcm=(650, 100), ylim=None):
+    """
+    Scatter of signed prediction error (keff_peds - keff_openmc, expressed in
+    signed pcm) vs. the target keff_openmc. Highlights the worst cases in two
+    severity tiers (by |error|, computed within this plot's own samples):
+      - top `red_frac`                              -> red
+      - next slice up to `orange_frac` (cumulative)  -> orange
+      - remaining                                    -> default blue
+    Adds light dashed horizontal reference lines at +/- each value in
+    `hline_pcm` (default 650 and 100 pcm).
+    """
+    from matplotlib.lines import Line2D
+
+    if epoch is None:
+        epoch = df["epoch"].max()
+    d = df[df["epoch"] == epoch].copy()
+    if d.empty:
+        print(f"  ⚠  No rows for epoch {epoch} — skipping error-vs-keff plot.")
+        return
+
+    if "signed_delta_rho_pcm" in d.columns:
+        err = d["signed_delta_rho_pcm"].astype(float).to_numpy()
+    else:
+        kp = d["keff_peds"].astype(float).to_numpy()
+        kr = d["keff_openmc"].astype(float).to_numpy()
+        err = (kp - kr) / (kp * kr) * 1e5
+
+    n = len(d)
+    abs_err = np.abs(err)
+    order = np.argsort(-abs_err)  # descending, worst first
+    n_red = max(1, int(round(n * red_frac)))
+    n_orange_cum = max(n_red, int(round(n * orange_frac)))
+
+    red_idx = set(order[:n_red].tolist())
+    orange_idx = set(order[n_red:n_orange_cum].tolist())
+
+    colors = np.full(n, "#2563EB", dtype=object)
+    sizes = np.full(n, 32, dtype=float)
+    for i in orange_idx:
+        colors[i] = "#F59E0B"
+        sizes[i] = 55
+    for i in red_idx:
+        colors[i] = "#DC2626"
+        sizes[i] = 75
+
+    if save_path is None:
+        save_path = f"../LOGS/{project_name}/metrics_plot/error_vs_keff_epoch{epoch}.png"
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.scatter(d["keff_openmc"], err, c=list(colors), s=sizes,
+               edgecolors="k", linewidths=0.3, alpha=0.85, zorder=3)
+
+    hline_handles = []
+    for level in hline_pcm:
+        ax.axhline( level, ls="--", color="lightgrey", lw=1.2, zorder=1)
+        ax.axhline(-level, ls="--", color="lightgrey", lw=1.2, zorder=1)
+        hline_handles.append(
+            Line2D([0], [0], ls="--", color="lightgrey", lw=1.2, label=f"±{level} pcm")
+        )
+    ax.axhline(0, color="grey", lw=1.0, alpha=0.6, zorder=1)
+
+    red_pct = int(round(red_frac * 100))
+    orange_pct = int(round((orange_frac - red_frac) * 100))
+    handles = [
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="#DC2626",
+               markersize=11, label=f"worst {red_pct}%"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="#F59E0B",
+               markersize=11, label=f"next {orange_pct}%"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="#2563EB",
+               markersize=11, label="remaining"),
+    ] + hline_handles
+    ax.legend(handles=handles, fontsize=13, loc="best")
+
+    ax.tick_params(axis="both", labelsize=13)
+    ax.set_xlabel("k$_{eff}$ — OpenMC (target)", fontsize=15)
+    ax.set_ylabel("Error: PEDS \u2212 OpenMC (signed pcm)", fontsize=15)
+    ax.grid(True, alpha=0.25, linestyle="--")
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print(f"  Saved: {save_path}")
+
+
+# ──────────────────────────────────────────────
 # 4.  PLOT 3 — Δρ evolution per sample over epochs
 # ──────────────────────────────────────────────
 
@@ -272,12 +361,9 @@ def plot_parallel_coords(df, epoch= None, save_path=None):
             ax.plot(x_pos, y_vals, color=color, linewidth=2.5, zorder=3)
 
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(PARAM_LABELS, fontsize=9)
-    ax.set_ylabel("Normalised parameter value", fontsize=10)
-    ax.set_title(
-        f"Parallel Coordinates — 6 parameters coloured by Δρ at epoch {epoch}",
-        fontsize=12, fontweight="bold",
-    )
+    ax.set_xticklabels(PARAM_LABELS, fontsize=14)
+    ax.tick_params(axis="y", labelsize=14)
+    ax.set_ylabel("Normalised parameter value", fontsize=16)
     ax.set_xlim(-0.1, len(PARAMS) - 0.9)
     ax.set_ylim(-0.05, 1.05)
     ax.grid(axis="x", linestyle="--", alpha=0.35)
@@ -288,10 +374,11 @@ def plot_parallel_coords(df, epoch= None, save_path=None):
                                                      vmax=delta_rho_vals.max()))
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=ax, pad=0.02)
-    cbar.set_label("Δρ (pcm)", fontsize=10)
+    cbar.set_label("Δρ (pcm)", fontsize=16)
+    cbar.ax.tick_params(labelsize=14)
 
     fig.tight_layout()
-    fig.savefig(save_path, dpi=150)
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {save_path}")
 

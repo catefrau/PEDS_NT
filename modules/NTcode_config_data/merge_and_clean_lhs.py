@@ -26,8 +26,9 @@ import matplotlib.pyplot as plt
 # ----------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------
-FOLDER = Path("../FILES/older_datasets")
-OUTDIR = Path("./lhs_analysis_outputs/XS")
+FOLDER = Path("../FILES/new_LHS_bigrange")
+dirname = "./lhs_analysis_output_new"
+OUTDIR = Path(dirname)
 OUTDIR.mkdir(exist_ok=True)
 
 PARAMS = [
@@ -36,49 +37,14 @@ PARAMS = [
     "r1_fuel_annulus_outer_radius",
     "r1_fuel_annulus_enrichment",
     "r1_fuel_annulus_f_mod",
-    "r2_water_outer_radius",
-    "b4c_rod_diffusion-coefficient_g1",
-    "b4c_rod_diffusion-coefficient_g2",
-    "b4c_rod_absorption_g1",
-    "b4c_rod_absorption_g2",
-    "b4c_rod_nu-fission_g1",
-    "b4c_rod_nu-fission_g2",
-    "b4c_rod_scatter matrix_g1",
-    "b4c_rod_scatter matrix_g2",
-    "b4c_rod_scatter matrix_g3",
-    "b4c_rod_scatter matrix_g4",
-    "b4c_rod_chi_g1",
-    "b4c_rod_chi_g2",
-    "fuel_annulus_diffusion-coefficient_g1",
-    "fuel_annulus_diffusion-coefficient_g2",
-    "fuel_annulus_absorption_g1",
-    "fuel_annulus_absorption_g2",
-    "fuel_annulus_nu-fission_g1",
-    "fuel_annulus_nu-fission_g2",
-    "fuel_annulus_scatter matrix_g1",
-    "fuel_annulus_scatter matrix_g2",
-    "fuel_annulus_scatter matrix_g3",
-    "fuel_annulus_scatter matrix_g4",
-    "fuel_annulus_chi_g1",
-    "fuel_annulus_chi_g2",
-    "water_diffusion-coefficient_g1",
-    "water_diffusion-coefficient_g2",
-    "water_absorption_g1",
-    "water_absorption_g2",
-    "water_nu-fission_g1",
-    "water_nu-fission_g2",
-    "water_scatter matrix_g1",
-    "water_scatter matrix_g2",
-    "water_scatter matrix_g3",
-    "water_scatter matrix_g4",
-    "water_chi_g1",
-    "water_chi_g2",
+    "r2_water_outer_radius"
 ]
 TARGET = "keff"
 COLS_OF_INTEREST = PARAMS + [TARGET]
 
-N_BINS_1D = 10          # bins per parameter, for reporting/plotting distributions
-N_BINS_PER_DIM = 5      # bins per parameter, for the 6D thinning grid (5**6 = 15625 cells)
+
+N_BINS_1D = 20          # bins per parameter, for reporting/plotting distributions
+N_BINS_PER_DIM = 8      # bins per parameter, for the 6D thinning grid (5**6 = 15625 cells)
 CELL_CAP_PERCENTILE = 75  # cap each 6D cell's count at this percentile of nonzero cell counts
 RANDOM_SEED = 42
 
