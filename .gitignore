@@ -22,6 +22,8 @@ __pycache__/
 *.txt
 *.sh
 *.pkl
+*.out
+*.err
 
 # Generated experiment outputs
 experiments/coding/figures/
@@ -32,10 +34,14 @@ experiments/coding/results/
 modules/fullcode_perp.py
 modules/NThelper.py
 modules/RUNS/
+modules/inverse_design/
 modules/density_report/
 modules/slurm_logs/
 modules/MOREstudies/
 old_stuff/
+solvers/HF_openMC/training_data/2_aug/seed_0/runs/
+solvers/HF_openMC/training_data/1_aug/seed_0/runs/
+solvers/HF_openMC/training_data/13_jul/seed_0/runs/
 
 reg_and_data/inputs/heter_regre_files/
 reg_and_data/inputs/HOM/

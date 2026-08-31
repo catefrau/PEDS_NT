@@ -1,0 +1,5 @@
+run_id,attempt,elapsed_s,keff,keff_std,std_target,std_retries,settings_history
+1,1,1725.6592843532562,0.8614551859313262,0.0004993995297961604,0.0005,0,"[{""batches"": 200, ""trigger_max_batches"": 300, ""particles"": 20000, ""inactive"": 50, ""keff_trigger_std"": 0.0005}]"
+2,2,1166.2067000865936,1.2592406146347883,0.0004974110702498631,0.0005,0,"[{""batches"": 200, ""trigger_max_batches"": 300, ""particles"": 20000, ""inactive"": 50, ""keff_trigger_std"": 0.0005}]"
+3,3,1259.8697788715363,1.268764492730497,0.0004972541493433889,0.0005,0,"[{""batches"": 200, ""trigger_max_batches"": 300, ""particles"": 20000, ""inactive"": 50, ""keff_trigger_std"": 0.0005}]"
+4,4,1769.0112504959106,0.963906737557623,0.0004979302715429135,0.0005,0,"[{""batches"": 200, ""trigger_max_batches"": 300, ""particles"": 20000, ""inactive"": 50, ""keff_trigger_std"": 0.0005}]"
