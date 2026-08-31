@@ -59,10 +59,11 @@ OUTPUTS (per dataset, under OUTDIR/<train|val|test>/)
    variable), which you can feed into your existing bounds-cutting function
    to build a stratified LHS. This is a *marginal* (per-parameter)
    allocation -- check interactions_grid.png before trusting this blindly.
-6. abs_error_scatter_epoch0.png / abs_error_scatter_final.png: 2x3 scatter
-   of each geometry parameter vs |delta_rho_pcm|, with Pearson r annotated
-   and the worst 5% of samples highlighted in red (same samples across
-   all panels).
+6. abs_error_scatter_epoch0.png / abs_error_scatter_final.png: 3x2 scatter
+   of each geometry parameter vs |delta_rho_pcm|, with Pearson r as subplot
+   title, human-readable param names, and the worst 5% of samples highlighted
+   and colored by target-keff criticality regime (sub / near / super).
+   Figure title omitted (for document captions).
 7. samples_keff_error_params.csv: one row per unique geometry for epoch0 and
    final, with keff_openmc / keff_peds / delta_rho_pcm and the 6 parameters
    (train/val params recovered via match_keff_to_params against the npz;
@@ -114,22 +115,23 @@ from sklearn.inspection import permutation_importance
 # Test set: glob matching every per-sample "keff_comparison" csv you want to
 # include. Each file must already contain the 6 parameter columns plus
 # epoch/sample_idx/keff_openmc/keff_peds/delta_rho_pcm.
-study_folder = "decay_study/decay_70_EPOCHS_100_different_holdout"
+study_folder = "precise_param_strat"
 
-TEST_CSV_GLOB = f"RUNS/{study_folder}/testset_results/rep_train*_keff_comparison.csv"
+TEST_CSV_GLOB = f"RUNS/{study_folder}/testset_results/run_train*_keff_comparison.csv"
 
 # NPZ file used to train/derive the LHS samples. Must contain "keffs"
 # (unique per sample) and "params_raw" (the 6 physical parameter values) plus
 # "param_names". Used to recover the 6 parameters for train/val rows, which
 # aren't stored directly in keff_epoch_log_*.csv.
-NPZ_PATH = "../data/highfidelity/13jul_merged_bigR.npz"
+NPZ_PATH = "../data/highfidelity/17jul_0.8_1.2.npz"
 
 # Train/val sets: glob matching every run directory (one per seed) that
 # contains keff_epoch_log_train.csv, keff_epoch_log_val.csv and
 # split_log.csv.
 RUN_DIR_GLOB = f"RUNS/{study_folder}/train_1000_seed_*"
 
-OUTDIR = f"error_attribution_report/{study_folder}"
+# Outputs live under MOREstudies/param_analysis/ (moved out of modules root).
+OUTDIR = f"MOREstudies/param_analysis/{study_folder}"
 
 
 # Max allowed |keff_a - keff_b| when matching a logged keff to an npz keff.
@@ -161,7 +163,35 @@ MIN_CELL_N_FOR_INTERACTION = 15  # min samples in a 2D bin for that cell to
                                  # enter the interaction score; if any occupied
                                  # cell is below this, the pair is unreliable
 WORST_FRAC = 0.05          # fraction of highest-|error| samples highlighted
-                             # red on the abs-error scatter plots
+                             # on the abs-error scatter plots (colored by
+                             # target-keff criticality regime)
+
+# Human-readable axis labels for the 6 geometry parameters (csv / npz names).
+PARAM_DISPLAY_NAMES = {
+    "r0_b4c_rod_outer_radius": "CR radius",
+    "r0_b4c_rod_cr_fraction": "CR fraction",
+    "r1_fuel_annulus_outer_radius": "fuel radius",
+    "r1_fuel_annulus_enrichment": "fuel enrichment",
+    "r1_fuel_annulus_f_mod": "fuel moderation fraction",
+    "r2_water_outer_radius": "water radius",
+    # short aliases (XS / inverse-design naming)
+    "b4c_r": "CR radius",
+    "cr_frac": "CR fraction",
+    "fuel_r": "fuel radius",
+    "enrichment": "fuel enrichment",
+    "f_mod": "fuel moderation fraction",
+    "water_r": "water radius",
+}
+
+# Criticality regimes for coloring the worst-WORST_FRAC samples (target keff).
+# Near-critical band: |keff - 1| <= NEAR_CRIT_TOL (default ±2000 pcm).
+NEAR_CRIT_TOL = 0.02
+KEFF_REGIME_COLORS = {
+    "subcritical": "#3B6EA5",     # blue
+    "near-critical": "#C9A227",   # gold
+    "supercritical": "#C44E52",   # red
+}
+KEFF_REGIME_ORDER = ("subcritical", "near-critical", "supercritical")
 # ===========================================================================
 
 
@@ -418,12 +448,23 @@ def correlation_by_keff_bin(df, param_cols, edges=None, n_bins=N_KEFF_BINS,
 
 
 def _short_param_label(name):
-    """Shorter y-tick labels for paper figures."""
+    """Human-readable parameter label for paper figures."""
+    if name in PARAM_DISPLAY_NAMES:
+        return PARAM_DISPLAY_NAMES[name]
     return (name
             .replace("r0_b4c_rod_", "r0 ")
             .replace("r1_fuel_annulus_", "r1 ")
             .replace("r2_water_", "r2 ")
             .replace("_", " "))
+
+
+def _keff_regime_labels(keff):
+    """Map target keff → criticality regime label (same length as keff)."""
+    keff = np.asarray(keff, dtype=float)
+    labels = np.full(keff.shape, "near-critical", dtype=object)
+    labels[keff < 1.0 - NEAR_CRIT_TOL] = "subcritical"
+    labels[keff > 1.0 + NEAR_CRIT_TOL] = "supercritical"
+    return labels
 
 
 def _keff_bin_ticklabels(table, param_cols, bins):
@@ -894,50 +935,144 @@ def plot_importance_comparison(table0, tableF, outdir, dataset_label):
 
 
 def plot_abs_error_scatter(df, param_cols, outdir, dataset_label, epoch_label):
-    """2x3 scatter of each parameter vs |delta_rho_pcm|; worst WORST_FRAC in red."""
+    """3x2 scatter of each parameter vs |delta_rho_pcm|.
+
+    Background samples in grey; worst WORST_FRAC colored by target-keff
+    criticality regime (sub / near / super). Large fonts for documents;
+    figure title omitted (use caption instead).
+    """
     y = np.abs(df[ERROR_COL].astype(float).to_numpy())
     thresh = np.quantile(y, 1.0 - WORST_FRAC)
     worst = y >= thresh
+    keff = df["keff_openmc"].astype(float).to_numpy()
+    regimes = _keff_regime_labels(keff)
 
     n = len(param_cols)
-    ncols = 3
+    # Tall 3x2 layout. Common y-range across panels; only left column shows
+    # |\Deltaρ| tick numbers (right column follows the same scale silently).
+    ncols = 2
     nrows = int(np.ceil(n / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 3.6 * nrows), squeeze=False)
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(5.6 * ncols, 5.2 * nrows),
+        squeeze=False,
+    )
+    axis_fs = 22          # shared size for axis labels, ticks, and r-titles
 
+    # Shared y-scale: 0 + 4 positive tick values (user: 0 does not count).
+    y_max = float(np.nanmax(y)) if len(y) else 1.0
+    n_pos = 4
+    rough = (y_max * 1.08) / n_pos
+    exp = np.floor(np.log10(max(rough, 1e-12)))
+    frac = rough / (10 ** exp)
+    step = 10.0 * 10 ** exp
+    for c in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0):
+        if c * (10 ** exp) * n_pos >= y_max * 1.02:
+            step = c * (10 ** exp)
+            break
+    y_ticks = step * np.arange(n_pos + 1, dtype=float)  # 0, step, ..., 4*step
+    y_top = float(y_ticks[-1])
+    y_pad = 0.08 * y_top   # little space below zero (as in prior figures)
+
+    title_bbox = dict(
+        boxstyle="round,pad=0.25",
+        facecolor="white",
+        edgecolor="0.55",
+        linewidth=1.0,
+        alpha=0.95,
+    )
+
+    legend_handles = None
     for i, name in enumerate(param_cols):
-        ax = axes[i // ncols][i % ncols]
+        row, col = divmod(i, ncols)
+        ax = axes[row][col]
         x = df[name].astype(float).to_numpy()
-        ax.scatter(x[~worst], y[~worst], s=14, c="#B8B8B8", alpha=0.45,
-                   edgecolors="none", zorder=1)
-        ax.scatter(x[worst], y[worst], s=42, c="#C44E52", alpha=0.9,
-                   edgecolors="k", linewidths=0.45, zorder=2)
+        ax.scatter(x[~worst], y[~worst], s=28, c="#B8B8B8", alpha=0.40,
+                   edgecolors="none", zorder=1, label="_nolegend_")
+        for regime in KEFF_REGIME_ORDER:
+            mask = worst & (regimes == regime)
+            if not np.any(mask):
+                continue
+            ax.scatter(
+                x[mask], y[mask], s=90,
+                c=KEFF_REGIME_COLORS[regime], alpha=0.95,
+                edgecolors="k", linewidths=0.6, zorder=2,
+                label=regime,
+            )
         if len(x) > 1 and np.std(x) > 0 and np.std(y) > 0:
             r = float(np.corrcoef(x, y)[0, 1])
         else:
             r = float("nan")
-        ax.text(0.5, 0.98, f"r = {r:.2f}", transform=ax.transAxes,
-                ha="center", va="top", fontsize=12)
-        ax.set_xlabel(name, fontsize=12)
-        ax.set_ylabel(r"$|\Delta\rho|$ (pcm)", fontsize=12)
-        ax.tick_params(labelsize=12)
+        # Framed r inside the axes (avoids colliding with the row above's xlabel).
+        ax.text(
+            0.50, 0.97, f"$r$ = {r:.2f}",
+            transform=ax.transAxes,
+            ha="center", va="top",
+            fontsize=axis_fs,
+            bbox=title_bbox,
+            zorder=5,
+        )
+        ax.set_xlabel(_short_param_label(name), fontsize=axis_fs, labelpad=8)
+        ax.set_ylim(-y_pad, y_top)
+        ax.set_yticks(y_ticks)
+        ax.tick_params(axis="x", labelsize=axis_fs, length=6, width=1.2)
+        ax.tick_params(axis="y", labelsize=axis_fs, length=6, width=1.2)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
+        if col != 0:
+            ax.tick_params(axis="y", left=False, labelleft=False)
+        if legend_handles is None:
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                legend_handles = (handles, labels)
 
     for j in range(n, nrows * ncols):
         axes[j // ncols][j % ncols].axis("off")
 
-    pct = int(round(WORST_FRAC * 100))
-    fig.suptitle(
-        f"{dataset_label}: Absolute reactivity error vs. geometry parameters — "
-        f"{epoch_label} (red = worst {pct}% of samples)",
-        fontsize=14,
-    )
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    # One shared y-label for the whole figure (avoids repeating on every row).
+    fig.supylabel(r"$|\Delta\rho|$ (pcm)", fontsize=axis_fs)
+
+    # Title commented out for document inclusion (caption goes in the paper).
+    # pct = int(round(WORST_FRAC * 100))
+    # fig.suptitle(
+    #     f"{dataset_label}: Absolute reactivity error vs. geometry parameters — "
+    #     f"{epoch_label} (colored = worst {pct}% by target $k_{{\\mathrm{{eff}}}}$ regime)",
+    #     fontsize=22,
+    # )
+
+    # Moderate row gap; r-frames now sit inside axes so labels need less clearance.
+    if legend_handles is not None:
+        fig.tight_layout(rect=(0.03, 0.02, 1.0, 0.90), h_pad=2.4, w_pad=1.4)
+        fig.subplots_adjust(hspace=0.35, wspace=0.22, top=0.90, bottom=0.05)
+        leg = fig.legend(
+            *legend_handles,
+            loc="upper center",
+            ncol=len(legend_handles[0]),
+            frameon=True,
+            fancybox=False,
+            edgecolor="0.4",
+            title=f"worst {int(round(WORST_FRAC * 100))}% by target $k_{{\\mathrm{{eff}}}}$",
+            bbox_to_anchor=(0.52, 0.995),
+            bbox_transform=fig.transFigure,
+            markerscale=1.6,
+            handletextpad=0.4,
+            columnspacing=1.0,
+            borderpad=0.4,
+            labelspacing=0.3,
+            prop={"size": 22},
+        )
+        leg.get_title().set_fontsize(22)
+    else:
+        fig.tight_layout(rect=(0.03, 0.02, 1.0, 1.0), h_pad=2.4, w_pad=1.4)
+        fig.subplots_adjust(hspace=0.35, wspace=0.22)
+
     out_path = Path(outdir) / f"abs_error_scatter_{epoch_label}.png"
-    fig.savefig(out_path, dpi=130)
+    # pad_inches keeps a thin margin; avoid bbox that lets the legend spill.
+    fig.savefig(out_path, dpi=220, bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
     print(f"  abs-error scatter saved → {out_path} "
-          f"(n={len(y)}, worst {pct}% threshold={thresh:.1f} pcm, n_worst={int(worst.sum())})")
+          f"(n={len(y)}, worst {int(round(WORST_FRAC * 100))}% "
+          f"threshold={thresh:.1f} pcm, n_worst={int(worst.sum())})")
 
 
 def suggested_bin_weights(df, param_cols, outdir):

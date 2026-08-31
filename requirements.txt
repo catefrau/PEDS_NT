@@ -190,6 +190,7 @@ safetensors==0.4.2
 scattertext==0.1.19
 scikit-image==0.25.1
 scikit-learn==1.3.0
+scikit-optimize==0.10.2
 scipy==1.11.2
 scs==3.2.4.post1
 seaborn==0.13.0

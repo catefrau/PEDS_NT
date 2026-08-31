@@ -127,36 +127,54 @@ def xs_tensor_from_row(row, geo: GeometryConfig) -> np.ndarray:
 
     return xs_tensor
 
+KEFF_LABEL = r"$k_{\mathrm{eff}}$"
+
+
 def scatter_plot_from_csv(df, plot_output="LOGS/zed/keff_scatter.png"):
-    plt.figure(figsize=(5, 5))
-    plt.scatter(df["keff"], df["keff_lf"], s=8, alpha=0.4)
-    plt.plot([df["keff"].min(), df["keff"].max()],
+    label_fs, tick_fs, legend_fs = 16, 13, 12
+    fig, ax = plt.subplots(figsize=(5.5, 5.5))
+    ax.scatter(df["keff"], df["keff_lf"], s=8, alpha=0.4)
+    ax.plot([df["keff"].min(), df["keff"].max()],
             [df["keff"].min(), df["keff"].max()],
             "k--", label="y = x")
 
-    plt.xlabel("k_eff (OpenMC, high fidelity)")
-    plt.ylabel("k_eff (diffusion, low fidelity)")
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    os.makedirs(os.path.dirname(plot_output), exist_ok=True)  # ← add this
-    plt.savefig(plot_output, dpi=250)
-    #plt.show()
+    ax.set_xlabel(f"{KEFF_LABEL} (OpenMC, high fidelity)", fontsize=label_fs)
+    ax.set_ylabel(f"{KEFF_LABEL} (diffusion, low fidelity)", fontsize=label_fs)
+    ax.tick_params(axis="both", labelsize=tick_fs)
+    ax.legend(fontsize=legend_fs)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    os.makedirs(os.path.dirname(plot_output) or ".", exist_ok=True)
+    fig.savefig(plot_output, dpi=400, bbox_inches="tight")
+    plt.close(fig)
 
 
-def plot_histogram(df, plot_output="LOGS/zed/keff_histogram.png"):
-    plt.figure()
-    plt.hist(df["keff"], bins=40, alpha=0.5, label="OpenMC (HF)")
-    plt.hist(df["keff_lf"], bins=40, alpha=0.5, label="Diffusion (LF)")
-    plt.xlabel("k_eff")
-    plt.ylabel("Count")
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    os.makedirs(os.path.dirname(plot_output), exist_ok=True)  # ← add this
-    
-    plt.savefig(plot_output, dpi=250)
-    #plt.show()
+def plot_histogram(df, plot_output="LOGS/zed/keff_histogram.png",
+                   keff_corrected_col=None):
+    """
+    Overlay OpenMC (HF), diffusion (LF), and optionally diffusion-corrected
+    (PEDS) k_eff histograms. Pass ``keff_corrected_col`` to include the third.
+    """
+    label_fs, tick_fs, legend_fs = 18, 15, 14
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    ax.hist(df["keff"], bins=40, alpha=0.55, label="OpenMC (HF)",
+            color="#4C78A8", edgecolor="white", linewidth=0.4)
+    ax.hist(df["keff_lf"], bins=40, alpha=0.55, label="Diffusion (LF)",
+            color="#F58518", edgecolor="white", linewidth=0.4)
+    if keff_corrected_col is not None and keff_corrected_col in df.columns:
+        ax.hist(df[keff_corrected_col], bins=40, alpha=0.55,
+                label="Diffusion corrected (PEDS)",
+                color="#54A24B", edgecolor="white", linewidth=0.4)
+
+    ax.set_xlabel(KEFF_LABEL, fontsize=label_fs)
+    ax.set_ylabel("Count", fontsize=label_fs)
+    ax.tick_params(axis="both", labelsize=tick_fs)
+    ax.legend(fontsize=legend_fs, framealpha=0.9)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    os.makedirs(os.path.dirname(plot_output) or ".", exist_ok=True)
+    fig.savefig(plot_output, dpi=400, bbox_inches="tight")
+    plt.close(fig)
 
 
 if __name__ == "__main__":

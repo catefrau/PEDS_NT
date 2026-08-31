@@ -1121,11 +1121,180 @@ def load_data_balanced_ranges(filepath, train_size, val_size, test_size,
     )
 
 
+def _greedy_maximin(cand_idx, params, n_pick, ref_idx=None):
+    """Greedy maximin in Euclidean parameter space.
+
+    Repeatedly pick the candidate whose nearest neighbour among
+    ``ref_idx ∪ already-chosen`` is farthest away. Deterministic.
+    """
+    cand = np.asarray(cand_idx, dtype=np.int64)
+    n_pick = int(n_pick)
+    if n_pick <= 0 or len(cand) == 0:
+        return np.array([], dtype=np.int64)
+    if n_pick >= len(cand):
+        return cand.copy()
+
+    P = np.asarray(params, dtype=np.float64)
+    refs = np.asarray([] if ref_idx is None else ref_idx, dtype=np.int64)
+    C = P[cand]
+    dmin = np.full(len(cand), np.inf, dtype=np.float64)
+    if len(refs) > 0:
+        R = P[refs]
+        # chunked to keep the (n_cand, n_ref) product reasonable
+        chunk = 256
+        for s in range(0, len(R), chunk):
+            d = np.linalg.norm(C[:, None, :] - R[None, s:s + chunk, :], axis=2)
+            dmin = np.minimum(dmin, d.min(axis=1))
+    else:
+        mu = C.mean(axis=0)
+        dmin = np.linalg.norm(C - mu, axis=1)
+
+    selected = []
+    taken = np.zeros(len(cand), dtype=bool)
+    for _ in range(n_pick):
+        dmin[taken] = -1.0
+        i = int(np.argmax(dmin))
+        if taken[i]:
+            break
+        selected.append(int(cand[i]))
+        taken[i] = True
+        dmin[i] = -1.0
+        last = C[i]
+        dmin = np.minimum(dmin, np.linalg.norm(C - last, axis=1))
+    return np.array(selected, dtype=np.int64)
+
+
+def derive_split_indices_maximin_keff(filepath, train_size, val_size, test_size,
+                                      train_seed=0, holdout_seed=0,
+                                      val_seed=None, test_seed=None,
+                                      n_bins_per_param=2, bin_edges_per_param=None,
+                                      balanced=False,
+                                      fuel_r_idx=2, fuel_r_weight=None,
+                                      keff_edges=None):
+    """
+    TEST is identical to ``derive_split_indices_by_params`` (locked by test_seed).
+
+    TRAIN and VAL are re-picked from the leftover pool by greedy maximin in the
+    6-D normalised parameter space, **inside each keff bin**, with per-bin
+    counts copied from the reference param-stratified split
+    (train_seed=0, val_seed=0, same test_seed). That keeps the keff-range
+    coverage unchanged while spreading geometries to shrink coverage holes.
+    """
+    del balanced, fuel_r_weight
+    if test_seed is None:
+        test_seed = holdout_seed
+    if val_seed is None:
+        val_seed = holdout_seed
+    if keff_edges is None:
+        keff_edges = DEFAULT_KEFF_EDGES
+
+    # Locked TEST + reference keff histograms (do not flatten the range).
+    ref_train, ref_val, test_idx, meta = derive_split_indices_by_params(
+        filepath, train_size, val_size, test_size,
+        train_seed=0, holdout_seed=holdout_seed,
+        val_seed=0, test_seed=test_seed,
+        n_bins_per_param=n_bins_per_param,
+        bin_edges_per_param=bin_edges_per_param,
+        fuel_r_idx=fuel_r_idx,
+        keff_edges=keff_edges,
+    )
+
+    data = np.load(filepath, allow_pickle=True)
+    params = np.array(data["params"], dtype=np.float64)       # already [0,1]
+    keffs = np.array(data["keffs"], dtype=np.float64)
+    n_samples = len(keffs)
+    keff_ids = _keff_bin_ids(keffs, edges=keff_edges)
+    n_keff_bins = int(keff_ids.max()) + 1
+
+    def _counts(idx):
+        c = np.zeros(n_keff_bins, dtype=int)
+        for b, n in zip(*np.unique(keff_ids[idx], return_counts=True)):
+            c[int(b)] = int(n)
+        return c
+
+    train_counts = _counts(ref_train)
+    val_counts = _counts(ref_val)
+    print("\n=== Maximin-within-keff-bin split ===")
+    print(f"  TEST locked to param-strat test_seed={test_seed}  n={len(test_idx)}")
+    print(f"  Target TRAIN keff-bin counts (from param-strat seed 0): {train_counts.tolist()}")
+    print(f"  Target VAL   keff-bin counts (from param-strat seed 0): {val_counts.tolist()}")
+
+    remaining = np.array(sorted(set(range(n_samples)) - set(test_idx.tolist())),
+                         dtype=np.int64)
+    train_parts, val_parts = [], []
+    taken = set(int(i) for i in test_idx)
+
+    for b in range(n_keff_bins):
+        cand = remaining[keff_ids[remaining] == b]
+        cand = np.array([i for i in cand if i not in taken], dtype=np.int64)
+        n_tr = int(train_counts[b])
+        n_va = int(val_counts[b])
+        if n_tr + n_va > len(cand):
+            raise ValueError(
+                f"keff bin {b}: need train+val={n_tr + n_va}, have leftover {len(cand)}"
+            )
+        refs = np.array([i for i in test_idx if keff_ids[i] == b], dtype=np.int64)
+        tr_b = _greedy_maximin(cand, params, n_tr, ref_idx=refs)
+        taken.update(int(i) for i in tr_b)
+        cand_v = np.array([i for i in cand if i not in taken], dtype=np.int64)
+        refs_v = np.concatenate([refs, tr_b]) if len(tr_b) else refs
+        va_b = _greedy_maximin(cand_v, params, n_va, ref_idx=refs_v)
+        taken.update(int(i) for i in va_b)
+        train_parts.append(tr_b)
+        val_parts.append(va_b)
+
+    train_idx = np.concatenate(train_parts) if train_parts else np.array([], dtype=np.int64)
+    val_idx = np.concatenate(val_parts) if val_parts else np.array([], dtype=np.int64)
+
+    # Deterministic shuffle (split is not a function of the init seed).
+    train_rng = np.random.default_rng(0)
+    val_rng = np.random.default_rng(0)
+    test_rng = np.random.default_rng(int(test_seed))
+    train_rng.shuffle(train_idx)
+    val_rng.shuffle(val_idx)
+    test_rng.shuffle(test_idx)
+
+    overlap = (set(train_idx) & set(val_idx)) | (set(train_idx) & set(test_idx)) | (
+        set(val_idx) & set(test_idx)
+    )
+    if overlap:
+        raise ValueError(f"maximin split overlap: {len(overlap)} indices")
+    if len(train_idx) != int(train_size) or len(val_idx) != int(val_size):
+        raise ValueError(
+            f"maximin size mismatch: train={len(train_idx)}/{train_size} "
+            f"val={len(val_idx)}/{val_size}"
+        )
+
+    # Coverage diagnostic vs the reference param-strat train
+    def _nn_stats(idx):
+        X = params[idx]
+        # pairwise min excluding self
+        d = np.linalg.norm(X[:, None, :] - X[None, :, :], axis=2)
+        np.fill_diagonal(d, np.inf)
+        nn = d.min(axis=1)
+        return float(np.median(nn)), float(np.percentile(nn, 10))
+
+    med_m, p10_m = _nn_stats(train_idx)
+    med_r, p10_r = _nn_stats(ref_train)
+    print(f"  TRAIN 1-NN  maximin median={med_m:.4f} p10={p10_m:.4f}  "
+          f"| param-strat seed0 median={med_r:.4f} p10={p10_r:.4f}")
+    print(f"  overlap with param-strat seed0 train: "
+          f"{len(set(train_idx) & set(ref_train))}/{len(train_idx)}")
+
+    meta = dict(meta)
+    meta["method"] = "maximin_within_keff_bin"
+    meta["train_seed"] = 0
+    meta["val_seed"] = 0
+    meta["ref_train_keff_counts"] = train_counts
+    meta["ref_val_keff_counts"] = val_counts
+    return train_idx, val_idx, test_idx, meta
+
+
 def load_data_param_stratified(filepath, train_size, val_size, test_size,
                                train_seed=42, holdout_seed=0,
                                val_seed=None, test_seed=None,
                                n_bins_per_param=None, bin_edges_per_param=None,
-                               balanced=False):
+                               balanced=False, split_method="param_strat"):
     """
     Load dataset and split train/val/test by stratifying over input parameters
     (params_raw), not keff.
@@ -1158,18 +1327,22 @@ def load_data_param_stratified(filepath, train_size, val_size, test_size,
     print(f"  Split seeds: train_seed={train_seed}, val_seed={val_seed}, "
           f"test_seed={test_seed} (holdout_seed legacy={holdout_seed})")
     print(f"  Bins per parameter: {n_bins_per_param}")
+    print(f"  Split method: {split_method}")
     print(f"  Primary param: fuel_r (hard coverage per bin)")
     print(f"  Parameters: {context.PARAM_NAMES}")
     print(f"  Dataset samples available: {len(geoms)}")
 
-    train_idx, val_idx, test_idx, meta = derive_split_indices_by_params(
+    fuel_r_idx = context.PARAM_NAMES.index("fuel_r") if "fuel_r" in context.PARAM_NAMES else 2
+    derive_fn = (derive_split_indices_maximin_keff
+                 if split_method == "maximin" else derive_split_indices_by_params)
+    train_idx, val_idx, test_idx, meta = derive_fn(
         filepath, train_size, val_size, test_size,
         train_seed=train_seed, holdout_seed=holdout_seed,
         val_seed=val_seed, test_seed=test_seed,
         n_bins_per_param=n_bins_per_param,
         bin_edges_per_param=bin_edges_per_param,
         balanced=balanced,
-        fuel_r_idx=context.PARAM_NAMES.index("fuel_r") if "fuel_r" in context.PARAM_NAMES else 2,
+        fuel_r_idx=fuel_r_idx,
     )
     train_idx, val_idx, test_idx = _validate_split_indices(
         train_idx, val_idx, test_idx,

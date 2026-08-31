@@ -75,7 +75,7 @@ LR_min     = 5e-6
 DECAY_EPOCHS = int(os.environ.get("PEDS_DECAY_EPOCHS", 70))
 
 EXP_NAME   = f"train_{TRAIN_SIZE}_seed_{SEED}"  #_decay{DECAY_EPOCHS}
-LOG_DIR = os.path.join(THIS_DIR, "RUNS", "precise_param_strat2", EXP_NAME)
+LOG_DIR = os.path.join(THIS_DIR, "RUNS", "precise_param_strat", EXP_NAME)
 # ── data path — anchored to PARENT_DIR so it works from any cwd ─────────────
 _DATA_FILEPATH = os.path.join(PARENT_DIR, "data", "highfidelity", "17jul_0.8_1.2.npz")  # "13jul_merged_bigR  different_keffrange/13jul_merged_subcritical_new LHS_0.8_newbounds
 USE_SPLIT_CACHE = False

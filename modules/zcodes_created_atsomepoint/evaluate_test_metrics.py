@@ -48,6 +48,7 @@ import csv
 import hashlib
 import importlib.util
 import types
+import inspect
 from typing import Optional
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -101,6 +102,7 @@ VAL_KEFF_MATCH_TOL = 1e-4          # tolerance (in keff units) for backtracing v
 
 # keff-distribution analysis across train / val / test (cheap; uses logged CSVs)
 N_KEFF_BINS = 10
+PCM_THRESHOLD = 650.0             # β_eff-style success threshold used in frac_below_* metrics
 GENERATE_KEFF_DIST_ONLY = False   # set True via --keff-dist-only (skip checkpoint evaluation)
 
 RUN_PATTERN = re.compile(r"^train_(\d+)_seed_(\d+)$")
@@ -129,6 +131,8 @@ class RunEvalContext:
         self.data_loader = mod.data_loader
         self.LOG_RATIO_CLIP_LO = getattr(mod, "LOG_RATIO_CLIP_LO", None)
         self.LOG_RATIO_CLIP_HI = getattr(mod, "LOG_RATIO_CLIP_HI", None)
+        self.STUDY_CONFIGS = getattr(mod, "STUDY_CONFIGS", {})
+        self.default_study_name = getattr(mod, "STUDY_NAME", None)
 
 
 def _snapshot_hash(snapshot_path: str) -> str:
@@ -430,15 +434,61 @@ def load_checkpoint(ckpt_path):
     return payload["state"], payload.get("metadata", {})
 
 
-def build_model_from_metadata(ctx: RunEvalContext, metadata, seed_for_init=0):
+def _arch_kwargs_from_study_cfg(cfg: dict) -> dict:
+    extra = 0
+    if cfg.get("extra_feat_mode") == "regime":
+        extra = 4
+    elif cfg.get("use_keff_input"):
+        extra = 1
+    return dict(
+        activation=cfg.get("activation", "relu"),
+        use_residual=bool(cfg.get("use_residual", False)),
+        use_dropout=bool(cfg.get("use_dropout", False)),
+        dropout_rate=float(cfg.get("dropout_rate", 0.0)),
+        use_keff_input=bool(cfg.get("use_keff_input", False)),
+        extra_feats_dim=int(cfg.get("extra_feats_dim", extra)),
+    )
+
+
+def _infer_arch_from_run_dir(ctx: RunEvalContext, run_dir: str) -> dict:
+    """Existing agent checkpoints only stored hidden_sizes. Recover ELU / extras
+    from the study folder name (…/r13_1k_elu6e4/train_1000_seed_1) via the
+    snapshot's STUDY_CONFIGS. Without this, ELU-trained weights are evaluated
+    as ReLU and the test correction collapses toward the diffusion baseline.
+    """
+    study = os.path.basename(os.path.dirname(os.path.abspath(run_dir)))
+    cfgs = ctx.STUDY_CONFIGS or {}
+    if study in cfgs:
+        print(f"  architecture from study folder {study!r}: "
+              f"activation={cfgs[study].get('activation', 'relu')}")
+        return _arch_kwargs_from_study_cfg(cfgs[study])
+    if ctx.default_study_name in cfgs:
+        print(f"  architecture from snapshot STUDY_NAME={ctx.default_study_name!r}")
+        return _arch_kwargs_from_study_cfg(cfgs[ctx.default_study_name])
+    return {}
+
+
+def build_model_from_metadata(ctx: RunEvalContext, metadata, seed_for_init=0,
+                              run_dir=None):
     """Falls back to the v1 architecture defaults if metadata wasn't recorded."""
     hidden_sizes = metadata.get("hidden_sizes", [128, 256, 128])
     n_regions    = metadata.get("n_regions", 3)
     G            = metadata.get("G", ctx.GEO.G)
     n_phi_feats  = metadata.get("n_phi_feats", ctx.GEO.G * 3)
     rngs = nnx.Rngs(seed_for_init)
+    extras = {}
+    for key in ("activation", "use_residual", "use_dropout", "dropout_rate",
+                "use_keff_input", "extra_feats_dim"):
+        if key in metadata and metadata[key] is not None:
+            extras[key] = metadata[key]
+    if "activation" not in extras and run_dir:
+        extras.update(_infer_arch_from_run_dir(ctx, run_dir))
+    sig = inspect.signature(ctx.PEDSModel.__init__)
+    extras = {k: v for k, v in extras.items() if k in sig.parameters}
+    if extras:
+        print(f"  PEDSModel extras: {extras}")
     return ctx.PEDSModel(hidden_sizes=hidden_sizes, n_regions=n_regions,
-                         G=G, n_phi_feats=n_phi_feats, rngs=rngs)
+                         G=G, n_phi_feats=n_phi_feats, rngs=rngs, **extras)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -711,16 +761,30 @@ def _keff_bin_edges(all_keffs, n_bins=N_KEFF_BINS):
     return np.linspace(lo, hi, n_bins + 1)
 
 
+def _frac_below_pcm(values, threshold=PCM_THRESHOLD):
+    """Fraction of finite |Δρ| values strictly below ``threshold`` pcm; NaN if none finite."""
+    v = np.asarray(values, dtype=float)
+    finite = np.isfinite(v)
+    if not finite.any():
+        return np.nan
+    return float(np.mean(v[finite] < threshold))
+
+
 def _summarize_keff_distribution(split_frames, n_bins=N_KEFF_BINS, edges=None):
     """
     split_frames: dict {split_name: DataFrame[keff_openmc, delta_rho_before, delta_rho_after]}
 
     Returns (overall_df, bins_df, edges).
     If ``edges`` is provided they are reused (needed for cross-run aggregation).
+
+    Both overall and per-bin tables include ``frac_below_650_{before,after}``:
+    the fraction of samples with |Δρ| < PCM_THRESHOLD in that split / keff bin.
     """
     overall_rows = []
     for split, frame in split_frames.items():
         k = frame["keff_openmc"].astype(float).to_numpy()
+        before = frame["delta_rho_before"].astype(float).to_numpy()
+        after = frame["delta_rho_after"].astype(float).to_numpy()
         overall_rows.append({
             "split": split,
             "n_samples": int(len(k)),
@@ -729,14 +793,16 @@ def _summarize_keff_distribution(split_frames, n_bins=N_KEFF_BINS, edges=None):
             "keff_std": float(np.std(k)),
             "keff_min": float(np.min(k)),
             "keff_max": float(np.max(k)),
-            "delta_rho_before_mean": float(np.nanmean(frame["delta_rho_before"]))
-                if np.isfinite(frame["delta_rho_before"]).any() else np.nan,
-            "delta_rho_before_median": float(np.nanmedian(frame["delta_rho_before"]))
-                if np.isfinite(frame["delta_rho_before"]).any() else np.nan,
-            "delta_rho_after_mean": float(np.nanmean(frame["delta_rho_after"]))
-                if np.isfinite(frame["delta_rho_after"]).any() else np.nan,
-            "delta_rho_after_median": float(np.nanmedian(frame["delta_rho_after"]))
-                if np.isfinite(frame["delta_rho_after"]).any() else np.nan,
+            "delta_rho_before_mean": float(np.nanmean(before))
+                if np.isfinite(before).any() else np.nan,
+            "delta_rho_before_median": float(np.nanmedian(before))
+                if np.isfinite(before).any() else np.nan,
+            "delta_rho_after_mean": float(np.nanmean(after))
+                if np.isfinite(after).any() else np.nan,
+            "delta_rho_after_median": float(np.nanmedian(after))
+                if np.isfinite(after).any() else np.nan,
+            "frac_below_650_before": _frac_below_pcm(before),
+            "frac_below_650_after": _frac_below_pcm(after),
         })
     overall_df = pd.DataFrame(overall_rows)
 
@@ -777,6 +843,8 @@ def _summarize_keff_distribution(split_frames, n_bins=N_KEFF_BINS, edges=None):
                     if n and np.isfinite(before[mask]).any() else np.nan,
                 "median_delta_rho_after": float(np.nanmedian(after[mask]))
                     if n and np.isfinite(after[mask]).any() else np.nan,
+                "frac_below_650_before": _frac_below_pcm(before[mask]) if n else np.nan,
+                "frac_below_650_after": _frac_below_pcm(after[mask]) if n else np.nan,
             })
     bins_df = pd.DataFrame(bin_rows)
     return overall_df, bins_df, edges
@@ -810,6 +878,7 @@ def _aggregate_keff_dist_across_runs(per_run_overall, per_run_bins):
         "n_samples", "keff_mean", "keff_median", "keff_std", "keff_min", "keff_max",
         "delta_rho_before_mean", "delta_rho_before_median",
         "delta_rho_after_mean", "delta_rho_after_median",
+        "frac_below_650_before", "frac_below_650_after",
     ]
     overall_agg = _mean_std_cols(cat_o, ["train_size", "split"], overall_value_cols)
 
@@ -818,6 +887,7 @@ def _aggregate_keff_dist_across_runs(per_run_overall, per_run_bins):
         "n_samples", "pct_samples", "avg_keff",
         "avg_delta_rho_before", "avg_delta_rho_after",
         "median_delta_rho_before", "median_delta_rho_after",
+        "frac_below_650_before", "frac_below_650_after",
         "keff_lo", "keff_hi",
     ]
     bins_agg = _mean_std_cols(cat_b, ["train_size", "split", "bin"], bins_value_cols)
@@ -836,10 +906,15 @@ def _aggregate_keff_dist_across_runs(per_run_overall, per_run_bins):
 def _plot_keff_distribution(bins_df, overall_df, out_path, title,
                             pct_col="pct_samples", pct_err_col=None,
                             before_col="avg_delta_rho_before", after_col="avg_delta_rho_after",
+                            frac650_before_col="frac_below_650_before",
+                            frac650_after_col="frac_below_650_after",
+                            frac650_before_err_col=None,
+                            frac650_after_err_col=None,
                             lo_col="keff_lo", hi_col="keff_hi"):
-    """Two-panel figure: sample % by keff bin × split, and avg |Δρ| before/after.
+    """Three-panel figure: sample % by keff bin × split, mean |Δρ| before/after,
+    and fraction of samples with |Δρ| < 650 pcm before/after.
 
-    Bottom panel: both ``before`` and ``after`` on a shared log y-axis so the
+    Middle panel: both ``before`` and ``after`` on a shared log y-axis so the
     full dynamic range (baseline ~thousands of pcm → corrected ~tens–hundreds of
     pcm) is readable in a single panel.
     """
@@ -849,7 +924,17 @@ def _plot_keff_distribution(bins_df, overall_df, out_path, title,
     x = np.arange(len(bins))
     width = 0.8 / max(len(splits), 1)
 
-    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    has_frac650 = (
+        frac650_after_col in bins_df.columns
+        or frac650_before_col in bins_df.columns
+    )
+    n_panels = 3 if has_frac650 else 2
+    fig, axes = plt.subplots(n_panels, 1, figsize=(10, 4.0 * n_panels), sharex=True)
+    if n_panels == 2:
+        ax0, ax1 = axes
+        ax2 = None
+    else:
+        ax0, ax1, ax2 = axes
 
     for i, split in enumerate(splits):
         sub = bins_df[bins_df["split"] == split].set_index("bin").reindex(bins)
@@ -887,9 +972,10 @@ def _plot_keff_distribution(bins_df, overall_df, out_path, title,
             labels_leg.append(f"{split} after")
             all_positive_vals.extend(ya[np.isfinite(ya) & (ya > 0)].tolist())
 
-    h_beta = ax1.axhline(650, ls=":", color="grey", alpha=0.7, label="β_eff = 650 pcm")
+    h_beta = ax1.axhline(PCM_THRESHOLD, ls=":", color="grey", alpha=0.7,
+                         label=f"β_eff = {PCM_THRESHOLD:.0f} pcm")
     handles.append(h_beta)
-    labels_leg.append("β_eff = 650 pcm")
+    labels_leg.append(f"β_eff = {PCM_THRESHOLD:.0f} pcm")
 
     ax1.set_yscale("log")
     if all_positive_vals:
@@ -897,9 +983,42 @@ def _plot_keff_distribution(bins_df, overall_df, out_path, title,
         ymax = float(np.max(all_positive_vals)) * 1.5
         ax1.set_ylim(ymin, ymax)
     ax1.set_ylabel("mean |Δρ| (pcm, log scale)", fontsize=12)
-    ax1.set_xlabel("keff bin", fontsize=12)
     ax1.grid(True, alpha=0.3, which="both")
     ax1.legend(handles, labels_leg, fontsize=10, ncol=2, loc="upper right")
+
+    # fraction below 650 pcm by bin
+    if ax2 is not None:
+        handles2, labels2 = [], []
+        for i, split in enumerate(splits):
+            sub = bins_df[bins_df["split"] == split].set_index("bin").reindex(bins)
+            c = colors.get(split, f"C{i}")
+            if frac650_before_col in sub.columns:
+                yb = np.asarray(sub[frac650_before_col].values, dtype=float)
+                h_b, = ax2.plot(x, yb, ls="--", marker="o", color=c,
+                                alpha=0.75, label=f"{split} before")
+                handles2.append(h_b)
+                labels2.append(f"{split} before")
+                if (frac650_before_err_col is not None
+                        and frac650_before_err_col in sub.columns):
+                    yerr = np.asarray(sub[frac650_before_err_col].values, dtype=float)
+                    ax2.errorbar(x, yb, yerr=yerr, fmt="none", ecolor=c,
+                                 elinewidth=1, capsize=2, alpha=0.55)
+            if frac650_after_col in sub.columns:
+                ya = np.asarray(sub[frac650_after_col].values, dtype=float)
+                h_a, = ax2.plot(x, ya, ls="-", marker="s", color=c,
+                                label=f"{split} after")
+                handles2.append(h_a)
+                labels2.append(f"{split} after")
+                if (frac650_after_err_col is not None
+                        and frac650_after_err_col in sub.columns):
+                    yerr = np.asarray(sub[frac650_after_err_col].values, dtype=float)
+                    ax2.errorbar(x, ya, yerr=yerr, fmt="none", ecolor=c,
+                                 elinewidth=1, capsize=2, alpha=0.7)
+        ax2.set_ylim(-0.02, 1.05)
+        ax2.set_ylabel(f"frac |Δρ| < {PCM_THRESHOLD:.0f} pcm", fontsize=12)
+        ax2.grid(True, alpha=0.3)
+        if handles2:
+            ax2.legend(handles2, labels2, fontsize=10, ncol=2, loc="lower right")
 
     # tick labels from first split's edges
     edge_src = bins_df[bins_df["split"] == splits[0]].set_index("bin").reindex(bins)
@@ -907,21 +1026,37 @@ def _plot_keff_distribution(bins_df, overall_df, out_path, title,
     if labels:
         # close last interval visually
         labels[-1] = labels[-1][:-1] + "]"
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(labels, rotation=35, ha="right", fontsize=11)
+    ax_bottom = ax2 if ax2 is not None else ax1
+    ax_bottom.set_xlabel("keff bin", fontsize=12)
+    ax_bottom.set_xticks(x)
+    ax_bottom.set_xticklabels(labels, rotation=35, ha="right", fontsize=11)
 
-    # small annotation of overall mean/median
+    # small annotation of overall mean/median (+ overall frac_below_650 after when present)
     note_parts = []
     for _, r in overall_df.iterrows():
         if "keff_mean_mean" in overall_df.columns:
-            note_parts.append(
+            part = (
                 f"{r['split']}: μ={r['keff_mean_mean']:.3f}±{r.get('keff_mean_std', 0):.3f} "
                 f"(n_runs={int(r.get('n_runs', 1))})"
             )
+            if "frac_below_650_after_mean" in overall_df.columns and pd.notna(
+                    r.get("frac_below_650_after_mean")
+            ):
+                part += (
+                    f", <{PCM_THRESHOLD:.0f}={r['frac_below_650_after_mean']:.2f}"
+                    f"±{r.get('frac_below_650_after_std', 0):.2f}"
+                )
+            note_parts.append(part)
         else:
-            note_parts.append(
-                f"{r['split']}: μ={r['keff_mean']:.3f}, med={r['keff_median']:.3f} (n={r['n_samples']})"
+            part = (
+                f"{r['split']}: μ={r['keff_mean']:.3f}, med={r['keff_median']:.3f} "
+                f"(n={r['n_samples']})"
             )
+            if "frac_below_650_after" in overall_df.columns and pd.notna(
+                    r.get("frac_below_650_after")
+            ):
+                part += f", <{PCM_THRESHOLD:.0f}={r['frac_below_650_after']:.2f}"
+            note_parts.append(part)
     fig.text(0.5, 0.01, "  |  ".join(note_parts), ha="center", va="bottom",
              fontsize=10, color="dimgray")
     fig.tight_layout(rect=(0, 0.03, 1, 1))
@@ -973,8 +1108,8 @@ def generate_keff_distribution_analysis(logs_root, out_dir, df_rows=None, run_ev
     For every run under each train_size, summarize keff across train/val/test,
     then write folder-level aggregates as mean ± std across seeds:
 
-      - keff_dist_overall_by_split.csv
-      - keff_dist_bins_by_split.csv   (includes avg fraction per keff bin)
+      - keff_dist_overall_by_split.csv  (includes frac_below_650 before/after)
+      - keff_dist_bins_by_split.csv     (sample fraction + frac_below_650 per keff bin)
 
     Also keeps a representative-seed detail CSV/plot for each train_size.
     """
@@ -1058,7 +1193,8 @@ def generate_keff_distribution_analysis(logs_root, out_dir, df_rows=None, run_ev
                   f"seed={payload['seed']} ===")
             print(f"  Overall → {overall_path}")
             print(overall_df[["split", "n_samples", "keff_mean", "keff_median",
-                              "delta_rho_before_mean", "delta_rho_after_mean"]].to_string(index=False))
+                              "delta_rho_before_mean", "delta_rho_after_mean",
+                              "frac_below_650_before", "frac_below_650_after"]].to_string(index=False))
             print(f"  Bins → {bins_path}")
             _plot_keff_distribution(
                 bins_df, overall_df,
@@ -1086,12 +1222,16 @@ def generate_keff_distribution_analysis(logs_root, out_dir, df_rows=None, run_ev
         show = [c for c in ("train_size", "split", "n_runs",
                             "keff_mean_mean", "keff_mean_std",
                             "keff_median_mean", "keff_median_std",
-                            "n_samples_mean") if c in overall_agg.columns]
+                            "n_samples_mean",
+                            "frac_below_650_after_mean", "frac_below_650_after_std")
+                if c in overall_agg.columns]
         print(overall_agg[show].to_string(index=False))
     if not bins_agg.empty:
         show_b = [c for c in ("train_size", "split", "bin", "n_runs",
                               "frac_pct_mean", "frac_pct_std",
-                              "n_samples_mean", "n_samples_std") if c in bins_agg.columns]
+                              "n_samples_mean", "n_samples_std",
+                              "frac_below_650_after_mean", "frac_below_650_after_std")
+                  if c in bins_agg.columns]
         print(bins_agg[show_b].to_string(index=False))
 
     # Aggregate plot per train_size (mean fraction ± std error bars)
@@ -1106,6 +1246,10 @@ def generate_keff_distribution_analysis(logs_root, out_dir, df_rows=None, run_ev
             "keff_hi_mean": "keff_hi",
             "avg_delta_rho_before_mean": "avg_delta_rho_before",
             "avg_delta_rho_after_mean": "avg_delta_rho_after",
+            "frac_below_650_before_mean": "frac_below_650_before",
+            "frac_below_650_after_mean": "frac_below_650_after",
+            "frac_below_650_before_std": "frac_below_650_before_std",
+            "frac_below_650_after_std": "frac_below_650_after_std",
         })
         _plot_keff_distribution(
             plot_bins, osub,
@@ -1113,6 +1257,10 @@ def generate_keff_distribution_analysis(logs_root, out_dir, df_rows=None, run_ev
             title=f"keff distribution by split (mean±std over seeds, train_size={train_size})",
             pct_col="pct_samples", pct_err_col="pct_samples_std",
             before_col="avg_delta_rho_before", after_col="avg_delta_rho_after",
+            frac650_before_col="frac_below_650_before",
+            frac650_after_col="frac_below_650_after",
+            frac650_before_err_col="frac_below_650_before_std",
+            frac650_after_err_col="frac_below_650_after_std",
             lo_col="keff_lo", hi_col="keff_hi",
         )
 
@@ -1474,7 +1622,8 @@ def main():
                 rawparams=rawparams, train_idx=train_idx, ctx=ctx,
             )
             state, meta = load_checkpoint(ckpt_path)
-            model = build_model_from_metadata(ctx, meta, seed_for_init=seed)
+            model = build_model_from_metadata(ctx, meta, seed_for_init=seed,
+                                              run_dir=run_dir)
             nnx.update(model, jax.tree_util.tree_map(jnp.asarray, state))
 
             m, k_pred_final = evaluate_on_test(ctx, model, test_payload, norm_stats)
