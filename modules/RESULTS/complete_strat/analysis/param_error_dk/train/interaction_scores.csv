@@ -1,0 +1,16 @@
+param_A,param_B,interaction_score_epoch0,interaction_score_final,min_cell_n_epoch0,min_cell_n_final,reliable_epoch0,reliable_final
+r1_fuel_annulus_outer_radius,r1_fuel_annulus_enrichment,,,8,8,False,False
+r1_fuel_annulus_outer_radius,r0_b4c_rod_outer_radius,0.09360724195493482,0.19693327872243474,35,35,True,True
+r1_fuel_annulus_outer_radius,r1_fuel_annulus_f_mod,,,12,12,False,False
+r1_fuel_annulus_outer_radius,r2_water_outer_radius,,,10,10,False,False
+r1_fuel_annulus_outer_radius,r0_b4c_rod_cr_fraction,0.09890728017736185,0.1755796024205059,40,40,True,True
+r1_fuel_annulus_enrichment,r0_b4c_rod_outer_radius,0.31173530163583013,0.4827390998986285,91,91,True,True
+r1_fuel_annulus_enrichment,r1_fuel_annulus_f_mod,0.32736735096399483,0.4681083061775401,47,47,True,True
+r1_fuel_annulus_enrichment,r2_water_outer_radius,0.31777137376041276,0.7423410430291059,28,28,True,True
+r1_fuel_annulus_enrichment,r0_b4c_rod_cr_fraction,0.2224927516619542,0.6375582903768409,94,94,True,True
+r0_b4c_rod_outer_radius,r1_fuel_annulus_f_mod,0.36897875719350454,0.3438191852379159,70,70,True,True
+r0_b4c_rod_outer_radius,r2_water_outer_radius,0.6261051251639622,0.738030659632573,40,40,True,True
+r0_b4c_rod_outer_radius,r0_b4c_rod_cr_fraction,0.5889570469186283,0.7006913846688811,119,119,True,True
+r1_fuel_annulus_f_mod,r2_water_outer_radius,0.3265291116183882,0.5806550260444449,27,27,True,True
+r1_fuel_annulus_f_mod,r0_b4c_rod_cr_fraction,0.46718430985175385,0.36403060510664303,88,88,True,True
+r2_water_outer_radius,r0_b4c_rod_cr_fraction,0.5923329710572732,0.8784147391806304,28,28,True,True

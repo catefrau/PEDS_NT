@@ -1,0 +1,14 @@
+check,solver_path,xs_family,sample_id,verdict,mean_rel_error,max_rel_error,n_pass,n_fail,n_skipped,rel_tol,notes
+per_sample_vjp,NTdiff_solver,ALL,0,PASS,7.430925e-07,6.833864e-06,20,0,16,0.001,Custom VJP vs jax.grad(frozen residual); FD also logged
+per_sample_vjp,NTdiff_solver,D,0,PASS,2.178970e-06,6.833864e-06,6,0,0,0.001,
+per_sample_vjp,NTdiff_solver,Sigma_a,0,PASS,1.249358e-07,2.823374e-07,5,0,1,0.001,
+per_sample_vjp,NTdiff_solver,nuSigma_f,0,PASS,4.212072e-08,8.424143e-08,2,0,4,0.001,
+per_sample_vjp,NTdiff_solver,Sigma_s,0,PASS,1.798521e-07,6.354318e-07,6,0,6,0.001,
+per_sample_vjp,NTdiff_solver,chi,0,PASS,0.000000e+00,0.000000e+00,1,0,5,0.001,
+batch_vjp_training_path,NTdiff_solver_batch,ALL,0,PASS,1.175029e-06,1.431849e-05,20,0,16,0.001,Batched training-path VJP vs jax.grad(frozen residual); FD also logged
+batch_vjp_training_path,NTdiff_solver_batch,D,0,PASS,3.618871e-06,1.431849e-05,6,0,0,0.001,
+batch_vjp_training_path,NTdiff_solver_batch,Sigma_a,0,PASS,1.606928e-07,3.529217e-07,5,0,1,0.001,
+batch_vjp_training_path,NTdiff_solver_batch,nuSigma_f,0,PASS,4.212072e-08,8.424143e-08,2,0,4,0.001,
+batch_vjp_training_path,NTdiff_solver_batch,Sigma_s,0,PASS,1.332952e-07,2.305830e-07,6,0,6,0.001,
+batch_vjp_training_path,NTdiff_solver_batch,chi,0,PASS,9.988326e-08,9.988326e-08,1,0,5,0.001,
+OVERALL,both,ALL,0,PASS,,,,,,,Cite this file + component CSVs in the report

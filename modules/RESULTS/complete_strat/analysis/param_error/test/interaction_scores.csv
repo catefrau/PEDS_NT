@@ -1,0 +1,16 @@
+param_A,param_B,interaction_score_epoch0,interaction_score_final,min_cell_n_epoch0,min_cell_n_final,reliable_epoch0,reliable_final
+r1_fuel_annulus_outer_radius,r1_fuel_annulus_enrichment,,,1,1,False,False
+r1_fuel_annulus_outer_radius,r0_b4c_rod_cr_fraction,,,3,3,False,False
+r1_fuel_annulus_outer_radius,r1_fuel_annulus_f_mod,,,2,2,False,False
+r1_fuel_annulus_outer_radius,r2_water_outer_radius,,,1,1,False,False
+r1_fuel_annulus_outer_radius,r0_b4c_rod_outer_radius,,,2,2,False,False
+r1_fuel_annulus_enrichment,r0_b4c_rod_cr_fraction,,,11,11,False,False
+r1_fuel_annulus_enrichment,r1_fuel_annulus_f_mod,,,10,10,False,False
+r1_fuel_annulus_enrichment,r2_water_outer_radius,,,1,1,False,False
+r1_fuel_annulus_enrichment,r0_b4c_rod_outer_radius,,,9,9,False,False
+r0_b4c_rod_cr_fraction,r1_fuel_annulus_f_mod,,,8,8,False,False
+r0_b4c_rod_cr_fraction,r2_water_outer_radius,,,3,3,False,False
+r0_b4c_rod_cr_fraction,r0_b4c_rod_outer_radius,,,12,12,False,False
+r1_fuel_annulus_f_mod,r2_water_outer_radius,,,4,4,False,False
+r1_fuel_annulus_f_mod,r0_b4c_rod_outer_radius,,,7,7,False,False
+r2_water_outer_radius,r0_b4c_rod_outer_radius,,,1,1,False,False

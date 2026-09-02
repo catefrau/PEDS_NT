@@ -34,6 +34,7 @@ experiments/coding/results/
 modules/fullcode_perp.py
 modules/NThelper.py
 modules/RUNS/
+modules/FILES/STD/
 modules/inverse_design/
 modules/density_report/
 modules/slurm_logs/
