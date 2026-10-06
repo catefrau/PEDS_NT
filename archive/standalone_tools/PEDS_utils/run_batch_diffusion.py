@@ -13,8 +13,8 @@ internally runs the polynomial regression to predict XS), and append:
 Usage
 ─────
   python run_batch_diffusion.py \
-      --csv  reg_and_data/inputs/CR/full_results.csv \
-      --out  reg_and_data/output/CR/full_results_with_solver.csv
+      --csv  utils/batch_diffusion/full_results.csv \
+      --out  utils/batch_diffusion/full_results_with_solver.csv
 
 All paths default to the values hard-coded in diffusion_solver.py so you
 can also just run `python run_batch_diffusion.py` with no arguments.

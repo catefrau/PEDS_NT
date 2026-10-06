@@ -29,7 +29,7 @@ PROJECT_ROOT = HERE.parent.parent
 
 #DATA_FOLDER = PROJECT_ROOT / "config_and_run" / "reg_and_data" / "inputs" / "2k_samples_bounded"
 #ATA_PATH = DATA_FOLDER / "LHS_XS_0.8-1.2.csv"
-DATA_FOLDER = PROJECT_ROOT / "config_and_run" / "reg_and_data" / "inputs" / "2k_samples_bounded"
+DATA_FOLDER = PROJECT_ROOT / "config_and_run" / "NTcode_config_data" / "regression_model" / "2k_samples_bounded"
 DATA_PATH = DATA_FOLDER / "LHS_XS_0.8-1.2.csv"
 REG_MODEL_PATH = DATA_FOLDER / "polyreg_model"
 

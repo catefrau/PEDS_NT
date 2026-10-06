@@ -70,11 +70,13 @@ for _root in (str(MODELS_DIR), str(CONFIG_RUN_DIR), str(PROJECT_ROOT)):
     if _root not in sys.path:
         sys.path.insert(0, _root)
 
-sys.path.insert(0, str(CONFIG_RUN_DIR / "plot_functions"))
-
 # Fallback when a run folder has no code_snapshot_*.py (imported lazily in get_run_eval_context)
 from PEDS import _DATA_FILEPATH as _DEFAULT_DATA_FILEPATH  # noqa: E402
-from plots_all import plot_keff_scatter, plot_parallel_coords, plot_error_vs_keff  # noqa: E402
+# plots_all.py lives in this same analysis/ folder.
+if __package__:
+    from .plots_all import plot_keff_scatter, plot_parallel_coords, plot_error_vs_keff  # noqa: E402
+else:
+    from plots_all import plot_keff_scatter, plot_parallel_coords, plot_error_vs_keff  # noqa: E402
 
 # rawparams column order → names expected by plots_all's plot_parallel_coords (PARAMS).
 PARAM_COLS = [

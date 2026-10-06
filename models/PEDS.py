@@ -58,7 +58,6 @@ from solvers.NTdiffusion.diffusion_solver import (
     predict_xs, precompute_geometry, xs_layout, _plot_fluxes,
     build_xs_callables, fn_xs_per_region, bc_to_coeffs, GEOMETRY_CODE)
 from PEDS_core.timing_utils import timer, print_timing_report, _TIMINGS
-from plot_functions.xs_heatmap import plot_xs_subplots
 
 
 # ─────────────────────────────────────────────────────────────────────────────
