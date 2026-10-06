@@ -20,7 +20,7 @@ __pycache__/
 *.md
 *.log
 *.txt
-*.sh
+# *.sh
 *.pkl
 *.out
 *.err
@@ -43,6 +43,8 @@ old_stuff/
 solvers/HF_openMC/training_data/2_aug/seed_0/runs/
 solvers/HF_openMC/training_data/1_aug/seed_0/runs/
 solvers/HF_openMC/training_data/13_jul/seed_0/runs/
+.cursor/
+.mplconfig/
 
 reg_and_data/inputs/heter_regre_files/
 reg_and_data/inputs/HOM/

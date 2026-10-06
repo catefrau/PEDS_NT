@@ -6,7 +6,10 @@ df = pd.read_csv("../FILES/lhs_merged_newbounds.csv")
 
 keff = df["keff"].dropna()
 
-fig, ax = plt.subplots(figsize=(6, 4))
+FIGSIZE = (7.2, 3.6)  # slightly wider and less tall
+FS_LABEL = 17         # match parity-plot label scale
+
+fig, ax = plt.subplots(figsize=FIGSIZE)
 
 # weights make each bar height = fraction of total samples (probability)
 weights = [1 / len(keff)] * len(keff)
@@ -20,9 +23,9 @@ ax.hist(
     linewidth=0.5
 )
 
-ax.set_title(f"Distribution of keff values ({len(keff)} samples)")
-ax.set_xlabel("keff")
-ax.set_ylabel("Probability")
+ax.set_xlabel(r"$k_{eff}$", fontsize=FS_LABEL)
+ax.set_ylabel("Probability", fontsize=FS_LABEL)
+ax.tick_params(axis="both", labelsize=FS_LABEL)
 ax.grid(True, alpha=0.25)
 
 fig.tight_layout()

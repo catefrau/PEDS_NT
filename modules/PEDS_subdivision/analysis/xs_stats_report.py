@@ -11,6 +11,7 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.patches import Patch
 
 MODULES_DIR = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -35,6 +36,26 @@ XS_TYPES = ["D1", "D2", "Sa1", "Sa2", "nSf1", "nSf2", "Ss11", "Ss22", "Ss12", "S
 REGION_LABEL_MAP = {"CR": "absorber", "Core": "fuel", "Mod": "moderator", "Moderator": "moderator"}
 REGION_ORDER = ["absorber", "fuel", "moderator"]
 REGION_TO_BASELINE_IDX = {"CR": 0, "Core": 1, "Mod": 2, "Moderator": 2}
+REGION_DISPLAY_LABEL = {"absorber": "Absorber", "fuel": "Fuel", "moderator": "Moderator"}
+REGION_PUB_COLORS = {
+    "absorber": "#f4a261",  # orange
+    "fuel": "#d9d9d9",      # light gray
+    "moderator": "#8ecae6", # light blue
+}
+XS_DISPLAY_LABEL = {
+    "D1": r"$D_1$",
+    "D2": r"$D_2$",
+    "Sa1": r"$\Sigma_{a,1}$",
+    "Sa2": r"$\Sigma_{a,2}$",
+    "nSf1": r"$\nu\Sigma_{f,1}$",
+    "nSf2": r"$\nu\Sigma_{f,2}$",
+    "Ss11": r"$\Sigma_{s,1\to1}$",
+    "Ss22": r"$\Sigma_{s,2\to2}$",
+    "Ss12": r"$\Sigma_{s,1\to2}$",
+    "Ss21": r"$\Sigma_{s,2\to1}$",
+    "chi1": r"$\chi_1$",
+    "chi2": r"$\chi_2$",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -193,6 +214,70 @@ def _plot_correction_boxplot(corr_df: pd.DataFrame, outpath: Path) -> None:
     plt.close()
 
 
+def _plot_correction_magnitude_top_pub(corr_df: pd.DataFrame, outpath: Path) -> None:
+    # Match publication-oriented text sizing used by keff parity plotting.
+    fs_ylabel = 30
+    fs_xtick = 28
+    fs_ytick = 24
+    fs_legend = 24
+    fig, ax = plt.subplots(figsize=(14.8, 7.8))
+
+    xs_centers = np.arange(len(XS_TYPES), dtype=float) * 1.18
+    offsets = np.array([-0.27, 0.0, 0.27], dtype=float)
+    box_width = 0.24
+
+    for r_idx, region in enumerate(REGION_ORDER):
+        positions = []
+        region_data = []
+        for x_idx, xs_type in enumerate(XS_TYPES):
+            vals = corr_df.loc[
+                (corr_df["region"] == region) & (corr_df["xs_type"] == xs_type),
+                "abs_relative_delta",
+            ].to_numpy(dtype=float)
+            vals = vals[np.isfinite(vals)] * 100.0
+            if vals.size == 0:
+                vals = np.array([np.nan], dtype=float)
+            region_data.append(vals)
+            positions.append(xs_centers[x_idx] + offsets[r_idx])
+
+        bp = ax.boxplot(
+            region_data,
+            positions=positions,
+            widths=box_width,
+            showfliers=False,
+            patch_artist=True,
+            medianprops={"linewidth": 1.2, "color": "#1a1a1a"},
+            whiskerprops={"linewidth": 1.0, "color": "#303030"},
+            capprops={"linewidth": 1.0, "color": "#303030"},
+            boxprops={"linewidth": 0.9, "color": "#303030"},
+        )
+        for patch in bp["boxes"]:
+            patch.set_facecolor(REGION_PUB_COLORS[region])
+            patch.set_alpha(0.95)
+
+    ax.set_ylabel("Absolute relative correction (%)", fontsize=fs_ylabel)
+    ax.set_xticks(xs_centers)
+    ax.set_xticklabels([XS_DISPLAY_LABEL[x] for x in XS_TYPES], rotation=35, ha="right", fontsize=fs_xtick)
+    ax.tick_params(axis="y", labelsize=fs_ytick)
+    ax.tick_params(axis="x", pad=8)
+    ax.grid(axis="y", linestyle="--", alpha=0.28, linewidth=0.7)
+    ax.set_axisbelow(True)
+    ax.set_xlim(xs_centers[0] - 0.7, xs_centers[-1] + 0.7)
+
+    legend_handles = [
+        Patch(facecolor=REGION_PUB_COLORS[r], edgecolor="#303030", label=REGION_DISPLAY_LABEL[r])
+        for r in REGION_ORDER
+    ]
+    ax.legend(handles=legend_handles, fontsize=fs_legend, loc="upper right", framealpha=0.92)
+    for side in ["left", "bottom", "right", "top"]:
+        ax.spines[side].set_linewidth(0.9)
+
+    ax.yaxis.label.set_size(fs_ylabel)
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=220)
+    plt.close(fig)
+
+
 def _plot_correction_heatmap(by_region_xs: pd.DataFrame, outpath: Path) -> None:
     pivot = by_region_xs.pivot(index="region", columns="xs_type", values="mean_relative_delta_pct").reindex(index=REGION_ORDER)
     pivot = pivot[[x for x in XS_TYPES if x in pivot.columns]]
@@ -313,6 +398,7 @@ def generate_xs_stats(final_xs_csv: Path, logratio_csv: Path, outdir: Path) -> N
     clip_epoch.to_csv(outdir / "logratio_clip_summary_by_epoch.csv", index=False)
     clip_by_channel.to_csv(outdir / "logratio_clip_summary_by_region_xs.csv", index=False)
     _plot_correction_boxplot(corr_df, outdir / "correction_boxplot_by_xstype.png")
+    _plot_correction_magnitude_top_pub(corr_df, outdir / "correction_magnitude_top_pub.png")
     _plot_correction_heatmap(by_region_xs, outdir / "correction_heatmap_mean_relative_pct.png")
     _plot_clip_epoch(clip_epoch, outdir / "logratio_clipping_epoch_trend.png")
     _plot_clip_heatmap(clip_by_channel, outdir / "logratio_clipping_heatmap.png")
