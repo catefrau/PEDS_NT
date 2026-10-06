@@ -1,6 +1,6 @@
 # Physics-Enhanced Deep Surrogate Models for Neutron Transport Solvers (PEDS-NT)
 
-This repository contains the code and data for the Master's thesis **"Physics-Enhanced Deep Surrogate Models for Neutron Transport Solvers"** by Caterina Frau (EPFL – ETH Zürich Joint Master's in Nuclear Engineering, conducted at UC Berkeley).
+This repository contains the code and data for the Master's thesis **"Physics-Enhanced Deep Surrogate Models for Neutron Transport Solvers"** by Caterina Frau (EPFL – ETH Zürich Joint Master's in Nuclear Engineering, conducted at UC Berkeley). 📄 **[Read the full Master's Thesis (PDF)](thesis_PDF/Caterina_Frau_Master_Thesis.pdf)**
 
 ## Overview & Goal
 
@@ -47,7 +47,7 @@ The framework is evaluated on a 1D cylindrical, two-energy-group reactor core mo
 
 ```
 PEDS_NT/
-├── config_and_run/          # training config and Slurm launchers
+── config_and_run/          # training config and Slurm launchers
 ├── data/                    # OpenMC reference datasets and merged tables
 ├── models/                  # PEDS model, training modules, MLP baselines
 ├── solvers/                 # OpenMC and 1D diffusion solvers
