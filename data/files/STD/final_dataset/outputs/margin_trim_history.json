@@ -1,0 +1,240 @@
+[
+  {
+    "parameter": "r2_water_outer_radius",
+    "edge": "hi",
+    "percentile_step": 0.1,
+    "new_bounds": {
+      "r0_b4c_rod_outer_radius": [
+        1.0,
+        6.0
+      ],
+      "r0_b4c_rod_cr_fraction": [
+        0.0,
+        1.0
+      ],
+      "r1_fuel_annulus_outer_radius": [
+        10.0,
+        35.0
+      ],
+      "r1_fuel_annulus_enrichment": [
+        1.5,
+        8.0
+      ],
+      "r1_fuel_annulus_f_mod": [
+        0.4,
+        0.8
+      ],
+      "r2_water_outer_radius": [
+        40.0,
+        70.16520832527787
+      ]
+    },
+    "pool_size": 2305,
+    "score": 96.22583003313783,
+    "rel_improvement": 0.3547607699910877
+  },
+  {
+    "parameter": "r2_water_outer_radius",
+    "edge": "hi",
+    "percentile_step": 0.1,
+    "new_bounds": {
+      "r0_b4c_rod_outer_radius": [
+        1.0,
+        6.0
+      ],
+      "r0_b4c_rod_cr_fraction": [
+        0.0,
+        1.0
+      ],
+      "r1_fuel_annulus_outer_radius": [
+        10.0,
+        35.0
+      ],
+      "r1_fuel_annulus_enrichment": [
+        1.5,
+        8.0
+      ],
+      "r1_fuel_annulus_f_mod": [
+        0.4,
+        0.8
+      ],
+      "r2_water_outer_radius": [
+        40.0,
+        61.72900601216722
+      ]
+    },
+    "pool_size": 2074,
+    "score": 48.23501419665609,
+    "rel_improvement": 0.49873111845286106
+  },
+  {
+    "parameter": "r2_water_outer_radius",
+    "edge": "hi",
+    "percentile_step": 0.1,
+    "new_bounds": {
+      "r0_b4c_rod_outer_radius": [
+        1.0,
+        6.0
+      ],
+      "r0_b4c_rod_cr_fraction": [
+        0.0,
+        1.0
+      ],
+      "r1_fuel_annulus_outer_radius": [
+        10.0,
+        35.0
+      ],
+      "r1_fuel_annulus_enrichment": [
+        1.5,
+        8.0
+      ],
+      "r1_fuel_annulus_f_mod": [
+        0.4,
+        0.8
+      ],
+      "r2_water_outer_radius": [
+        40.0,
+        57.967275612595294
+      ]
+    },
+    "pool_size": 1866,
+    "score": 37.748932058432906,
+    "rel_improvement": 0.21739564739156092
+  },
+  {
+    "parameter": "r1_fuel_annulus_f_mod",
+    "edge": "hi",
+    "percentile_step": 0.1,
+    "new_bounds": {
+      "r0_b4c_rod_outer_radius": [
+        1.0,
+        6.0
+      ],
+      "r0_b4c_rod_cr_fraction": [
+        0.0,
+        1.0
+      ],
+      "r1_fuel_annulus_outer_radius": [
+        10.0,
+        35.0
+      ],
+      "r1_fuel_annulus_enrichment": [
+        1.5,
+        8.0
+      ],
+      "r1_fuel_annulus_f_mod": [
+        0.4,
+        0.747803849194248
+      ],
+      "r2_water_outer_radius": [
+        40.0,
+        57.967275612595294
+      ]
+    },
+    "pool_size": 1679,
+    "score": 33.832814337645225,
+    "rel_improvement": 0.10374115259011261
+  },
+  {
+    "parameter": "r1_fuel_annulus_outer_radius",
+    "edge": "lo",
+    "percentile_step": 0.05,
+    "new_bounds": {
+      "r0_b4c_rod_outer_radius": [
+        1.0,
+        6.0
+      ],
+      "r0_b4c_rod_cr_fraction": [
+        0.0,
+        1.0
+      ],
+      "r1_fuel_annulus_outer_radius": [
+        11.992395576113383,
+        35.0
+      ],
+      "r1_fuel_annulus_enrichment": [
+        1.5,
+        8.0
+      ],
+      "r1_fuel_annulus_f_mod": [
+        0.4,
+        0.747803849194248
+      ],
+      "r2_water_outer_radius": [
+        40.0,
+        57.967275612595294
+      ]
+    },
+    "pool_size": 1595,
+    "score": 30.71948313258251,
+    "rel_improvement": 0.0920210531111082
+  },
+  {
+    "parameter": "r2_water_outer_radius",
+    "edge": "lo",
+    "percentile_step": 0.03,
+    "new_bounds": {
+      "r0_b4c_rod_outer_radius": [
+        1.0,
+        6.0
+      ],
+      "r0_b4c_rod_cr_fraction": [
+        0.0,
+        1.0
+      ],
+      "r1_fuel_annulus_outer_radius": [
+        11.992395576113383,
+        35.0
+      ],
+      "r1_fuel_annulus_enrichment": [
+        1.5,
+        8.0
+      ],
+      "r1_fuel_annulus_f_mod": [
+        0.4,
+        0.747803849194248
+      ],
+      "r2_water_outer_radius": [
+        40.43796410848158,
+        57.967275612595294
+      ]
+    },
+    "pool_size": 1547,
+    "score": 28.756123962434245,
+    "rel_improvement": 0.06391250665496503
+  },
+  {
+    "parameter": "r1_fuel_annulus_enrichment",
+    "edge": "lo",
+    "percentile_step": 0.03,
+    "new_bounds": {
+      "r0_b4c_rod_outer_radius": [
+        1.0,
+        6.0
+      ],
+      "r0_b4c_rod_cr_fraction": [
+        0.0,
+        1.0
+      ],
+      "r1_fuel_annulus_outer_radius": [
+        11.992395576113383,
+        35.0
+      ],
+      "r1_fuel_annulus_enrichment": [
+        1.7174833533196812,
+        8.0
+      ],
+      "r1_fuel_annulus_f_mod": [
+        0.4,
+        0.747803849194248
+      ],
+      "r2_water_outer_radius": [
+        40.43796410848158,
+        57.967275612595294
+      ]
+    },
+    "pool_size": 1500,
+    "score": 27.724947167250093,
+    "rel_improvement": 0.03585938064988301
+  }
+]

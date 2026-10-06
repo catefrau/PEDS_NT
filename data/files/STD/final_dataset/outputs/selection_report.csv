@@ -1,0 +1,6 @@
+stage,count
+source_total,4710
+after_std_filter,4016
+after_starting_bounds,2562
+after_margin_trim,1500
+final_selected,1500

@@ -1,0 +1,26 @@
+{
+  "r0_b4c_rod_outer_radius": [
+    1.0,
+    6.0
+  ],
+  "r0_b4c_rod_cr_fraction": [
+    0.0,
+    1.0
+  ],
+  "r1_fuel_annulus_outer_radius": [
+    11.992395576113383,
+    35.0
+  ],
+  "r1_fuel_annulus_enrichment": [
+    1.7174833533196812,
+    8.0
+  ],
+  "r1_fuel_annulus_f_mod": [
+    0.4,
+    0.747803849194248
+  ],
+  "r2_water_outer_radius": [
+    40.43796410848158,
+    57.967275612595294
+  ]
+}
