@@ -22,10 +22,10 @@ import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "modules"))
+sys.path.insert(0, str(PROJECT_ROOT / "config_and_run"))
 
 from solvers.NTdiffusion.diffusion_solver import get_xs_basedon_geo, run_diffusion_solver
-from modules.NTcode_config_data.config_def import (
+from config_and_run.NTcode_config_data.config_def import (
     BoundaryCondition,
     BoundarySpec,
     GeometryConfig,

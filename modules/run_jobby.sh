@@ -1,4 +1,11 @@
 #!/bin/bash
+# Launch a PEDS training study.
+#
+#   cd config_and_run && sbatch run_jobby.sh
+#
+# Experiment knobs live in config_peds.py. The sweep variables below are
+# exported as PEDS_* environment overrides, one Slurm array task per
+# (train_size, seed, decay_epochs) combination.
 #SBATCH --job-name=peds_precise
 #SBATCH --account=fc_neutronix
 #SBATCH --partition=savio3
@@ -8,8 +15,9 @@
 #SBATCH --time=010:00:00
 #SBATCH --output=slurm_logs/peds_%A_%a.out
 #SBATCH --error=slurm_logs/peds_%A_%a.err
-#SBATCH --array=0-4         # <-- set to N_TRAIN * N_SEEDS * N_DECAYS) - 1
+#SBATCH --array=0-4         # <-- set to (N_TRAIN * N_SEEDS * N_DECAYS) - 1
 
+set -euo pipefail
 
 source ~/miniconda3/etc/profile.d/conda.sh
 
@@ -19,7 +27,7 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false   # don't grab all memory upfront
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 
 TRAIN_SIZES=(1500)
-SEEDS=(0 1 2 3 4)   # train+val seeds vary; TEST_SEED stays fixed (default 0 in PEDS.py)
+SEEDS=(0 1 2 3 4)   # train+val seeds vary; TEST_SEED stays fixed (config_peds.py)
 # CHANGE THE ARRAY!!!
 DECAY_EPOCHS_LIST=(70)   # <- study values
 
@@ -41,9 +49,13 @@ DECAY_IDX=$(( REM % N_DECAYS ))
 export PEDS_TRAIN_SIZE=${TRAIN_SIZES[$TS_IDX]}
 export PEDS_SEED=${SEEDS[$SEED_IDX]}
 export PEDS_DECAY_EPOCHS=${DECAY_EPOCHS_LIST[$DECAY_IDX]}
-# Optional: override fixed test seed (default 0 in PEDS.py)
+# Optional: override the fixed test seed (default 0 in config_peds.py)
 # export PEDS_TEST_SEED=0
 
+# Slurm copies this script to a spool directory on the compute node, so paths
+# must NOT be resolved from BASH_SOURCE. Use the directory sbatch was run from.
+CONFIG_RUN_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
+cd "$CONFIG_RUN_DIR"
 
 mkdir -p slurm_logs
 
@@ -51,4 +63,4 @@ echo "Task $SLURM_ARRAY_TASK_ID -> TRAIN_SIZE=$PEDS_TRAIN_SIZE SEED=$PEDS_SEED (
 
 conda activate jax-env
 
-python PEDS.py
+python run_peds.py

@@ -53,3 +53,6 @@ grad_check_output.txt
 checkTrainingdata.ipynb
 verify.py
 znapcode.py
+
+# macOS
+.DS_Store

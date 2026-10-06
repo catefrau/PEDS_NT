@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-MODULES_DIR = PROJECT_ROOT / "modules"
+MODULES_DIR = PROJECT_ROOT / "config_and_run"
 if str(MODULES_DIR) not in sys.path:
     sys.path.insert(0, str(MODULES_DIR))
 
