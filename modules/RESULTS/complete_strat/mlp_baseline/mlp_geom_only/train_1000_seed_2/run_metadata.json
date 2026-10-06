@@ -1,0 +1,17 @@
+{
+  "seed": 2,
+  "train_size": 1000,
+  "val_size": 500,
+  "test_size": 300,
+  "best_epoch": 59,
+  "best_val_mean_delta_k_pcm": 10529.7783203125,
+  "peds_generator_param_count_estimate": 73524,
+  "baseline_param_count": 66945,
+  "architecture": [
+    6,
+    128,
+    256,
+    128,
+    1
+  ]
+}

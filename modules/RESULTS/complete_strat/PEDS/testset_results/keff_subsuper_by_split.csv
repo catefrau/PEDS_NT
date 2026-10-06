@@ -1,0 +1,10 @@
+split,regime,n_samples,abs_delta_k_before_mean_pcm,abs_delta_k_before_mean_pcm_std,abs_delta_k_before_median_pcm,abs_delta_k_before_median_pcm_std,abs_delta_k_after_mean_pcm,abs_delta_k_after_mean_pcm_std,abs_delta_k_after_median_pcm,abs_delta_k_after_median_pcm_std,n_runs
+train,all,1000,5489.24,21.4,5364.8,31.3,288.01,38.79,215.16,32.0,5
+train,subcritical,406,6545.92,39.68,6341.59,49.91,361.01,50.27,276.04,37.62,5
+train,supercritical,594,4767.0,11.17,4691.92,31.08,238.11,31.48,185.84,29.52,5
+val,all,500,5524.96,38.97,5376.48,54.81,561.79,33.28,399.11,33.7,5
+val,subcritical,205,6579.13,57.75,6388.0,33.23,755.32,55.99,582.04,51.59,5
+val,supercritical,295,4792.39,38.2,4671.72,68.13,427.31,21.97,321.94,18.07,5
+test,all,300,5495.84,0.0,5425.75,0.0,574.91,35.0,405.55,16.16,5
+test,subcritical,124,6358.06,0.0,6100.03,0.0,750.81,52.65,572.9,33.74,5
+test,supercritical,176,4888.36,0.0,4828.98,0.0,450.98,27.61,325.92,12.7,5
