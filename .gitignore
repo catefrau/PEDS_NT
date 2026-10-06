@@ -26,6 +26,7 @@ __pycache__/
 *.err
 
 # Generated experiment outputs
+example_applications/additional_studies/
 experiments/coding/figures/
 experiments/coding/figures/peds_evolution/code_check/
 experiments/coding/weights/
