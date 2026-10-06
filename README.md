@@ -14,7 +14,7 @@ This project adapts the **Physics-Enhanced Deep Surrogate (PEDS)** framework to 
 
 ## Methodology
 
-![PEDS-NT Architecture](PEDS_scheme.png)
+![PEDS-NT Architecture](thesis_PDF/PEDS_scheme.png)
 
 As illustrated in the architecture diagram above, the PEDS-NT pipeline couples a neural network generator with an embedded low-fidelity physics solver, trained end-to-end against a high-fidelity reference:
 

@@ -45,7 +45,9 @@ solvers/HF_openMC/training_data/2_aug/seed_0/runs/
 solvers/HF_openMC/training_data/1_aug/seed_0/runs/
 solvers/HF_openMC/training_data/13_jul/seed_0/runs/
 .cursor/
+.cursor/rules/
 .mplconfig/
+.vscode/
 
 reg_and_data/inputs/heter_regre_files/
 reg_and_data/inputs/HOM/
