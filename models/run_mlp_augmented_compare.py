@@ -42,12 +42,12 @@ from PEDS_subdivision.data_loading import compute_batch_baselines, compute_phi_f
 RESULTS_ROOT = PROJECT_ROOT / "config_and_run" / "RESULTS" / "complete_strat"
 BASELINE_PARENT = RESULTS_ROOT / "mlp_baseline"
 DEFAULT_OUTPUT_DIR = BASELINE_PARENT / "mlp_with_phi_xs"
-DEFAULT_GEOM_ONLY_METRICS = BASELINE_PARENT / "mlp_geom_only" / "testset_results" / "test_metrics_all_runs.csv"
+DEFAULT_GEOM_ONLY_METRICS = BASELINE_PARENT / "mlp_geom_only" / "analysis" / "testset_results" / "test_metrics_all_runs.csv"
 
 DATA_PATH = PROJECT_ROOT / "data" / "highfidelity" / "17jul_0.8_1.2.npz"
 PEDS_ROOT = RESULTS_ROOT / "PEDS"
 SPLIT_TEMPLATE = PEDS_ROOT / "train_1000_seed_{seed}" / "split_log.csv"
-PEDS_METRICS_DK = PEDS_ROOT / "testset_results_dk" / "test_metrics_all_runs.csv"
+PEDS_METRICS_DK = PEDS_ROOT / "analysis" / "testset_results_dk" / "test_metrics_all_runs.csv"
 
 SEEDS = [0, 1, 2, 3, 4]
 GEOM_DIM = 6
@@ -494,7 +494,7 @@ def summarize_by_metric(metrics_df: pd.DataFrame, out_dir: Path) -> None:
             "mean_across_seeds": mean_row.values,
             "std_across_seeds": std_row.reindex(mean_row.index).values,
         }
-    ).to_csv(out_dir / "testset_results" / "baseline_summary_by_metric.csv", index=False)
+    ).to_csv(out_dir / "analysis" / "testset_results" / "baseline_summary_by_metric.csv", index=False)
 
 
 def write_comparison_markdown(
@@ -591,7 +591,7 @@ def main() -> None:
     output_dir = args.output_dir.resolve()
     geom_only_metrics = args.geom_only_metrics.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "testset_results").mkdir(parents=True, exist_ok=True)
+    (output_dir / "analysis" / "testset_results").mkdir(parents=True, exist_ok=True)
 
     peds_target = peds_generator_param_count()
     baseline_target = baseline_param_count()
@@ -621,7 +621,7 @@ def main() -> None:
         )
 
     metrics_df = pd.DataFrame(rows).sort_values(["train_size", "seed"]).reset_index(drop=True)
-    out_csv = output_dir / "testset_results" / "test_metrics_all_runs.csv"
+    out_csv = output_dir / "analysis" / "testset_results" / "test_metrics_all_runs.csv"
     metrics_df.to_csv(out_csv, index=False)
     summarize_by_metric(metrics_df, output_dir)
     write_comparison_markdown(metrics_df, output_dir, geom_only_metrics)

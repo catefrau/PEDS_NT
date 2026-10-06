@@ -88,7 +88,7 @@ PARAM_COLS = [
 
 # ── CONFIG: edit these paths once, here ────────────────────────────────────
 #"RUNS/bounds1000_70decayepochs"
-OUTPUT_DIRNAME = "testset_results"
+OUTPUT_DIRNAME = os.path.join("analysis", "testset_results")
 OUTPUT_FILENAME = "test_metrics_all_runs.csv"
 SPLIT_LOG_NAME = "split_log.csv"  # override via --split-log (e.g. alt_split_log.csv)
 
@@ -105,7 +105,7 @@ GENERATE_ERROR_VS_KEFF_PLOTS = False
 GENERATE_VAL_STUDY = False
 ERROR_VS_KEFF_RED_FRAC = 0.05      # worst 5% -> red
 ERROR_VS_KEFF_ORANGE_FRAC = 0.10   # next slice up to worst 10% (cumulative) -> orange
-VAL_STUDY_DIRNAME = "valset_results"
+VAL_STUDY_DIRNAME = os.path.join("analysis", "valset_results")
 VAL_KEFF_MATCH_TOL = 1e-4          # tolerance (in keff units) for backtracing val-log samples to dataset params
 
 # keff-distribution analysis across train / val / test (cheap; uses logged CSVs)
@@ -1846,7 +1846,7 @@ def evaluate_study(
 ) -> str:
     """Run full test-set evaluation for a study folder (LOGS_ROOT).
 
-    Returns the path to the results directory (…/testset_results by default).
+    Returns the path to the results directory (…/analysis/testset_results by default).
     When *use_delta_k* is True the output dirname gets a ``_dk`` suffix so
     both sets of results can coexist for comparison.
     """

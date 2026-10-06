@@ -63,4 +63,4 @@ conda activate jax-env
 
 python "$EVAL_PY" "$LOGS_ROOT" \
   --with-val-study \
-  --results-dirname testset_results
+  --results-dirname analysis/testset_results

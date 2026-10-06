@@ -76,7 +76,7 @@ def testset_results_dir(
     use_delta_k: bool = False,
 ) -> Path:
     dirname = "testset_results_dk" if use_delta_k else "testset_results"
-    return study_dir(study_folder, parent_folder) / dirname
+    return analysis_dir(study_folder, parent_folder) / dirname
 
 
 def testset_csv_glob(

@@ -125,7 +125,7 @@ def resolve_tasks(args: argparse.Namespace) -> list[str]:
 def _step_test_metrics(args: argparse.Namespace, logs_root: Path) -> None:
     use_dk = args.use_delta_k
     suffix = "_dk" if use_dk else ""
-    print(f"\n[test-metrics] Test-set evaluation (testset_results{suffix}/)")
+    print(f"\n[test-metrics] Test-set evaluation (analysis/testset_results{suffix}/)")
     try:
         out_dir = evaluate_study(
             logs_root,

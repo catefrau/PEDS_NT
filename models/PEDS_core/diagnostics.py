@@ -782,10 +782,12 @@ def run_backward_grad_check(train_rawparams, xs_tensor, GEO, update_geo,
     """
     Entry point: verify both per-sample and batched custom VJPs vs FD.
 
-    Writes under ``log_dir``:
+    Writes under ``log_dir/gradient_FDcheck``:
       - grad_check_per_sample.csv   (component-level, per-sample VJP)
-      - grad_check_batch.csv        (component-level, training-path batch VJP)
       - grad_check_summary.csv      (overall + per-XS-family verdicts)
+
+    The batched training-path check still runs and is recorded in the summary.
+    Its component-level CSV is not written.
     """
     import csv as _csv
     import os
@@ -793,11 +795,11 @@ def run_backward_grad_check(train_rawparams, xs_tensor, GEO, update_geo,
     xs = jnp.array(xs_tensor, dtype=jnp.float32)
     params = jnp.array(train_rawparams[sample_idx], dtype=jnp.float32)
     sid = jnp.array([sample_idx], dtype=jnp.int32)
-    os.makedirs(log_dir, exist_ok=True)
+    out_dir = os.path.join(log_dir, "gradient_FDcheck")
+    os.makedirs(out_dir, exist_ok=True)
 
-    path_single = os.path.join(log_dir, "grad_check_per_sample.csv")
-    path_batch = os.path.join(log_dir, "grad_check_batch.csv")
-    path_summary = os.path.join(log_dir, "grad_check_summary.csv")
+    path_single = os.path.join(out_dir, "grad_check_per_sample.csv")
+    path_summary = os.path.join(out_dir, "grad_check_summary.csv")
 
     print("\n" + "#" * 70)
     print("# BACKWARD GRADIENT CHECK  (custom VJP vs frozen-flux autodiff + FD)")
@@ -818,7 +820,7 @@ def run_backward_grad_check(train_rawparams, xs_tensor, GEO, update_geo,
         NTdiff_solver_batch, _NTdiff_fwd, _GEO_DATA_CACHE, SLAY,
         GEO, update_geo,
         rel_eps=rel_eps, abs_floor=abs_floor,
-        xs_mask=xs_mask, csv_path=path_batch,
+        xs_mask=xs_mask, csv_path=None,
     )
 
     overall = "PASS" if sum_s["verdict"] == "PASS" and sum_b["verdict"] == "PASS" else "FAIL"

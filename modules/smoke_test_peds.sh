@@ -45,7 +45,6 @@ export PEDS_RUN_GRAD_CHECK=true
 # Plot on the final epoch; indices must stay inside the small val set.
 export PEDS_XS_HEATMAP_EPOCHS=2
 export PEDS_SUBPLOT_SAMPLE_INDICES="0 1"
-export PEDS_TRACKED_SAMPLES="0 1"
 
 # Slurm copies this script to a spool directory on the compute node, so paths
 # must NOT be resolved from BASH_SOURCE. Use the directory sbatch was run from.

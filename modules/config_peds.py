@@ -107,22 +107,20 @@ LOG_RATIO_CLIP_HI = _env_float("PEDS_LOG_RATIO_CLIP_HI", 0.5)
 # ─────────────────────────────────────────────────────────────────────────────
 # Diagnostics
 # ─────────────────────────────────────────────────────────────────────────────
-# Custom-VJP vs finite-difference check before training; writes CSVs to LOG_DIR.
+# Custom-VJP vs finite-difference check before training.
+# Writes grad_check_per_sample.csv and grad_check_summary.csv under LOG_DIR/gradient_FDcheck.
 RUN_GRAD_CHECK = _env_bool("PEDS_RUN_GRAD_CHECK", True)
 GRAD_CHECK_SAMPLE = _env_int("PEDS_GRAD_CHECK_SAMPLE", 0)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging and figures
 # ─────────────────────────────────────────────────────────────────────────────
-# Epochs at which XS heatmap / subplot / flux snapshots are written.
+# Epochs at which per-sample XS subplot and flux snapshots are written.
 XS_HEATMAP_EPOCHS = _env_list_int(
     "PEDS_XS_HEATMAP_EPOCHS", [1, max(int(EPOCHS / 2), 1), EPOCHS]
 )
 # Indices into the VAL set for per-sample xs_subplots and flux figures.
 SUBPLOT_SAMPLE_INDICES = _env_list_int("PEDS_SUBPLOT_SAMPLE_INDICES", [22, 44, 55, 68, 82])
-# Indices into the TRAIN set tracked in the XS history CSV every epoch.
-TRACKED_SAMPLES = _env_list_int("PEDS_TRACKED_SAMPLES", [0, 1, 2, 3, 4])
-
 PARAM_NAMES = ["b4c_r", "cr_frac", "fuel_r", "enrichment", "f_mod", "water_r"]
 
 # ─────────────────────────────────────────────────────────────────────────────

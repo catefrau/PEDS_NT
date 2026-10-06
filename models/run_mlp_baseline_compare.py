@@ -32,8 +32,8 @@ RESULTS_ROOT = PROJECT_ROOT / "config_and_run" / "RESULTS" / "complete_strat"
 DEFAULT_OUTPUT_DIR = RESULTS_ROOT / "mlp_baseline" / "mlp_geom_only"
 DATA_PATH = PROJECT_ROOT / "data" / "highfidelity" / "17jul_0.8_1.2.npz"
 PEDS_ROOT = RESULTS_ROOT / "PEDS"
-PEDS_METRICS_DK = PEDS_ROOT / "testset_results_dk" / "test_metrics_all_runs.csv"
-PEDS_METRICS_RHO = PEDS_ROOT / "testset_results" / "test_metrics_all_runs.csv"
+PEDS_METRICS_DK = PEDS_ROOT / "analysis" / "testset_results_dk" / "test_metrics_all_runs.csv"
+PEDS_METRICS_RHO = PEDS_ROOT / "analysis" / "testset_results" / "test_metrics_all_runs.csv"
 SPLIT_TEMPLATE = PEDS_ROOT / "train_1000_seed_{seed}" / "split_log.csv"
 
 # Same hidden stack as PEDS generator trunk; final layer maps hidden -> 1
@@ -344,7 +344,7 @@ def summarize_baseline(metrics_df: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
             "std_across_seeds": std_row.reindex(mean_row.index).values,
         }
     )
-    summary.to_csv(out_dir / "testset_results" / "baseline_summary_by_metric.csv", index=False)
+    summary.to_csv(out_dir / "analysis" / "testset_results" / "baseline_summary_by_metric.csv", index=False)
     return summary
 
 
@@ -396,7 +396,7 @@ def build_comparison_markdown(baseline_df: pd.DataFrame, out_dir: Path) -> None:
         "for a pure NN surrogate at this geometry-only setting.",
         "- If baseline remains noticeably worse, the PEDS solver-informed structure is "
         "extracting useful inductive bias not recovered by data alone.",
-        "- Use `<output_dir>/testset_results/test_metrics_all_runs.csv` for per-seed inspection.",
+        "- Use `<output_dir>/analysis/testset_results/test_metrics_all_runs.csv` for per-seed inspection.",
     ]
     (out_dir / "COMPARISON_WITH_PEDS.md").write_text("\n".join(lines), encoding="utf-8")
 
@@ -416,7 +416,7 @@ def main() -> None:
     args = parse_args()
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "testset_results").mkdir(parents=True, exist_ok=True)
+    (output_dir / "analysis" / "testset_results").mkdir(parents=True, exist_ok=True)
 
     geoms, keffs = load_dataset()
     run_rows = []
@@ -430,7 +430,7 @@ def main() -> None:
         )
 
     metrics_df = pd.DataFrame(run_rows).sort_values(["train_size", "seed"]).reset_index(drop=True)
-    out_csv = output_dir / "testset_results" / "test_metrics_all_runs.csv"
+    out_csv = output_dir / "analysis" / "testset_results" / "test_metrics_all_runs.csv"
     metrics_df.to_csv(out_csv, index=False)
     summarize_baseline(metrics_df, output_dir)
     build_comparison_markdown(metrics_df, output_dir)

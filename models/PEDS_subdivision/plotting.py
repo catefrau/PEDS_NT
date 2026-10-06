@@ -1,5 +1,5 @@
-"""Plotting helpers: XS heatmaps, per-sample XS subplots, training-history
-figures, and flux-shape plots."""
+"""Plotting helpers: per-sample XS subplots, training-history figures,
+and flux-shape plots."""
 import os
 
 import numpy as np
@@ -12,21 +12,6 @@ from plot_functions.xs_heatmap import plot_xs_subplots
 from PEDS_subdivision import context
 from PEDS_subdivision.context import update_geo
 from PEDS_subdivision.physics_solver import NTdiff_solver
-
-
-
-# ── XS name labels — adjust to match your actual xs_layout ordering ──────────
-# These are used as axis tick labels on the heatmap.
-# G=2 → groups 1,2; typical order: D1 D2 Sa1 Sa2 nF1 nF2 Ss12 Ss21 chi1 chi2 ...
-# (12 entries per region for G=2). Modify if your SLAY ordering differs.
-_XS_LABELS = [
-    "D₁","D₂",
-    "Σa₁","Σa₂",
-    "νΣf₁","νΣf₂",
-    "Σs₁₂","Σs₂₁",
-    "χ₁","χ₂",
-    "XS₁₁","XS₁₂",   # placeholder names for remaining slots
-]
 
 
 def _save_xs_subplots_for_samples(
@@ -46,8 +31,6 @@ def _save_xs_subplots_for_samples(
     save one plot_xs_subplots figure per sample.
 
     Files land in context.LOG_DIR/xs_subplots/epoch_{E:04d}_sample{IDX:03d}.png
-
-    Arguments mirror _plot_xs_heatmap so they can share the same call-site data.
     """
     subplots_dir = os.path.join(context.LOG_DIR, "xs_subplots")
     os.makedirs(subplots_dir, exist_ok=True)
@@ -107,64 +90,6 @@ def _save_xs_subplots_for_samples(
             keff_pred   = keff_pred_val,
         )
         print(f"  [subplot] epoch {epoch}  sample {idx}  →  {save_path}")
-
-
-def _plot_xs_heatmap(model, geoms_batch, xs_baselines_batch,
-                     phi_norm_batch, log_xs_mean_j, log_xs_std_j, epoch: int, n_show: int = 8):
-    """
-    Save a heatmap of the NN-corrected XS for a small representative batch.
-
-    Layout: rows = samples (up to n_show), columns = XS types.
-            One sub-figure per region, side by side.
-    Shows the ratio  xs_final / xs_baseline  so 1.0 = no correction.
-    Saved to context.LOG_DIR/xs_heatmap/epoch_{epoch:04d}.png
-    """
-    heatmap_dir = os.path.join(context.LOG_DIR, "xs_heatmap")
-    os.makedirs(heatmap_dir, exist_ok=True)
-
-    # ── get corrected XS (numpy, no grad) ────────────────────────────────────
-    n    = min(n_show, geoms_batch.shape[0])
-    xs_b = jnp.array(xs_baselines_batch[:n], dtype=jnp.float32)
-    xs_f = model.compute_xs(
-        jnp.array(geoms_batch[:n], dtype=jnp.float32),
-        xs_b,
-        jnp.array(phi_norm_batch[:n], dtype=jnp.float32),
-        log_xs_mean_j, log_xs_std_j,
-    )  # [n, n_regions, xs_per_region]
-
-    # ratio relative to baseline; clip extreme values for display
-    xs_base_np = np.array(xs_b)
-    safe_base  = np.where(xs_base_np > 1e-10, xs_base_np, np.ones_like(xs_base_np))
-    ratio      = xs_f / safe_base                   # [n, n_regions, xs_per_region]
-    ratio      = np.clip(ratio, 0.5, 2.0)           # display range
-
-    n_regions    = ratio.shape[1]
-    xs_per_region = ratio.shape[2]
-    labels = _XS_LABELS[:xs_per_region]
-
-    region_names = ["CR", "Core", "Moderator"]
-
-    fig, axes = plt.subplots(1, n_regions, figsize=(5 * n_regions, 0.5 * n + 1.5),
-                             squeeze=False)
-    fig.suptitle(f"XS correction ratio  (epoch {epoch})\n"
-                 f"colour = xs_final / xs_baseline   [clipped 0.5–2.0]", fontsize=10)
-
-    for r in range(n_regions):
-        ax  = axes[0, r]
-        mat = ratio[:, r, :]            # [n, xs_per_region]
-        im  = ax.imshow(mat, aspect="auto", vmin=0.5, vmax=2.0, cmap="RdBu_r")
-        ax.set_xticks(range(xs_per_region))
-        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
-        ax.set_yticks(range(n))
-        ax.set_yticklabels([f"s{i}" for i in range(n)], fontsize=7)
-        ax.set_title(region_names[r] if r < len(region_names) else f"Region {r}", fontsize=9)
-        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-
-    plt.tight_layout()
-    path = os.path.join(heatmap_dir, f"epoch_{epoch:04d}.png")
-    plt.savefig(path, dpi=120)
-    plt.close()
-    print(f"XS heatmap saved → {path}")
 
 
 def _plot_history(history: dict, exp_name: str):

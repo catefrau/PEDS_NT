@@ -1,5 +1,5 @@
 """CSV logging: per-epoch keff logs, epoch metrics, log-ratio saturation,
-tracked-sample XS history, split log, and final-XS CSV export.
+split log, and final-XS CSV export.
 
 File handles and log-file paths live at module scope here; paths are derived
 from the run's LOG_DIR / XS_DIR (held in PEDS_subdivision.context).
@@ -25,8 +25,6 @@ epoch_stats_file = None
 epoch_stats_writer = None
 logratio_stats_file = None
 logratio_stats_writer = None
-xs_history_file = None
-xs_history_writer = None
 xs_proposal_stats_file = None
 xs_proposal_stats_writer = None
 split_logfile = None
@@ -37,7 +35,6 @@ val_log_path           = os.path.join(context.LOG_DIR, "keff_epoch_log_val.csv")
 train_log_path         = os.path.join(context.LOG_DIR, "keff_epoch_log_train.csv")
 epoch_stats_path       = os.path.join(context.LOG_DIR, "epoch_metrics.csv")
 xs_proposal_stats_path = os.path.join(context.LOG_DIR, "xs_proposal_stats.csv")
-xs_history_path        = os.path.join(context.XS_DIR,  "history_first5.csv")
 logratio_stats_path    = os.path.join(context.XS_DIR,  "logratio_saturation.csv")
 split_log_path         = os.path.join(context.LOG_DIR, "split_log.csv")
 
@@ -46,12 +43,11 @@ def init_csv_logs():
     global val_logfile, train_logfile, val_writer, train_writer
     global epoch_stats_file, epoch_stats_writer
     global logratio_stats_file, logratio_stats_writer
-    global xs_history_file, xs_history_writer
     global split_logfile, split_writer
 
     os.makedirs(context.LOG_DIR, exist_ok=True)
 
-    for p in [val_log_path, train_log_path, epoch_stats_path, xs_history_path, split_log_path,
+    for p in [val_log_path, train_log_path, epoch_stats_path, split_log_path,
               logratio_stats_path]:
         if os.path.exists(p):
             os.remove(p)
@@ -88,16 +84,6 @@ def init_csv_logs():
                  "frac_at_lower_clip", "frac_at_upper_clip"]
     logratio_stats_writer.writerow(lr_header)
     logratio_stats_file.flush()
-
-    xs_history_file = open(xs_history_path, "w", newline="", buffering=1)
-    xs_history_writer = csv.writer(xs_history_file)
-
-    region_names = ["CR", "Core", "Mod"]
-    xs_labels = ["D1","D2","Sa1","Sa2","nSf1","nSf2","Ss11","Ss22","Ss12","Ss21","chi1","chi2"]
-    xs_header = [f"{reg}_{xs}" for reg in region_names for xs in xs_labels]
-
-    xs_history_writer.writerow(["epoch", "sample_idx", *context.PARAM_NAMES, *xs_header])
-    xs_history_file.flush()
 
     split_logfile = open(split_log_path, "w", newline="", buffering=1)
     split_writer = csv.writer(split_logfile)
@@ -156,30 +142,6 @@ def log_logratio_saturation(epoch: int, log_ratios_all: np.ndarray):
                     f"{frac_lo:.3f}", f"{frac_hi:.3f}",
                 ])
         logratio_stats_file.flush()
-
-def log_xs_history_samples(model, epoch, sample_indices,
-                           geom_sample_all, rawparams_sample_all, xs_baselines_sample_all, phi_norm_sample_all,
-                           log_xs_mean_j, log_xs_std_j):
-    global xs_history_file, xs_history_writer
-
-    if len(sample_indices) == 0:
-        return
-
-    idx = np.array(sample_indices, dtype=int)
-
-    xsf = model.compute_xs(
-        jnp.array(geom_sample_all[idx], dtype=jnp.float32),
-        jnp.array(xs_baselines_sample_all[idx], dtype=jnp.float32),
-        jnp.array(phi_norm_sample_all[idx], dtype=jnp.float32),
-        log_xs_mean_j, log_xs_std_j
-    )  # shape (nsamples, 3, 12)
-
-    with _csv_lock:
-        for j, s in enumerate(idx):
-            row = [epoch, int(s), *rawparams_sample_all[j].tolist(), *xsf[j].reshape(-1).tolist()]
-            xs_history_writer.writerow(row)
-        xs_history_file.flush()
-
 
 def log_splits(train_idx, train_keffs, valid_idx, valid_keffs, test_idx, test_keffs):
     global split_logfile, split_writer

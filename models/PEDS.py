@@ -107,7 +107,6 @@ LOG_RATIO_CLIP_HI = CFG.LOG_RATIO_CLIP_HI
 
 XS_HEATMAP_EPOCHS = CFG.XS_HEATMAP_EPOCHS
 SUBPLOT_SAMPLE_INDICES: list = CFG.SUBPLOT_SAMPLE_INDICES
-TRACKED_SAMPLES: list = CFG.TRACKED_SAMPLES
 PARAM_NAMES: list = CFG.PARAM_NAMES
 
 N_WORKERS = CFG.N_WORKERS
@@ -176,11 +175,11 @@ from PEDS_subdivision.metrics import (
 from PEDS_subdivision import logging_csv
 from PEDS_subdivision.logging_csv import (
     init_csv_logs, close_csv_logs, log_epoch_stats, log_keff_batch,
-    log_logratio_saturation, log_xs_history_samples, log_splits,
+    log_logratio_saturation, log_splits,
     save_final_xs_csv, val_log_path,
 )
 from PEDS_subdivision.plotting import (
-    _plot_xs_heatmap, _save_xs_subplots_for_samples, _plot_history, _save_flux_plots,
+    _save_xs_subplots_for_samples, _plot_history, _save_flux_plots,
 )
 from PEDS_core.diagnostics import run_backward_grad_check
 
@@ -627,17 +626,6 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
                 k_ref=val_keffs,
                 avg_train_loss=0.0, avg_val_loss=0.0)
 
-    log_xs_history_samples(
-        model=model,
-        epoch=0,
-        sample_indices=TRACKED_SAMPLES,
-        geom_sample_all=train_geoms,          
-        rawparams_sample_all=train_rawparams,
-        xs_baselines_sample_all=train_xs_baselines,
-        phi_norm_sample_all=train_phi_norm,
-        log_xs_mean_j=log_xs_mean_j,
-        log_xs_std_j=log_xs_std_j,
-    )
     # EMA smoothing for checkpoint selection (EMA_ALPHA, MIN_SAVE_EPOCH and
     # PATIENCE come from config_peds). A small alpha damps transient spikes
     # while staying responsive enough to track genuine improvement.
@@ -710,18 +698,6 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
             0.0,
             sample_id_offset=0,
             sample_ids_override=ids[order],
-        )
-        
-        log_xs_history_samples(
-            model=model,
-            epoch=epoch,
-            sample_indices=TRACKED_SAMPLES,
-            geom_sample_all=train_geoms,
-            rawparams_sample_all=train_rawparams,
-            xs_baselines_sample_all=train_xs_baselines,
-            phi_norm_sample_all=train_phi_norm,
-            log_xs_mean_j=log_xs_mean_j,
-            log_xs_std_j=log_xs_std_j,
         )
 
         # ── validation ───────────────────────────────────────────────────────
@@ -804,17 +780,8 @@ def train(filepath, train_size, val_size, test_size, batch_size, epochs, lr_max,
         history["val_std_pcm"].append(val_m["std_pcm"])
         history["val_frac_below_650"].append(val_m["frac_below_650"])
 
-        # ── XS heatmap + subplot checkpoints ─────────────────────────────────
+        # ── XS subplot + flux checkpoints ────────────────────────────────────
         if epoch in XS_HEATMAP_EPOCHS:
-            _plot_xs_heatmap(
-                model,
-                train_geoms[:8],                        # ← unshuffled: always same 8 samples
-                np.array(train_xs_baselines)[:8],       # ← unshuffled
-                train_phi_norm[:8],
-                log_xs_mean_j, log_xs_std_j,
-                epoch=epoch,
-                n_show=8,
-            )
             _save_xs_subplots_for_samples(
                 model            = model,
                 sample_indices   = SUBPLOT_SAMPLE_INDICES,
