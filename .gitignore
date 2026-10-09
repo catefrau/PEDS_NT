@@ -1,61 +1,26 @@
-high_fidelity_10012_50steps
-high_fidelity_10012_20steps
-high_fidelity_10012_100steps
-data/highfidelity/high_fidelity_10012_20steps.npz
-data/highfidelity/high_fidelity_10012_50steps.npz
-data/highfidelity/high_fidelity_10012_100steps.npz
-data/highfidelity/high_fidelity_10014.npz
-data/highfidelity/high_fidelity_10012.npz
-data/highfidelity/high_fidelity_1.5_1.npz
-data/highfidelity/high_fidelity_10017.npz
-sftp.json
-data/highfidelity/high_fidelity_2_16000.npz
-data/highfidelity/high_fidelity_2_20000.npz
+
+
+example_applications/additional_studies/
+
+solvers/HF_openMC/training_data/2_aug/seed_0/runs/
+solvers/HF_openMC/training_data/1_aug/seed_0/runs/
+solvers/HF_openMC/training_data/13_jul/seed_0/runs/
 
 
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
-*.md
 *.log
 *.txt
 # *.sh
-*.pkl
 *.out
 *.err
 
-# Generated experiment outputs
-example_applications/additional_studies/
-experiments/coding/figures/
-experiments/coding/figures/peds_evolution/code_check/
-experiments/coding/weights/
-experiments/coding/curves/
-experiments/coding/results/
-modules/fullcode_perp.py
-modules/NThelper.py
-modules/RUNS/
-modules/FILES/STD/
-modules/inverse_design/
-modules/density_report/
-modules/slurm_logs/
-modules/MOREstudies/
-old_stuff/
-solvers/HF_openMC/training_data/2_aug/seed_0/runs/
-solvers/HF_openMC/training_data/1_aug/seed_0/runs/
-solvers/HF_openMC/training_data/13_jul/seed_0/runs/
 .cursor/
 .cursor/rules/
 .mplconfig/
 .vscode/
-
-reg_and_data/inputs/heter_regre_files/
-reg_and_data/inputs/HOM/
-gradient_fd_check.py
-grad_check_output.txt
-checkTrainingdata.ipynb
-verify.py
-znapcode.py
 
 # macOS
 .DS_Store
