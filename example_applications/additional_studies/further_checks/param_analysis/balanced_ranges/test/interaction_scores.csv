@@ -1,0 +1,4 @@
+param_A,param_B,interaction_score_epoch0,interaction_score_final,min_cell_n_epoch0,min_cell_n_final
+r1_fuel_annulus_outer_radius,r1_fuel_annulus_f_mod,0.32906688464356115,0.40540247068135005,2,2
+r1_fuel_annulus_outer_radius,r1_fuel_annulus_enrichment,0.3321546840874876,0.48203230619754783,0,0
+r1_fuel_annulus_f_mod,r1_fuel_annulus_enrichment,0.2982329530385583,0.5109838227431521,6,6

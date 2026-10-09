@@ -45,25 +45,22 @@ OUTPUTS (per dataset, under OUTDIR/<train|val|test>/)
    each showing mean delta_rho_pcm per bin for epoch0 vs final side by side.
    A bin that stands out above the overall mean is a "hard" range for that
    parameter alone (marginal effect).
-4. interactions_grid.png: single figure, one row per top parameter pair (by
-   final-epoch importance), 4 columns (observed epoch0, residual epoch0,
-   observed final, residual final). The "residual vs additive" panel is the
-   observed 2D cell mean minus what you'd expect if the two parameters acted
-   independently -- a high residual means the *combination* of ranges matters
-   more than either parameter's marginal effect alone. Interaction scores are
-   printed and saved to interaction_scores.csv. Only 2D cells with at least
+4. interaction_scores.csv: one row per top parameter pair (by final-epoch
+   importance). The interaction score is the residual 2D cell pattern divided
+   by the observed cell pattern: residual = observed 2D cell mean minus what
+   you'd expect if the two parameters acted independently. A high residual
+   means the *combination* of ranges matters more than either parameter's
+   marginal effect alone. Only 2D cells with at least
    MIN_CELL_N_FOR_INTERACTION samples contribute; pairs whose sparsest
    occupied cell is below that floor are marked unreliable (score = NaN).
-5. suggested_bin_weights.csv: for each parameter, a suggested relative
-   sampling weight per bin (higher where final-epoch error is higher/more
-   variable), which you can feed into your existing bounds-cutting function
-   to build a stratified LHS. This is a *marginal* (per-parameter)
-   allocation -- check interactions_grid.png before trusting this blindly.
-6. abs_error_scatter_epoch0.png / abs_error_scatter_final.png: 3x2 scatter
-   of each geometry parameter vs |delta_rho_pcm|, with Pearson r as subplot
-   title, human-readable param names, and the worst 5% of samples highlighted
-   and colored by target-keff criticality regime (sub / near / super).
-   Figure title omitted (for document captions).
+   The interactions_grid.png figure save is commented out.
+5. suggested_bin_weights.csv write is commented out. The function still
+   computes, for each parameter, a suggested relative sampling weight per bin
+   (higher where final-epoch error is higher/more variable). This is a
+   *marginal* (per-parameter) allocation.
+6. abs_error_scatter_epoch0.png / abs_error_scatter_final.png saves are
+   commented out. The scatter figure is still built (3x2, each geometry
+   parameter vs |delta_rho_pcm|) and then closed without writing.
 7. samples_keff_error_params.csv: one row per unique geometry for epoch0 and
    final, with keff_openmc / keff_peds / delta_rho_pcm and the 6 parameters
    (train/val params recovered via match_keff_to_params against the npz;
@@ -937,7 +934,7 @@ def plot_interactions_grid(df0, dfF, pairs, outdir, dataset_label):
 
     fig.suptitle(f"{dataset_label}: pairwise interactions, epoch 0 vs final", fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(Path(outdir) / "interactions_grid.png", dpi=130)
+    # fig.savefig(Path(outdir) / "interactions_grid.png", dpi=130)
     plt.close(fig)
 
     score_table = pd.DataFrame(score_rows)
@@ -1100,13 +1097,13 @@ def plot_abs_error_scatter(df, param_cols, outdir, dataset_label, epoch_label):
         fig.tight_layout(rect=(0.03, 0.02, 1.0, 1.0), h_pad=2.4, w_pad=1.4)
         fig.subplots_adjust(hspace=0.35, wspace=0.22)
 
-    out_path = Path(outdir) / f"abs_error_scatter_{epoch_label}.png"
+    # out_path = Path(outdir) / f"abs_error_scatter_{epoch_label}.png"
     # pad_inches keeps a thin margin; avoid bbox that lets the legend spill.
-    fig.savefig(out_path, dpi=220, bbox_inches="tight", pad_inches=0.15)
+    # fig.savefig(out_path, dpi=220, bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
-    print(f"  abs-error scatter saved → {out_path} "
-          f"(n={len(y)}, worst {int(round(WORST_FRAC * 100))}% "
-          f"threshold={thresh:.1f} pcm, n_worst={int(worst.sum())})")
+    # print(f"  abs-error scatter saved → {out_path} "
+    #       f"(n={len(y)}, worst {int(round(WORST_FRAC * 100))}% "
+    #       f"threshold={thresh:.1f} pcm, n_worst={int(worst.sum())})")
 
 
 def suggested_bin_weights(df, param_cols, outdir):
@@ -1128,7 +1125,7 @@ def suggested_bin_weights(df, param_cols, outdir):
                 "suggested_weight": w[b],
             })
     table = pd.DataFrame(rows)
-    table.to_csv(Path(outdir) / "suggested_bin_weights.csv", index=False)
+    # table.to_csv(Path(outdir) / "suggested_bin_weights.csv", index=False)
     return table
 
 
@@ -1423,10 +1420,11 @@ def analyze_dataset(full, param_cols, outdir, dataset_label, keff_edges=None):
     print("  importance_table_epoch0.csv, importance_table_final.csv")
     print("  importance_comparison.png")
     print("  binned_error_grid.png")
-    print("  abs_error_scatter_epoch0.png, abs_error_scatter_final.png")
+    # print("  abs_error_scatter_epoch0.png, abs_error_scatter_final.png")
     print("  correlation_by_keff_bin_{epoch0,final}.csv/.png")
-    print("  interactions_grid.png, interaction_scores.csv")
-    print("  suggested_bin_weights.csv (based on final epoch)")
+    # print("  interactions_grid.png, interaction_scores.csv")
+    print("  interaction_scores.csv")
+    # print("  suggested_bin_weights.csv (based on final epoch)")
     return {
         "df0": df0,
         "dfF": dfF,

@@ -1,7 +1,7 @@
 
 
 example_applications/additional_studies/forward_design/
-example_applications/additional_studies/further_checks/
+#example_applications/additional_studies/further_checks/
 
 solvers/HF_openMC/training_data/2_aug/seed_0/runs/
 solvers/HF_openMC/training_data/1_aug/seed_0/runs/
