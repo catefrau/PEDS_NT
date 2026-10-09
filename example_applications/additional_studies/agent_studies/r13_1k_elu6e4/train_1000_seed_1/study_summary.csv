@@ -1,0 +1,2 @@
+study,seed,best_epoch,val_mean_pcm,val_frac_below_650,test_mean_pcm,test_frac_below_650,swa_epoch,swa_val_mean_pcm,swa_test_mean_pcm,swa_test_frac_below_650
+r13_1k_elu6e4,1,100,493.64,0.7640,495.82,0.7833,,,,

@@ -1,0 +1,2 @@
+train_size,n_seeds,nn_correction,test_mean_pcm_mean,test_mean_pcm_std,test_median_pcm_mean,test_median_pcm_std,test_frac_below_650_mean,test_frac_below_650_std,test_frac_below_100_mean,test_frac_below_100_std,test_mse_k_mean,test_mse_k_std,test_mae_k_mean,test_mae_k_std,test_p95_pcm_mean,test_p95_pcm_std,test_std_pcm_mean,test_std_pcm_std
+500,1,no,5593.594175882176,0.0,5484.238687243292,0.0,0.0,0.0,0.0,0.0,0.0034984811230798483,0.0,0.05661518037319183,0.0,8948.970421239314,0.0,2135.4563505388237,0.0
