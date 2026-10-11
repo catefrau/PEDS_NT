@@ -5,9 +5,9 @@ every knob from here, so the model code itself holds no experiment settings.
 
 Launch a configured run with::
 
-    sbatch run_jobby.sh        # which calls: python run_peds.py
+    sbatch run_peds.sh         # which calls: python ../models/PEDS.py
 
-Every knob that ``run_jobby.sh`` sweeps is overridable through an environment
+Every knob that ``run_peds.sh`` sweeps is overridable through an environment
 variable, so one Slurm array can vary train size, seed and decay horizon
 without editing this file.
 """

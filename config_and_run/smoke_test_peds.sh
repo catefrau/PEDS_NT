@@ -54,5 +54,5 @@ mkdir -p slurm_logs
 
 conda activate jax-env
 
-python run_peds.py
+python ../models/PEDS.py
 echo "SMOKE TEST COMPLETED OK"
