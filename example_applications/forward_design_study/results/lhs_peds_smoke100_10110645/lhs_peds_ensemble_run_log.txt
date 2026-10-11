@@ -1,0 +1,335 @@
+Started at   : 2026-10-11 06:45:21
+Out dir      : /global/home/users/caterinafrau/PEDS_NT/example_applications/forward_design_study/results/lhs_peds_smoke100_10110645
+Seeds        : [0, 1, 2, 3, 4]
+N_LHS        : 100  seed=0
+Target/tol   : keff=1.0  |Δρ_ensemble_mean|≤1000.0 pcm
+TOP_K        : 2
+RANK_MODE    : keff_first
+
+--- Loading ensemble member seed=0 ---
+  Split source: split_log:/global/home/users/caterinafrau/PEDS_NT/example_applications/main_results/PEDS/train_1000_seed_0/split_log.csv (1000 train samples)
+  Dataset: /global/home/users/caterinafrau/PEDS_NT/data/highfidelity/17jul_0.8_1.2.npz  [snapshot:17jul_0.8_1.2.npz]
+  Recomputing normalization stats from split_log train indices for train_size=1000, seed=0 …
+  phi_reg precompute 0/1000
+  phi_reg precompute 20/1000
+  phi_reg precompute 40/1000
+  phi_reg precompute 60/1000
+  phi_reg precompute 80/1000
+  phi_reg precompute 100/1000
+  phi_reg precompute 120/1000
+  phi_reg precompute 140/1000
+  phi_reg precompute 160/1000
+  phi_reg precompute 180/1000
+  phi_reg precompute 200/1000
+  phi_reg precompute 220/1000
+  phi_reg precompute 240/1000
+  phi_reg precompute 260/1000
+  phi_reg precompute 280/1000
+  phi_reg precompute 300/1000
+  phi_reg precompute 320/1000
+  phi_reg precompute 340/1000
+  phi_reg precompute 360/1000
+  phi_reg precompute 380/1000
+  phi_reg precompute 400/1000
+  phi_reg precompute 420/1000
+  phi_reg precompute 440/1000
+  phi_reg precompute 460/1000
+  phi_reg precompute 480/1000
+  phi_reg precompute 500/1000
+  phi_reg precompute 520/1000
+  phi_reg precompute 540/1000
+  phi_reg precompute 560/1000
+  phi_reg precompute 580/1000
+  phi_reg precompute 600/1000
+  phi_reg precompute 620/1000
+  phi_reg precompute 640/1000
+  phi_reg precompute 660/1000
+  phi_reg precompute 680/1000
+  phi_reg precompute 700/1000
+  phi_reg precompute 720/1000
+  phi_reg precompute 740/1000
+  phi_reg precompute 760/1000
+  phi_reg precompute 780/1000
+  phi_reg precompute 800/1000
+  phi_reg precompute 820/1000
+  phi_reg precompute 840/1000
+  phi_reg precompute 860/1000
+  phi_reg precompute 880/1000
+  phi_reg precompute 900/1000
+  phi_reg precompute 920/1000
+  phi_reg precompute 940/1000
+  phi_reg precompute 960/1000
+  phi_reg precompute 980/1000
+  Loaded checkpoint: epoch=70, val_mean_pcm=610.7916828526705
+
+--- Loading ensemble member seed=1 ---
+  Split source: split_log:/global/home/users/caterinafrau/PEDS_NT/example_applications/main_results/PEDS/train_1000_seed_1/split_log.csv (1000 train samples)
+  Dataset: /global/home/users/caterinafrau/PEDS_NT/data/highfidelity/17jul_0.8_1.2.npz  [snapshot:17jul_0.8_1.2.npz]
+  Recomputing normalization stats from split_log train indices for train_size=1000, seed=1 …
+  phi_reg precompute 0/1000
+  phi_reg precompute 20/1000
+  phi_reg precompute 40/1000
+  phi_reg precompute 60/1000
+  phi_reg precompute 80/1000
+  phi_reg precompute 100/1000
+  phi_reg precompute 120/1000
+  phi_reg precompute 140/1000
+  phi_reg precompute 160/1000
+  phi_reg precompute 180/1000
+  phi_reg precompute 200/1000
+  phi_reg precompute 220/1000
+  phi_reg precompute 240/1000
+  phi_reg precompute 260/1000
+  phi_reg precompute 280/1000
+  phi_reg precompute 300/1000
+  phi_reg precompute 320/1000
+  phi_reg precompute 340/1000
+  phi_reg precompute 360/1000
+  phi_reg precompute 380/1000
+  phi_reg precompute 400/1000
+  phi_reg precompute 420/1000
+  phi_reg precompute 440/1000
+  phi_reg precompute 460/1000
+  phi_reg precompute 480/1000
+  phi_reg precompute 500/1000
+  phi_reg precompute 520/1000
+  phi_reg precompute 540/1000
+  phi_reg precompute 560/1000
+  phi_reg precompute 580/1000
+  phi_reg precompute 600/1000
+  phi_reg precompute 620/1000
+  phi_reg precompute 640/1000
+  phi_reg precompute 660/1000
+  phi_reg precompute 680/1000
+  phi_reg precompute 700/1000
+  phi_reg precompute 720/1000
+  phi_reg precompute 740/1000
+  phi_reg precompute 760/1000
+  phi_reg precompute 780/1000
+  phi_reg precompute 800/1000
+  phi_reg precompute 820/1000
+  phi_reg precompute 840/1000
+  phi_reg precompute 860/1000
+  phi_reg precompute 880/1000
+  phi_reg precompute 900/1000
+  phi_reg precompute 920/1000
+  phi_reg precompute 940/1000
+  phi_reg precompute 960/1000
+  phi_reg precompute 980/1000
+  Loaded checkpoint: epoch=70, val_mean_pcm=552.1030370488891
+
+--- Loading ensemble member seed=2 ---
+  Split source: split_log:/global/home/users/caterinafrau/PEDS_NT/example_applications/main_results/PEDS/train_1000_seed_2/split_log.csv (1000 train samples)
+  Dataset: /global/home/users/caterinafrau/PEDS_NT/data/highfidelity/17jul_0.8_1.2.npz  [snapshot:17jul_0.8_1.2.npz]
+  Recomputing normalization stats from split_log train indices for train_size=1000, seed=2 …
+  phi_reg precompute 0/1000
+  phi_reg precompute 20/1000
+  phi_reg precompute 40/1000
+  phi_reg precompute 60/1000
+  phi_reg precompute 80/1000
+  phi_reg precompute 100/1000
+  phi_reg precompute 120/1000
+  phi_reg precompute 140/1000
+  phi_reg precompute 160/1000
+  phi_reg precompute 180/1000
+  phi_reg precompute 200/1000
+  phi_reg precompute 220/1000
+  phi_reg precompute 240/1000
+  phi_reg precompute 260/1000
+  phi_reg precompute 280/1000
+  phi_reg precompute 300/1000
+  phi_reg precompute 320/1000
+  phi_reg precompute 340/1000
+  phi_reg precompute 360/1000
+  phi_reg precompute 380/1000
+  phi_reg precompute 400/1000
+  phi_reg precompute 420/1000
+  phi_reg precompute 440/1000
+  phi_reg precompute 460/1000
+  phi_reg precompute 480/1000
+  phi_reg precompute 500/1000
+  phi_reg precompute 520/1000
+  phi_reg precompute 540/1000
+  phi_reg precompute 560/1000
+  phi_reg precompute 580/1000
+  phi_reg precompute 600/1000
+  phi_reg precompute 620/1000
+  phi_reg precompute 640/1000
+  phi_reg precompute 660/1000
+  phi_reg precompute 680/1000
+  phi_reg precompute 700/1000
+  phi_reg precompute 720/1000
+  phi_reg precompute 740/1000
+  phi_reg precompute 760/1000
+  phi_reg precompute 780/1000
+  phi_reg precompute 800/1000
+  phi_reg precompute 820/1000
+  phi_reg precompute 840/1000
+  phi_reg precompute 860/1000
+  phi_reg precompute 880/1000
+  phi_reg precompute 900/1000
+  phi_reg precompute 920/1000
+  phi_reg precompute 940/1000
+  phi_reg precompute 960/1000
+  phi_reg precompute 980/1000
+  Loaded checkpoint: epoch=70, val_mean_pcm=656.5858240231127
+
+--- Loading ensemble member seed=3 ---
+  Split source: split_log:/global/home/users/caterinafrau/PEDS_NT/example_applications/main_results/PEDS/train_1000_seed_3/split_log.csv (1000 train samples)
+  Dataset: /global/home/users/caterinafrau/PEDS_NT/data/highfidelity/17jul_0.8_1.2.npz  [snapshot:17jul_0.8_1.2.npz]
+  Recomputing normalization stats from split_log train indices for train_size=1000, seed=3 …
+  phi_reg precompute 0/1000
+  phi_reg precompute 20/1000
+  phi_reg precompute 40/1000
+  phi_reg precompute 60/1000
+  phi_reg precompute 80/1000
+  phi_reg precompute 100/1000
+  phi_reg precompute 120/1000
+  phi_reg precompute 140/1000
+  phi_reg precompute 160/1000
+  phi_reg precompute 180/1000
+  phi_reg precompute 200/1000
+  phi_reg precompute 220/1000
+  phi_reg precompute 240/1000
+  phi_reg precompute 260/1000
+  phi_reg precompute 280/1000
+  phi_reg precompute 300/1000
+  phi_reg precompute 320/1000
+  phi_reg precompute 340/1000
+  phi_reg precompute 360/1000
+  phi_reg precompute 380/1000
+  phi_reg precompute 400/1000
+  phi_reg precompute 420/1000
+  phi_reg precompute 440/1000
+  phi_reg precompute 460/1000
+  phi_reg precompute 480/1000
+  phi_reg precompute 500/1000
+  phi_reg precompute 520/1000
+  phi_reg precompute 540/1000
+  phi_reg precompute 560/1000
+  phi_reg precompute 580/1000
+  phi_reg precompute 600/1000
+  phi_reg precompute 620/1000
+  phi_reg precompute 640/1000
+  phi_reg precompute 660/1000
+  phi_reg precompute 680/1000
+  phi_reg precompute 700/1000
+  phi_reg precompute 720/1000
+  phi_reg precompute 740/1000
+  phi_reg precompute 760/1000
+  phi_reg precompute 780/1000
+  phi_reg precompute 800/1000
+  phi_reg precompute 820/1000
+  phi_reg precompute 840/1000
+  phi_reg precompute 860/1000
+  phi_reg precompute 880/1000
+  phi_reg precompute 900/1000
+  phi_reg precompute 920/1000
+  phi_reg precompute 940/1000
+  phi_reg precompute 960/1000
+  phi_reg precompute 980/1000
+  Loaded checkpoint: epoch=70, val_mean_pcm=610.9121441246641
+
+--- Loading ensemble member seed=4 ---
+  Split source: split_log:/global/home/users/caterinafrau/PEDS_NT/example_applications/main_results/PEDS/train_1000_seed_4/split_log.csv (1000 train samples)
+  Dataset: /global/home/users/caterinafrau/PEDS_NT/data/highfidelity/17jul_0.8_1.2.npz  [snapshot:17jul_0.8_1.2.npz]
+  Recomputing normalization stats from split_log train indices for train_size=1000, seed=4 …
+  phi_reg precompute 0/1000
+  phi_reg precompute 20/1000
+  phi_reg precompute 40/1000
+  phi_reg precompute 60/1000
+  phi_reg precompute 80/1000
+  phi_reg precompute 100/1000
+  phi_reg precompute 120/1000
+  phi_reg precompute 140/1000
+  phi_reg precompute 160/1000
+  phi_reg precompute 180/1000
+  phi_reg precompute 200/1000
+  phi_reg precompute 220/1000
+  phi_reg precompute 240/1000
+  phi_reg precompute 260/1000
+  phi_reg precompute 280/1000
+  phi_reg precompute 300/1000
+  phi_reg precompute 320/1000
+  phi_reg precompute 340/1000
+  phi_reg precompute 360/1000
+  phi_reg precompute 380/1000
+  phi_reg precompute 400/1000
+  phi_reg precompute 420/1000
+  phi_reg precompute 440/1000
+  phi_reg precompute 460/1000
+  phi_reg precompute 480/1000
+  phi_reg precompute 500/1000
+  phi_reg precompute 520/1000
+  phi_reg precompute 540/1000
+  phi_reg precompute 560/1000
+  phi_reg precompute 580/1000
+  phi_reg precompute 600/1000
+  phi_reg precompute 620/1000
+  phi_reg precompute 640/1000
+  phi_reg precompute 660/1000
+  phi_reg precompute 680/1000
+  phi_reg precompute 700/1000
+  phi_reg precompute 720/1000
+  phi_reg precompute 740/1000
+  phi_reg precompute 760/1000
+  phi_reg precompute 780/1000
+  phi_reg precompute 800/1000
+  phi_reg precompute 820/1000
+  phi_reg precompute 840/1000
+  phi_reg precompute 860/1000
+  phi_reg precompute 880/1000
+  phi_reg precompute 900/1000
+  phi_reg precompute 920/1000
+  phi_reg precompute 940/1000
+  phi_reg precompute 960/1000
+  phi_reg precompute 980/1000
+  Loaded checkpoint: epoch=70, val_mean_pcm=592.309245233328
+  b4c_r      study=[1.0,6.0]  trained(intersection)=[1.0044,5.9998]  effective=[1.0044,5.9998]
+  cr_frac    study=[0.0,1.0]  trained(intersection)=[0.0005,0.9999]  effective=[0.0005,0.9999]
+  fuel_r     study=[10.0,40.0]  trained(intersection)=[10.1073,44.9161]  effective=[10.1073,40.0000]
+  enrichment study=[1.5,10.0]  trained(intersection)=[1.0135,9.9918]  effective=[1.5000,9.9918]
+  f_mod      study=[0.4,0.8]  trained(intersection)=[0.4005,0.7996]  effective=[0.4005,0.7996]
+  water_r    study=[40.0,80.0]  trained(intersection)=[40.0002,79.9688]  effective=[40.0002,79.9688]
+
+Sampling LHS ...
+  Geometry-valid: 100 / 100
+
+Computing shared baseline XS + phi-features (model-independent) ...
+    [baseline+phi]   100/100  0.9s elapsed
+  Baseline+phi (shared, physics-only): 0.95s
+
+--- Evaluating ensemble member seed=0 (1/5) ---
+      [  100/100]  1.9s elapsed
+    NN compute_xs: 0.96s   corrected solve+PPF: 0.92s (of which PPF 0.03s)   total: 1.88s
+
+--- Evaluating ensemble member seed=1 (2/5) ---
+      [  100/100]  0.9s elapsed
+    NN compute_xs: 0.01s   corrected solve+PPF: 0.92s (of which PPF 0.03s)   total: 0.93s
+
+--- Evaluating ensemble member seed=2 (3/5) ---
+      [  100/100]  0.9s elapsed
+    NN compute_xs: 0.01s   corrected solve+PPF: 0.92s (of which PPF 0.03s)   total: 0.92s
+
+--- Evaluating ensemble member seed=3 (4/5) ---
+      [  100/100]  0.9s elapsed
+    NN compute_xs: 0.00s   corrected solve+PPF: 0.93s (of which PPF 0.03s)   total: 0.94s
+
+--- Evaluating ensemble member seed=4 (5/5) ---
+      [  100/100]  0.9s elapsed
+    NN compute_xs: 0.00s   corrected solve+PPF: 0.91s (of which PPF 0.03s)   total: 0.92s
+
+========== ENSEMBLE SCREEN SUMMARY ==========
+Valid geometries (all seeds finite): 100 / 100
+Feasible (|Δρ_mean|≤1000): 4 / 100 (4.00%)
+Ranking mode                    : keff_first
+Top-2 written               : /global/home/users/caterinafrau/PEDS_NT/example_applications/forward_design_study/results/lhs_peds_smoke100_10110645/keff_scan_top_candidates.csv
+Mean ensemble std(keff) on feasible: 0.00219
+Eval wall time                  : 48.9s (0.81 min)
+Best (rank 1): keff_mean=1.00177 dpcm=176.5 ppf_mean=1.8960 keff_std=0.00138
+All evals      : /global/home/users/caterinafrau/PEDS_NT/example_applications/forward_design_study/results/lhs_peds_smoke100_10110645/lhs_peds_all_evals.csv
+Ranked feasible: /global/home/users/caterinafrau/PEDS_NT/example_applications/forward_design_study/results/lhs_peds_smoke100_10110645/lhs_peds_feasible_ranked.csv
+Next: python /global/home/users/caterinafrau/PEDS_NT/example_applications/forward_design_study/openmc_verify_topk.py
+
+Finished at  : 2026-10-11 06:46:10
+Elapsed time : 48.9 s (0.81 min)

@@ -9,7 +9,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.log
-*.txt
 # *.sh
 *.out
 *.err

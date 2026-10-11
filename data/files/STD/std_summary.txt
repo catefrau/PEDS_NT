@@ -1,0 +1,26 @@
+Files with keff_std and required columns:
+- 100inactivebatches_500cases.csv
+- 13jul.csv
+- 2aug.csv
+- older_datasets/1000_clean.csv
+- older_datasets/1000_dataset.csv
+- older_datasets/1600_dataset.csv
+- older_datasets/1jul_500.csv
+- older_datasets/1jul_500_trimmed.csv
+- older_datasets/2jul_700.csv
+- older_datasets/2jul_700_trimmed_filtered.csv
+- older_datasets/2jul_full.csv
+- older_datasets/2jul_full_filtered_2200.csv
+- older_datasets/600samples.csv
+- older_datasets/LHS_filt_with_diffusion.csv
+- older_datasets/LHS_filtered_ds.csv
+- older_datasets/LHS_full_dataset.csv
+- older_datasets/LHS_full_dataset_old.csv
+- older_datasets/LHS_full_dataset_trimmed.csv
+
+Counts:
+raw_rows=14307
+dedup_rows=4710
+std_below40_rows=877
+std_above40_rows=3833
+std_equal40_rows=6

@@ -1,0 +1,11 @@
+PEDS run configuration
+  data          : /global/home/users/caterinafrau/PEDS_NT/data/highfidelity/17jul_0.8_1.2.npz
+  sizes         : train=80 val=20 test=20
+  seeds         : train/val=0 test=0 (fixed)
+  split mode    : param_stratified=True balanced_ranges=False cache=False
+  optimisation  : epochs=3 decay_epochs=3 batch=32 lr=2.0e-04->5.0e-06
+  checkpointing : min_save_epoch=1 patience=99 ema_alpha=0.1
+  architecture  : hidden=[128, 256, 128] n_regions=3 G=2
+  grad check    : True (sample 0)
+  workers       : 32
+  output        : ../example_applications/new_test_results/validation_80_20_20_ep3/train_80_seed_0

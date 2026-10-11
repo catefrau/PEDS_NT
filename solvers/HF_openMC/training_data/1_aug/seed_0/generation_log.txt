@@ -1,0 +1,364 @@
+════════════════════════════════════════════════════════════════════════
+  LHS DATA GENERATION LOG
+════════════════════════════════════════════════════════════════════════
+  Campaign dir : /global/home/users/caterinafrau/PEDS_NT/solvers/HF_openMC/training_data/1_aug/seed_0
+  LHS seed     : 0
+  N_SAMPLES    : 10
+  STD target   : 3.000000e-04
+  Geometry     : cylindrical
+  Regions      : ['b4c_rod', 'fuel_annulus', 'water']
+  Free params  : ['r0_b4c_rod_outer_radius', 'r0_b4c_rod_cr_fraction', 'r1_fuel_annulus_outer_radius', 'r1_fuel_annulus_enrichment', 'r1_fuel_annulus_f_mod', 'r2_water_outer_radius']
+════════════════════════════════════════════════════════════════════════
+
+------------------------------------------------------------------------
+Run 0001  |  candidate 1  |  status: SUCCESS
+------------------------------------------------------------------------
+LHS sample:
+  r0_b4c_rod_outer_radius              = 3.307693
+  r0_b4c_rod_cr_fraction               = 0.915028
+  r1_fuel_annulus_outer_radius         = 36.361295
+  r1_fuel_annulus_enrichment           = 9.816692
+  r1_fuel_annulus_f_mod                = 0.546825
+  r2_water_outer_radius                = 72.234272
+
+Results:
+  k_eff                         = 1.27139920
+  k_eff std                     = 0.00029998  (30.00 pcm)
+  batches used (statepoint)     = 400
+  inactive batches              = 50
+  particles / batch             = 20000
+  trigger_max_batches           = 600
+  keff trigger std              = 0.0003
+  std retries                   = 1
+  radial PPF (fuel-only)        = 1.469493
+  flux peak factor (all bins)   = 1.730991
+
+Timing:
+  elapsed wall time (s)         = 105.68
+  OpenMC total runtime (s)        = 72.82
+  OpenMC transport runtime (s)    = 69.55
+  OpenMC inactive runtime (s)     = 1.99
+  OpenMC active runtime (s)       = 69.55
+
+MC settings history (retries):
+  attempt 1: batches=200, trigger_max=300, particles=20000, inactive=50, keff_trigger_std=0.0005
+  attempt 2: batches=400, trigger_max=600, particles=20000, inactive=50, keff_trigger_std=0.0003
+
+------------------------------------------------------------------------
+Run 0002  |  candidate 2  |  status: SUCCESS
+------------------------------------------------------------------------
+LHS sample:
+  r0_b4c_rod_outer_radius              = 4.242918
+  r0_b4c_rod_cr_fraction               = 0.172950
+  r1_fuel_annulus_outer_radius         = 18.188966
+  r1_fuel_annulus_enrichment           = 6.149340
+  r1_fuel_annulus_f_mod                = 0.689086
+  r2_water_outer_radius                = 44.010954
+
+Results:
+  k_eff                         = 1.06835944
+  k_eff std                     = 0.00026167  (26.17 pcm)
+  batches used (statepoint)     = 800
+  inactive batches              = 50
+  particles / batch             = 20000
+  trigger_max_batches           = 1200
+  keff trigger std              = 0.0003
+  std retries                   = 2
+  radial PPF (fuel-only)        = 1.643754
+  flux peak factor (all bins)   = 1.705227
+
+Timing:
+  elapsed wall time (s)         = 331.04
+  OpenMC total runtime (s)        = 159.03
+  OpenMC transport runtime (s)    = 153.34
+  OpenMC inactive runtime (s)     = 2.69
+  OpenMC active runtime (s)       = 155.07
+
+MC settings history (retries):
+  attempt 1: batches=200, trigger_max=300, particles=20000, inactive=50, keff_trigger_std=0.0005
+  attempt 2: batches=400, trigger_max=600, particles=20000, inactive=50, keff_trigger_std=0.0003
+  attempt 3: batches=800, trigger_max=1200, particles=20000, inactive=50, keff_trigger_std=0.0003
+
+------------------------------------------------------------------------
+Run 0003  |  candidate 3  |  status: SUCCESS
+------------------------------------------------------------------------
+LHS sample:
+  r0_b4c_rod_outer_radius              = 5.042008
+  r0_b4c_rod_cr_fraction               = 0.538892
+  r1_fuel_annulus_outer_radius         = 14.630875
+  r1_fuel_annulus_enrichment           = 8.101247
+  r1_fuel_annulus_f_mod                = 0.587422
+  r2_water_outer_radius                = 58.601837
+
+Results:
+  k_eff                         = 0.91217156
+  k_eff std                     = 0.00029995  (29.99 pcm)
+  batches used (statepoint)     = 400
+  inactive batches              = 50
+  particles / batch             = 20000
+  trigger_max_batches           = 600
+  keff trigger std              = 0.0003
+  std retries                   = 1
+  radial PPF (fuel-only)        = 1.799508
+  flux peak factor (all bins)   = 2.234213
+
+Timing:
+  elapsed wall time (s)         = 195.24
+  OpenMC total runtime (s)        = 134.55
+  OpenMC transport runtime (s)    = 130.47
+  OpenMC inactive runtime (s)     = 2.98
+  OpenMC active runtime (s)       = 130.30
+
+MC settings history (retries):
+  attempt 1: batches=200, trigger_max=300, particles=20000, inactive=50, keff_trigger_std=0.0005
+  attempt 2: batches=400, trigger_max=600, particles=20000, inactive=50, keff_trigger_std=0.0003
+
+------------------------------------------------------------------------
+Run 0004  |  candidate 4  |  status: SUCCESS
+------------------------------------------------------------------------
+LHS sample:
+  r0_b4c_rod_outer_radius              = 1.803318
+  r0_b4c_rod_cr_fraction               = 0.342269
+  r1_fuel_annulus_outer_radius         = 30.802131
+  r1_fuel_annulus_enrichment           = 6.722016
+  r1_fuel_annulus_f_mod                = 0.755059
+  r2_water_outer_radius                = 65.287478
+
+Results:
+  k_eff                         = 1.32588528
+  k_eff std                     = 0.00029957  (29.96 pcm)
+  batches used (statepoint)     = 400
+  inactive batches              = 50
+  particles / batch             = 20000
+  trigger_max_batches           = 600
+  keff trigger std              = 0.0003
+  std retries                   = 1
+  radial PPF (fuel-only)        = 1.362588
+  flux peak factor (all bins)   = 1.853299
+
+Timing:
+  elapsed wall time (s)         = 114.17
+  OpenMC total runtime (s)        = 84.55
+  OpenMC transport runtime (s)    = 80.30
+  OpenMC inactive runtime (s)     = 2.24
+  OpenMC active runtime (s)       = 81.10
+
+MC settings history (retries):
+  attempt 1: batches=200, trigger_max=300, particles=20000, inactive=50, keff_trigger_std=0.0005
+  attempt 2: batches=400, trigger_max=600, particles=20000, inactive=50, keff_trigger_std=0.0003
+
+------------------------------------------------------------------------
+Run 0005  |  candidate 5  |  status: SUCCESS
+------------------------------------------------------------------------
+LHS sample:
+  r0_b4c_rod_outer_radius              = 3.844223
+  r0_b4c_rod_cr_fraction               = 0.733791
+  r1_fuel_annulus_outer_radius         = 32.174857
+  r1_fuel_annulus_enrichment           = 5.482752
+  r1_fuel_annulus_f_mod                = 0.432531
+  r2_water_outer_radius                = 50.165845
+
+Results:
+  k_eff                         = 1.10205028
+  k_eff std                     = 0.00025832  (25.83 pcm)
+  batches used (statepoint)     = 800
+  inactive batches              = 50
+  particles / batch             = 20000
+  trigger_max_batches           = 1200
+  keff trigger std              = 0.0003
+  std retries                   = 2
+  radial PPF (fuel-only)        = 1.537932
+  flux peak factor (all bins)   = 1.416711
+
+Timing:
+  elapsed wall time (s)         = 248.84
+  OpenMC total runtime (s)        = 120.51
+  OpenMC transport runtime (s)    = 116.49
+  OpenMC inactive runtime (s)     = 2.07
+  OpenMC active runtime (s)       = 117.24
+
+MC settings history (retries):
+  attempt 1: batches=200, trigger_max=300, particles=20000, inactive=50, keff_trigger_std=0.0005
+  attempt 2: batches=400, trigger_max=600, particles=20000, inactive=50, keff_trigger_std=0.0003
+  attempt 3: batches=800, trigger_max=1200, particles=20000, inactive=50, keff_trigger_std=0.0003
+
+------------------------------------------------------------------------
+Run 0006  |  candidate 6  |  status: SUCCESS
+------------------------------------------------------------------------
+LHS sample:
+  r0_b4c_rod_outer_radius              = 4.797150
+  r0_b4c_rod_cr_fraction               = 0.026979
+  r1_fuel_annulus_outer_radius         = 38.351018
+  r1_fuel_annulus_enrichment           = 1.014875
+  r1_fuel_annulus_f_mod                = 0.621014
+  r2_water_outer_radius                = 70.492749
+
+Results:
+  k_eff                         = 0.89121024
+  k_eff std                     = 0.00029980  (29.98 pcm)
+  batches used (statepoint)     = 400
+  inactive batches              = 50
+  particles / batch             = 20000
+  trigger_max_batches           = 600
+  keff trigger std              = 0.0003
+  std retries                   = 1
+  radial PPF (fuel-only)        = 1.322304
+  flux peak factor (all bins)   = 1.700367
+
+Timing:
+  elapsed wall time (s)         = 99.65
+  OpenMC total runtime (s)        = 69.49
+  OpenMC transport runtime (s)    = 66.37
+  OpenMC inactive runtime (s)     = 2.26
+  OpenMC active runtime (s)       = 65.91
+
+MC settings history (retries):
+  attempt 1: batches=200, trigger_max=300, particles=20000, inactive=50, keff_trigger_std=0.0005
+  attempt 2: batches=400, trigger_max=600, particles=20000, inactive=50, keff_trigger_std=0.0003
+
+------------------------------------------------------------------------
+Run 0007  |  candidate 7  |  status: SUCCESS
+------------------------------------------------------------------------
+LHS sample:
+  r0_b4c_rod_outer_radius              = 2.649856
+  r0_b4c_rod_cr_fraction               = 0.883264
+  r1_fuel_annulus_outer_radius         = 10.122921
+  r1_fuel_annulus_enrichment           = 2.741565
+  r1_fuel_annulus_f_mod                = 0.662861
+  r2_water_outer_radius                = 54.588758
+
+Results:
+  k_eff                         = 0.66516330
+  k_eff std                     = 0.00029975  (29.98 pcm)
+  batches used (statepoint)     = 400
+  inactive batches              = 50
+  particles / batch             = 20000
+  trigger_max_batches           = 600
+  keff trigger std              = 0.0003
+  std retries                   = 1
+  radial PPF (fuel-only)        = 1.520030
+  flux peak factor (all bins)   = 2.726614
+
+Timing:
+  elapsed wall time (s)         = 206.71
+  OpenMC total runtime (s)        = 148.89
+  OpenMC transport runtime (s)    = 143.21
+  OpenMC inactive runtime (s)     = 3.65
+  OpenMC active runtime (s)       = 144.00
+
+MC settings history (retries):
+  attempt 1: batches=200, trigger_max=300, particles=20000, inactive=50, keff_trigger_std=0.0005
+  attempt 2: batches=400, trigger_max=600, particles=20000, inactive=50, keff_trigger_std=0.0003
+
+------------------------------------------------------------------------
+Run 0008  |  candidate 8  |  status: SUCCESS
+------------------------------------------------------------------------
+LHS sample:
+  r0_b4c_rod_outer_radius              = 2.428702
+  r0_b4c_rod_cr_fraction               = 0.688949
+  r1_fuel_annulus_outer_radius         = 25.405290
+  r1_fuel_annulus_enrichment           = 3.811855
+  r1_fuel_annulus_f_mod                = 0.514527
+  r2_water_outer_radius                = 61.240968
+
+Results:
+  k_eff                         = 1.05930604
+  k_eff std                     = 0.00026476  (26.48 pcm)
+  batches used (statepoint)     = 800
+  inactive batches              = 50
+  particles / batch             = 20000
+  trigger_max_batches           = 1200
+  keff trigger std              = 0.0003
+  std retries                   = 2
+  radial PPF (fuel-only)        = 1.771452
+  flux peak factor (all bins)   = 1.809608
+
+Timing:
+  elapsed wall time (s)         = 267.72
+  OpenMC total runtime (s)        = 133.36
+  OpenMC transport runtime (s)    = 128.20
+  OpenMC inactive runtime (s)     = 2.43
+  OpenMC active runtime (s)       = 129.67
+
+MC settings history (retries):
+  attempt 1: batches=200, trigger_max=300, particles=20000, inactive=50, keff_trigger_std=0.0005
+  attempt 2: batches=400, trigger_max=600, particles=20000, inactive=50, keff_trigger_std=0.0003
+  attempt 3: batches=800, trigger_max=1200, particles=20000, inactive=50, keff_trigger_std=0.0003
+
+------------------------------------------------------------------------
+Run 0009  |  candidate 9  |  status: SUCCESS
+------------------------------------------------------------------------
+LHS sample:
+  r0_b4c_rod_outer_radius              = 1.318481
+  r0_b4c_rod_cr_fraction               = 0.438368
+  r1_fuel_annulus_outer_radius         = 24.991630
+  r1_fuel_annulus_enrichment           = 2.958090
+  r1_fuel_annulus_f_mod                = 0.769226
+  r2_water_outer_radius                = 43.651022
+
+Results:
+  k_eff                         = 1.11586390
+  k_eff std                     = 0.00026147  (26.15 pcm)
+  batches used (statepoint)     = 800
+  inactive batches              = 50
+  particles / batch             = 20000
+  trigger_max_batches           = 1200
+  keff trigger std              = 0.0003
+  std retries                   = 2
+  radial PPF (fuel-only)        = 1.281601
+  flux peak factor (all bins)   = 1.547086
+
+Timing:
+  elapsed wall time (s)         = 284.05
+  OpenMC total runtime (s)        = 144.15
+  OpenMC transport runtime (s)    = 138.57
+  OpenMC inactive runtime (s)     = 2.39
+  OpenMC active runtime (s)       = 140.46
+
+MC settings history (retries):
+  attempt 1: batches=200, trigger_max=300, particles=20000, inactive=50, keff_trigger_std=0.0005
+  attempt 2: batches=400, trigger_max=600, particles=20000, inactive=50, keff_trigger_std=0.0003
+  attempt 3: batches=800, trigger_max=1200, particles=20000, inactive=50, keff_trigger_std=0.0003
+
+------------------------------------------------------------------------
+Run 0010  |  candidate 10  |  status: SUCCESS
+------------------------------------------------------------------------
+LHS sample:
+  r0_b4c_rod_outer_radius              = 5.668059
+  r0_b4c_rod_cr_fraction               = 0.203359
+  r1_fuel_annulus_outer_radius         = 19.084959
+  r1_fuel_annulus_enrichment           = 8.415432
+  r1_fuel_annulus_f_mod                = 0.472634
+  r2_water_outer_radius                = 76.208085
+
+Results:
+  k_eff                         = 0.99849115
+  k_eff std                     = 0.00029955  (29.96 pcm)
+  batches used (statepoint)     = 400
+  inactive batches              = 50
+  particles / batch             = 20000
+  trigger_max_batches           = 600
+  keff trigger std              = 0.0003
+  std retries                   = 1
+  radial PPF (fuel-only)        = 1.715018
+  flux peak factor (all bins)   = 2.422922
+
+Timing:
+  elapsed wall time (s)         = 184.24
+  OpenMC total runtime (s)        = 125.19
+  OpenMC transport runtime (s)    = 120.61
+  OpenMC inactive runtime (s)     = 2.85
+  OpenMC active runtime (s)       = 121.03
+
+MC settings history (retries):
+  attempt 1: batches=200, trigger_max=300, particles=20000, inactive=50, keff_trigger_std=0.0005
+  attempt 2: batches=400, trigger_max=600, particles=20000, inactive=50, keff_trigger_std=0.0003
+
+════════════════════════════════════════════════════════════════════════
+  SWEEP COMPLETE
+════════════════════════════════════════════════════════════════════════
+  Successful runs : 10/10
+  Candidates tried: 10
+  Avg elapsed wall time (s)   : 203.74
+  Avg OpenMC total runtime (s): 119.25
+════════════════════════════════════════════════════════════════════════

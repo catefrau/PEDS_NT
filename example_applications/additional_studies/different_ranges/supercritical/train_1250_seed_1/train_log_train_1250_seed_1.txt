@@ -1,0 +1,769 @@
+Started at   : 2026-07-07 17:14:44
+Run log      : <_io.TextIOWrapper name='/global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/train_log_train_1250_seed_1.txt' mode='w' encoding='UTF-8'>
+Code copy    : /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/code_snapshot_train_1250_seed_1.py
+N_FLAT_MAX = 160
+Starting PEDS training with train size = 1250, seed = 1, decay_epochs = 70…
+Loading data …
+  Dataset loaded: /global/home/users/caterinafrau/PEDS_NT/data/highfidelity/merged_full_lhs_1_1.3.npz
+  Requested split sizes: train=1250, val=100, test=100
+  Split seeds: train_seed=1, holdout_seed=0
+  Split cache dir: /global/home/users/caterinafrau/PEDS_NT/data/highfidelity/.split_cache_LHS_1_1.3
+  Dataset samples available: 1679
+  Split request: train=1250, val=100, test=100, train_seed=1, holdout_seed=0, dataset_size=1679
+  Split cache: /global/home/users/caterinafrau/PEDS_NT/data/highfidelity/.split_cache_LHS_1_1.3/split_t1250_ts1_hs0_v100_t100.pkl
+  [fallback] found previous cache for train_size=1000
+    extending from /global/home/users/caterinafrau/PEDS_NT/data/highfidelity/.split_cache_LHS_1_1.3/split_t1000_ts1_hs0_v100_t100.pkl to 1250…
+    ✓ extended: 1000 → 1250 samples
+  Train k range: 1.000 – 1.300
+  Val   k range: 1.010  – 1.300
+  Test  k range: 1.003  – 1.292
+Precomputing φ_reg features (done once)…
+  phi_reg precompute 0/1250
+  phi_reg precompute 20/1250
+  phi_reg precompute 40/1250
+  phi_reg precompute 60/1250
+  phi_reg precompute 80/1250
+  phi_reg precompute 100/1250
+  phi_reg precompute 120/1250
+  phi_reg precompute 140/1250
+  phi_reg precompute 160/1250
+  phi_reg precompute 180/1250
+  phi_reg precompute 200/1250
+  phi_reg precompute 220/1250
+  phi_reg precompute 240/1250
+  phi_reg precompute 260/1250
+  phi_reg precompute 280/1250
+  phi_reg precompute 300/1250
+  phi_reg precompute 320/1250
+  phi_reg precompute 340/1250
+  phi_reg precompute 360/1250
+  phi_reg precompute 380/1250
+  phi_reg precompute 400/1250
+  phi_reg precompute 420/1250
+  phi_reg precompute 440/1250
+  phi_reg precompute 460/1250
+  phi_reg precompute 480/1250
+  phi_reg precompute 500/1250
+  phi_reg precompute 520/1250
+  phi_reg precompute 540/1250
+  phi_reg precompute 560/1250
+  phi_reg precompute 580/1250
+  phi_reg precompute 600/1250
+  phi_reg precompute 620/1250
+  phi_reg precompute 640/1250
+  phi_reg precompute 660/1250
+  phi_reg precompute 680/1250
+  phi_reg precompute 700/1250
+  phi_reg precompute 720/1250
+  phi_reg precompute 740/1250
+  phi_reg precompute 760/1250
+  phi_reg precompute 780/1250
+  phi_reg precompute 800/1250
+  phi_reg precompute 820/1250
+  phi_reg precompute 840/1250
+  phi_reg precompute 860/1250
+  phi_reg precompute 880/1250
+  phi_reg precompute 900/1250
+  phi_reg precompute 920/1250
+  phi_reg precompute 940/1250
+  phi_reg precompute 960/1250
+  phi_reg precompute 980/1250
+  phi_reg precompute 1000/1250
+  phi_reg precompute 1020/1250
+  phi_reg precompute 1040/1250
+  phi_reg precompute 1060/1250
+  phi_reg precompute 1080/1250
+  phi_reg precompute 1100/1250
+  phi_reg precompute 1120/1250
+  phi_reg precompute 1140/1250
+  phi_reg precompute 1160/1250
+  phi_reg precompute 1180/1250
+  phi_reg precompute 1200/1250
+  phi_reg precompute 1220/1250
+  phi_reg precompute 1240/1250
+  phi_reg precompute 0/100
+  phi_reg precompute 20/100
+  phi_reg precompute 40/100
+  phi_reg precompute 60/100
+  phi_reg precompute 80/100
+  phi_reg precompute 0/100
+  phi_reg precompute 20/100
+  phi_reg precompute 40/100
+  phi_reg precompute 60/100
+  phi_reg precompute 80/100
+Actual train size: 1250
+Actual test size:  100
+
+TRAIN bin counts:
+[0.75, 0.80): 0
+[0.80, 0.85): 0
+[0.85, 0.90): 0
+[0.90, 0.95): 0
+[0.95, 1.00): 0
+[1.00, 1.05): 198
+[1.05, 1.10): 211
+[1.10, 1.15): 256
+[1.15, 1.20): 245
+[1.20, 1.25]: 205
+
+VAL bin counts:
+[0.75, 0.80): 0
+[0.80, 0.85): 0
+[0.85, 0.90): 0
+[0.90, 0.95): 0
+[0.95, 1.00): 0
+[1.00, 1.05): 14
+[1.05, 1.10): 20
+[1.10, 1.15): 21
+[1.15, 1.20): 20
+[1.20, 1.25]: 11
+
+TEST bin counts:
+[0.75, 0.80): 0
+[0.80, 0.85): 0
+[0.85, 0.90): 0
+[0.90, 0.95): 0
+[0.95, 1.00): 0
+[1.00, 1.05): 18
+[1.05, 1.10): 15
+[1.10, 1.15): 21
+[1.15, 1.20): 19
+[1.20, 1.25]: 15
+LR schedule: cosine decay for 70 epochs (2800 steps), then hold at 5.00e-06
+Precomputing XS baselines …
+Done.
+  log_xs_mean range: [-10.53, 2.25]
+  log_xs_std  range: [0.0000,  1.82]
+
+Training for 70 epochs …
+Computing epoch 0 baseline for train set...
+Computing epoch 0 baseline for val/test set...
+/global/home/users/caterinafrau/PEDS_NT/modules/PEDS.py:2202: DeprecationWarning: '.value' access is now deprecated. For Variable[Array] instances use:
+
+  variable[...]
+
+For other Variable types use:
+
+  variable.get_value()
+
+  current_lr = float(lr_schedule(optimizer.step.value))
+Epoch    1 | LR = 5.00e-04
+  grad_norm: min=0.028 mean=0.260 max=2.764 frac_clipped(>0.5)=10.00%
+  ⏱  validation step                     2927.2 ms
+[Epoch    1] TRAIN | MSE=0.000484 | MAE_k=    0.0 | mean= 1131.7 pcm | median=  796.4 pcm | p95= 3141.1 pcm | std=1710.8 | <650pcm=41.6% | <100pcm=7.7%
+[Epoch    1] VAL   | MSE=0.000148 | MAE_k=    0.0 | mean=  761.2 pcm | median=  551.2 pcm | p95= 2059.3 pcm | std= 703.3 | <650pcm=55.0% | <100pcm=8.0%
+XS heatmap saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_heatmap/epoch_0001.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0001_sample022.png
+  [subplot] epoch 1  sample 22  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0001_sample022.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0001_sample044.png
+  [subplot] epoch 1  sample 44  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0001_sample044.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0001_sample055.png
+  [subplot] epoch 1  sample 55  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0001_sample055.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0001_sample068.png
+  [subplot] epoch 1  sample 68  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0001_sample068.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0001_sample082.png
+  [subplot] epoch 1  sample 82  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0001_sample082.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0001_sample022.png
+  [flux_plot] epoch 1  sample 22  k_ref=1.07158  k_pred=1.08733  |Δρ|=1351.5 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0001_sample022.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0001_sample044.png
+  [flux_plot] epoch 1  sample 44  k_ref=1.13355  k_pred=1.13006  |Δρ|=272.3 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0001_sample044.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0001_sample055.png
+  [flux_plot] epoch 1  sample 55  k_ref=1.14938  k_pred=1.14854  |Δρ|=63.2 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0001_sample055.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0001_sample068.png
+  [flux_plot] epoch 1  sample 68  k_ref=1.18485  k_pred=1.20423  |Δρ|=1358.2 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0001_sample068.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0001_sample082.png
+  [flux_plot] epoch 1  sample 82  k_ref=1.25368  k_pred=1.26963  |Δρ|=1001.9 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0001_sample082.png
+/global/home/users/caterinafrau/PEDS_NT/modules/PEDS.py:2202: DeprecationWarning: '.value' access is now deprecated. For Variable[Array] instances use:
+
+  variable[...]
+
+For other Variable types use:
+
+  variable.get_value()
+
+  current_lr = float(lr_schedule(optimizer.step.value))
+Epoch    2 | LR = 5.00e-04
+  grad_norm: min=0.023 mean=0.161 max=2.764 frac_clipped(>0.5)=5.00%
+  ⏱  validation step                     1053.8 ms
+[Epoch    2] TRAIN | MSE=0.000084 | MAE_k=    0.0 | mean=  548.5 pcm | median=  431.4 pcm | p95= 1526.8 pcm | std= 487.0 | <650pcm=68.3% | <100pcm=11.7%
+[Epoch    2] VAL   | MSE=0.000064 | MAE_k=    0.0 | mean=  506.7 pcm | median=  372.1 pcm | p95= 1397.8 pcm | std= 450.7 | <650pcm=71.0% | <100pcm=13.0%
+Epoch    3 | LR = 4.99e-04
+  grad_norm: min=0.017 mean=0.129 max=2.764 frac_clipped(>0.5)=3.33%
+  ⏱  validation step                     1068.5 ms
+[Epoch    3] TRAIN | MSE=0.000066 | MAE_k=    0.0 | mean=  477.1 pcm | median=  361.6 pcm | p95= 1278.8 pcm | std= 469.2 | <650pcm=75.0% | <100pcm=15.4%
+[Epoch    3] VAL   | MSE=0.000112 | MAE_k=    0.0 | mean=  570.6 pcm | median=  380.1 pcm | p95= 1714.5 pcm | std= 640.3 | <650pcm=73.0% | <100pcm=16.0%
+Epoch    4 | LR = 4.98e-04
+  grad_norm: min=0.016 mean=0.115 max=2.764 frac_clipped(>0.5)=2.50%
+  ⏱  validation step                     1116.5 ms
+[Epoch    4] TRAIN | MSE=0.000098 | MAE_k=    0.0 | mean=  554.4 pcm | median=  428.4 pcm | p95= 1470.9 pcm | std= 551.6 | <650pcm=68.9% | <100pcm=13.8%
+[Epoch    4] VAL   | MSE=0.000054 | MAE_k=    0.0 | mean=  438.3 pcm | median=  289.3 pcm | p95= 1176.0 pcm | std= 458.8 | <650pcm=75.0% | <100pcm=23.0%
+Epoch    5 | LR = 4.96e-04
+  grad_norm: min=0.016 mean=0.101 max=2.764 frac_clipped(>0.5)=2.00%
+  ⏱  validation step                     1185.2 ms
+[Epoch    5] TRAIN | MSE=0.000045 | MAE_k=    0.0 | mean=  397.9 pcm | median=  298.3 pcm | p95= 1078.6 pcm | std= 376.3 | <650pcm=82.2% | <100pcm=18.1%
+[Epoch    5] VAL   | MSE=0.000062 | MAE_k=    0.0 | mean=  482.0 pcm | median=  398.6 pcm | p95= 1171.6 pcm | std= 456.8 | <650pcm=75.0% | <100pcm=14.0%
+Epoch    6 | LR = 4.94e-04
+  grad_norm: min=0.016 mean=0.091 max=2.764 frac_clipped(>0.5)=1.67%
+  ⏱  validation step                     1098.5 ms
+[Epoch    6] TRAIN | MSE=0.000043 | MAE_k=    0.0 | mean=  400.1 pcm | median=  312.4 pcm | p95= 1041.7 pcm | std= 352.6 | <650pcm=81.5% | <100pcm=17.4%
+[Epoch    6] VAL   | MSE=0.000124 | MAE_k=    0.0 | mean=  740.8 pcm | median=  680.3 pcm | p95= 1695.9 pcm | std= 490.2 | <650pcm=48.0% | <100pcm=5.0%
+Epoch    7 | LR = 4.91e-04
+  grad_norm: min=0.011 mean=0.085 max=2.764 frac_clipped(>0.5)=1.43%
+  ⏱  validation step                     1192.8 ms
+[Epoch    7] TRAIN | MSE=0.000054 | MAE_k=    0.0 | mean=  437.8 pcm | median=  328.0 pcm | p95= 1202.6 pcm | std= 402.7 | <650pcm=77.4% | <100pcm=17.4%
+[Epoch    7] VAL   | MSE=0.000037 | MAE_k=    0.0 | mean=  382.6 pcm | median=  297.2 pcm | p95= 1044.4 pcm | std= 323.3 | <650pcm=81.0% | <100pcm=19.0%
+Epoch    8 | LR = 4.88e-04
+  grad_norm: min=0.011 mean=0.079 max=2.764 frac_clipped(>0.5)=1.25%
+  ⏱  validation step                     1118.5 ms
+[Epoch    8] TRAIN | MSE=0.000040 | MAE_k=    0.0 | mean=  376.8 pcm | median=  280.0 pcm | p95= 1032.3 pcm | std= 346.5 | <650pcm=84.1% | <100pcm=18.2%
+[Epoch    8] VAL   | MSE=0.000051 | MAE_k=    0.0 | mean=  444.7 pcm | median=  391.2 pcm | p95= 1000.4 pcm | std= 330.9 | <650pcm=71.0% | <100pcm=16.0%
+Epoch    9 | LR = 4.84e-04
+  grad_norm: min=0.011 mean=0.076 max=2.764 frac_clipped(>0.5)=1.11%
+  ⏱  validation step                     1074.9 ms
+[Epoch    9] TRAIN | MSE=0.000049 | MAE_k=    0.0 | mean=  409.3 pcm | median=  313.9 pcm | p95= 1121.3 pcm | std= 380.7 | <650pcm=81.2% | <100pcm=16.7%
+[Epoch    9] VAL   | MSE=0.000062 | MAE_k=    0.0 | mean=  465.2 pcm | median=  332.2 pcm | p95= 1324.7 pcm | std= 477.4 | <650pcm=76.0% | <100pcm=18.0%
+Epoch   10 | LR = 4.80e-04
+  grad_norm: min=0.011 mean=0.073 max=2.764 frac_clipped(>0.5)=1.00%
+  ⏱  validation step                     1116.4 ms
+[Epoch   10] TRAIN | MSE=0.000039 | MAE_k=    0.0 | mean=  377.0 pcm | median=  290.8 pcm | p95=  969.5 pcm | std= 331.9 | <650pcm=82.7% | <100pcm=18.4%
+[Epoch   10] VAL   | MSE=0.000033 | MAE_k=    0.0 | mean=  355.1 pcm | median=  243.9 pcm | p95= 1158.2 pcm | std= 338.4 | <650pcm=85.0% | <100pcm=20.0%
+Epoch   11 | LR = 4.75e-04
+  grad_norm: min=0.011 mean=0.070 max=2.764 frac_clipped(>0.5)=0.91%
+  ⏱  validation step                     1045.6 ms
+[Epoch   11] TRAIN | MSE=0.000042 | MAE_k=    0.0 | mean=  396.0 pcm | median=  319.5 pcm | p95= 1032.0 pcm | std= 337.3 | <650pcm=81.9% | <100pcm=17.4%
+[Epoch   11] VAL   | MSE=0.000032 | MAE_k=    0.0 | mean=  356.2 pcm | median=  250.4 pcm | p95= 1023.1 pcm | std= 313.6 | <650pcm=86.0% | <100pcm=18.0%
+Epoch   12 | LR = 4.70e-04
+  grad_norm: min=0.011 mean=0.073 max=2.764 frac_clipped(>0.5)=1.04%
+  ⏱  validation step                     1118.3 ms
+[Epoch   12] TRAIN | MSE=0.000067 | MAE_k=    0.0 | mean=  470.1 pcm | median=  355.1 pcm | p95= 1257.2 pcm | std= 455.9 | <650pcm=74.9% | <100pcm=15.8%
+[Epoch   12] VAL   | MSE=0.000083 | MAE_k=    0.0 | mean=  536.0 pcm | median=  391.5 pcm | p95= 1298.8 pcm | std= 437.9 | <650pcm=66.0% | <100pcm=12.0%
+Epoch   13 | LR = 4.65e-04
+  grad_norm: min=0.011 mean=0.091 max=4.407 frac_clipped(>0.5)=1.54%
+  ⏱  validation step                     1090.8 ms
+[Epoch   13] TRAIN | MSE=0.000178 | MAE_k=    0.0 | mean=  743.8 pcm | median=  550.2 pcm | p95= 1987.3 pcm | std= 757.3 | <650pcm=57.2% | <100pcm=9.1%
+[Epoch   13] VAL   | MSE=0.000122 | MAE_k=    0.0 | mean=  674.8 pcm | median=  562.7 pcm | p95= 1614.7 pcm | std= 544.6 | <650pcm=55.0% | <100pcm=7.0%
+Epoch   14 | LR = 4.59e-04
+  grad_norm: min=0.010 mean=0.095 max=4.407 frac_clipped(>0.5)=1.79%
+  ⏱  validation step                     1128.5 ms
+[Epoch   14] TRAIN | MSE=0.000063 | MAE_k=    0.0 | mean=  445.6 pcm | median=  318.9 pcm | p95= 1238.8 pcm | std= 467.1 | <650pcm=78.7% | <100pcm=16.4%
+[Epoch   14] VAL   | MSE=0.000044 | MAE_k=    0.0 | mean=  394.8 pcm | median=  269.0 pcm | p95= 1164.0 pcm | std= 380.8 | <650pcm=82.0% | <100pcm=20.0%
+Epoch   15 | LR = 4.53e-04
+  grad_norm: min=0.009 mean=0.101 max=4.407 frac_clipped(>0.5)=2.17%
+  ⏱  validation step                     1098.7 ms
+[Epoch   15] TRAIN | MSE=0.000052 | MAE_k=    0.0 | mean=  354.3 pcm | median=  230.6 pcm | p95=  998.4 pcm | std= 469.3 | <650pcm=86.2% | <100pcm=24.4%
+[Epoch   15] VAL   | MSE=0.000072 | MAE_k=    0.0 | mean=  438.3 pcm | median=  310.2 pcm | p95= 1071.2 pcm | std= 504.9 | <650pcm=84.0% | <100pcm=19.0%
+Epoch   16 | LR = 4.46e-04
+  grad_norm: min=0.009 mean=0.103 max=4.407 frac_clipped(>0.5)=2.19%
+  ⏱  validation step                     1099.3 ms
+[Epoch   16] TRAIN | MSE=0.000072 | MAE_k=    0.0 | mean=  483.0 pcm | median=  371.0 pcm | p95= 1320.9 pcm | std= 477.8 | <650pcm=75.8% | <100pcm=14.2%
+[Epoch   16] VAL   | MSE=0.000062 | MAE_k=    0.0 | mean=  479.6 pcm | median=  443.5 pcm | p95= 1134.1 pcm | std= 358.3 | <650pcm=73.0% | <100pcm=9.0%
+Epoch   17 | LR = 4.39e-04
+  grad_norm: min=0.009 mean=0.109 max=4.407 frac_clipped(>0.5)=2.65%
+  ⏱  validation step                     1064.3 ms
+[Epoch   17] TRAIN | MSE=0.000085 | MAE_k=    0.0 | mean=  493.9 pcm | median=  359.3 pcm | p95= 1345.3 pcm | std= 556.1 | <650pcm=74.7% | <100pcm=16.0%
+[Epoch   17] VAL   | MSE=0.000042 | MAE_k=    0.0 | mean=  412.6 pcm | median=  342.9 pcm | p95=  984.9 pcm | std= 328.8 | <650pcm=81.0% | <100pcm=14.0%
+Epoch   18 | LR = 4.31e-04
+  grad_norm: min=0.009 mean=0.110 max=4.407 frac_clipped(>0.5)=2.78%
+  ⏱  validation step                     1116.8 ms
+[Epoch   18] TRAIN | MSE=0.000048 | MAE_k=    0.0 | mean=  409.3 pcm | median=  312.1 pcm | p95= 1153.5 pcm | std= 389.4 | <650pcm=82.3% | <100pcm=16.2%
+[Epoch   18] VAL   | MSE=0.000051 | MAE_k=    0.0 | mean=  409.1 pcm | median=  277.8 pcm | p95= 1380.9 pcm | std= 396.9 | <650pcm=84.0% | <100pcm=15.0%
+Epoch   19 | LR = 4.24e-04
+  grad_norm: min=0.009 mean=0.108 max=4.407 frac_clipped(>0.5)=2.63%
+  ⏱  validation step                     1138.6 ms
+[Epoch   19] TRAIN | MSE=0.000037 | MAE_k=    0.0 | mean=  347.7 pcm | median=  258.2 pcm | p95=  986.2 pcm | std= 353.0 | <650pcm=86.0% | <100pcm=21.8%
+[Epoch   19] VAL   | MSE=0.000036 | MAE_k=    0.0 | mean=  371.9 pcm | median=  277.6 pcm | p95= 1131.3 pcm | std= 331.3 | <650pcm=83.0% | <100pcm=24.0%
+Epoch   20 | LR = 4.15e-04
+  grad_norm: min=0.007 mean=0.106 max=4.407 frac_clipped(>0.5)=2.62%
+  ⏱  validation step                     992.3 ms
+[Epoch   20] TRAIN | MSE=0.000026 | MAE_k=    0.0 | mean=  304.8 pcm | median=  228.0 pcm | p95=  907.4 pcm | std= 283.8 | <650pcm=90.3% | <100pcm=23.0%
+[Epoch   20] VAL   | MSE=0.000047 | MAE_k=    0.0 | mean=  399.3 pcm | median=  280.6 pcm | p95= 1227.2 pcm | std= 389.0 | <650pcm=83.0% | <100pcm=17.0%
+Epoch   21 | LR = 4.07e-04
+  grad_norm: min=0.007 mean=0.106 max=4.407 frac_clipped(>0.5)=2.62%
+  ⏱  validation step                     2654.0 ms
+[Epoch   21] TRAIN | MSE=0.000035 | MAE_k=    0.0 | mean=  341.7 pcm | median=  243.6 pcm | p95=  954.4 pcm | std= 338.4 | <650pcm=86.2% | <100pcm=22.3%
+[Epoch   21] VAL   | MSE=0.000047 | MAE_k=    0.0 | mean=  422.9 pcm | median=  352.8 pcm | p95=  950.1 pcm | std= 318.1 | <650pcm=76.0% | <100pcm=16.0%
+Epoch   22 | LR = 3.98e-04
+  grad_norm: min=0.007 mean=0.104 max=4.407 frac_clipped(>0.5)=2.61%
+  ⏱  validation step                     1017.4 ms
+[Epoch   22] TRAIN | MSE=0.000028 | MAE_k=    0.0 | mean=  320.7 pcm | median=  249.2 pcm | p95=  842.1 pcm | std= 293.3 | <650pcm=87.7% | <100pcm=22.5%
+[Epoch   22] VAL   | MSE=0.000030 | MAE_k=    0.0 | mean=  345.8 pcm | median=  296.1 pcm | p95=  847.7 pcm | std= 262.3 | <650pcm=85.0% | <100pcm=17.0%
+Epoch   23 | LR = 3.89e-04
+  grad_norm: min=0.007 mean=0.102 max=4.407 frac_clipped(>0.5)=2.50%
+  ⏱  validation step                     1128.0 ms
+[Epoch   23] TRAIN | MSE=0.000027 | MAE_k=    0.0 | mean=  311.2 pcm | median=  230.7 pcm | p95=  853.5 pcm | std= 295.1 | <650pcm=89.4% | <100pcm=23.4%
+[Epoch   23] VAL   | MSE=0.000043 | MAE_k=    0.0 | mean=  419.6 pcm | median=  337.2 pcm | p95= 1092.6 pcm | std= 328.4 | <650pcm=78.0% | <100pcm=14.0%
+Epoch   24 | LR = 3.79e-04
+  grad_norm: min=0.007 mean=0.100 max=4.407 frac_clipped(>0.5)=2.50%
+  ⏱  validation step                     1159.2 ms
+[Epoch   24] TRAIN | MSE=0.000027 | MAE_k=    0.0 | mean=  310.3 pcm | median=  231.5 pcm | p95=  879.4 pcm | std= 296.3 | <650pcm=89.7% | <100pcm=23.4%
+[Epoch   24] VAL   | MSE=0.000040 | MAE_k=    0.0 | mean=  392.1 pcm | median=  285.2 pcm | p95= 1097.2 pcm | std= 334.5 | <650pcm=80.0% | <100pcm=15.0%
+Epoch   25 | LR = 3.70e-04
+  grad_norm: min=0.007 mean=0.108 max=5.214 frac_clipped(>0.5)=2.90%
+  ⏱  validation step                     1153.9 ms
+[Epoch   25] TRAIN | MSE=0.000092 | MAE_k=    0.0 | mean=  521.9 pcm | median=  386.7 pcm | p95= 1344.8 pcm | std= 589.1 | <650pcm=71.7% | <100pcm=14.2%
+[Epoch   25] VAL   | MSE=0.000067 | MAE_k=    0.0 | mean=  509.6 pcm | median=  425.7 pcm | p95= 1196.9 pcm | std= 372.6 | <650pcm=69.0% | <100pcm=12.0%
+Epoch   26 | LR = 3.60e-04
+  grad_norm: min=0.007 mean=0.114 max=6.969 frac_clipped(>0.5)=2.98%
+  ⏱  validation step                     1066.6 ms
+[Epoch   26] TRAIN | MSE=0.000080 | MAE_k=    0.0 | mean=  490.4 pcm | median=  373.0 pcm | p95= 1287.8 pcm | std= 538.4 | <650pcm=74.4% | <100pcm=14.6%
+[Epoch   26] VAL   | MSE=0.000049 | MAE_k=    0.0 | mean=  445.3 pcm | median=  356.8 pcm | p95= 1113.4 pcm | std= 359.6 | <650pcm=79.0% | <100pcm=13.0%
+Epoch   27 | LR = 3.50e-04
+  grad_norm: min=0.007 mean=0.118 max=6.969 frac_clipped(>0.5)=3.15%
+  ⏱  validation step                     1159.9 ms
+[Epoch   27] TRAIN | MSE=0.000065 | MAE_k=    0.0 | mean=  410.8 pcm | median=  295.2 pcm | p95= 1127.2 pcm | std= 516.9 | <650pcm=81.4% | <100pcm=18.9%
+[Epoch   27] VAL   | MSE=0.000030 | MAE_k=    0.0 | mean=  333.8 pcm | median=  239.5 pcm | p95=  852.7 pcm | std= 316.9 | <650pcm=85.0% | <100pcm=18.0%
+Epoch   28 | LR = 3.39e-04
+  grad_norm: min=0.007 mean=0.119 max=6.969 frac_clipped(>0.5)=3.30%
+  ⏱  validation step                     1108.0 ms
+[Epoch   28] TRAIN | MSE=0.000065 | MAE_k=    0.0 | mean=  428.7 pcm | median=  301.8 pcm | p95= 1165.6 pcm | std= 484.7 | <650pcm=80.6% | <100pcm=19.1%
+[Epoch   28] VAL   | MSE=0.000055 | MAE_k=    0.0 | mean=  452.0 pcm | median=  310.4 pcm | p95= 1314.1 pcm | std= 397.0 | <650pcm=75.0% | <100pcm=14.0%
+Epoch   29 | LR = 3.29e-04
+  grad_norm: min=0.007 mean=0.119 max=6.969 frac_clipped(>0.5)=3.28%
+  ⏱  validation step                     1124.8 ms
+[Epoch   29] TRAIN | MSE=0.000029 | MAE_k=    0.0 | mean=  315.5 pcm | median=  236.6 pcm | p95=  906.0 pcm | std= 311.9 | <650pcm=88.9% | <100pcm=23.7%
+[Epoch   29] VAL   | MSE=0.000032 | MAE_k=    0.0 | mean=  341.9 pcm | median=  245.8 pcm | p95=  977.2 pcm | std= 311.4 | <650pcm=84.0% | <100pcm=24.0%
+Epoch   30 | LR = 3.18e-04
+  grad_norm: min=0.007 mean=0.119 max=6.969 frac_clipped(>0.5)=3.33%
+  ⏱  validation step                     1073.0 ms
+[Epoch   30] TRAIN | MSE=0.000030 | MAE_k=    0.0 | mean=  305.6 pcm | median=  225.7 pcm | p95=  830.6 pcm | std= 324.0 | <650pcm=90.6% | <100pcm=24.3%
+[Epoch   30] VAL   | MSE=0.000039 | MAE_k=    0.0 | mean=  398.0 pcm | median=  323.0 pcm | p95= 1081.0 pcm | std= 329.6 | <650pcm=85.0% | <100pcm=16.0%
+  ✓ new best val_mean_pcm = 411.8 pcm (epoch 30) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   31 | LR = 3.08e-04
+  grad_norm: min=0.007 mean=0.119 max=6.969 frac_clipped(>0.5)=3.39%
+  ⏱  validation step                     1033.0 ms
+[Epoch   31] TRAIN | MSE=0.000043 | MAE_k=    0.0 | mean=  370.0 pcm | median=  284.3 pcm | p95=  991.9 pcm | std= 361.3 | <650pcm=84.6% | <100pcm=18.4%
+[Epoch   31] VAL   | MSE=0.000051 | MAE_k=    0.0 | mean=  423.9 pcm | median=  336.4 pcm | p95= 1128.8 pcm | std= 352.8 | <650pcm=76.0% | <100pcm=18.0%
+Epoch   32 | LR = 2.97e-04
+  grad_norm: min=0.007 mean=0.117 max=6.969 frac_clipped(>0.5)=3.28%
+  ⏱  validation step                     1111.6 ms
+[Epoch   32] TRAIN | MSE=0.000024 | MAE_k=    0.0 | mean=  287.6 pcm | median=  212.0 pcm | p95=  807.2 pcm | std= 271.1 | <650pcm=90.7% | <100pcm=27.0%
+[Epoch   32] VAL   | MSE=0.000034 | MAE_k=    0.0 | mean=  352.8 pcm | median=  237.6 pcm | p95= 1060.5 pcm | std= 337.8 | <650pcm=85.0% | <100pcm=23.0%
+  ✓ new best val_mean_pcm = 404.5 pcm (epoch 32) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   33 | LR = 2.86e-04
+  grad_norm: min=0.007 mean=0.116 max=6.969 frac_clipped(>0.5)=3.26%
+  ⏱  validation step                     1129.5 ms
+[Epoch   33] TRAIN | MSE=0.000027 | MAE_k=    0.0 | mean=  309.7 pcm | median=  233.8 pcm | p95=  857.6 pcm | std= 282.7 | <650pcm=90.2% | <100pcm=22.3%
+[Epoch   33] VAL   | MSE=0.000043 | MAE_k=    0.0 | mean=  418.0 pcm | median=  333.2 pcm | p95= 1220.4 pcm | std= 344.3 | <650pcm=82.0% | <100pcm=16.0%
+Epoch   34 | LR = 2.75e-04
+  grad_norm: min=0.007 mean=0.115 max=6.969 frac_clipped(>0.5)=3.24%
+  ⏱  validation step                     1145.1 ms
+[Epoch   34] TRAIN | MSE=0.000021 | MAE_k=    0.0 | mean=  277.0 pcm | median=  209.4 pcm | p95=  761.6 pcm | std= 253.4 | <650pcm=91.5% | <100pcm=25.5%
+[Epoch   34] VAL   | MSE=0.000034 | MAE_k=    0.0 | mean=  348.3 pcm | median=  206.3 pcm | p95= 1075.7 pcm | std= 326.9 | <650pcm=86.0% | <100pcm=23.0%
+  ✓ new best val_mean_pcm = 397.8 pcm (epoch 34) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   35 | LR = 2.64e-04
+  grad_norm: min=0.007 mean=0.116 max=6.969 frac_clipped(>0.5)=3.21%
+  ⏱  validation step                     1056.0 ms
+[Epoch   35] TRAIN | MSE=0.000041 | MAE_k=    0.0 | mean=  360.7 pcm | median=  256.1 pcm | p95=  996.7 pcm | std= 378.7 | <650pcm=85.0% | <100pcm=21.0%
+[Epoch   35] VAL   | MSE=0.000033 | MAE_k=    0.0 | mean=  349.5 pcm | median=  237.6 pcm | p95= 1214.9 pcm | std= 350.2 | <650pcm=87.0% | <100pcm=24.0%
+  ✓ new best val_mean_pcm = 390.5 pcm (epoch 35) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+XS heatmap saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_heatmap/epoch_0035.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0035_sample022.png
+  [subplot] epoch 35  sample 22  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0035_sample022.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0035_sample044.png
+  [subplot] epoch 35  sample 44  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0035_sample044.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0035_sample055.png
+  [subplot] epoch 35  sample 55  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0035_sample055.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0035_sample068.png
+  [subplot] epoch 35  sample 68  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0035_sample068.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0035_sample082.png
+  [subplot] epoch 35  sample 82  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0035_sample082.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0035_sample022.png
+  [flux_plot] epoch 35  sample 22  k_ref=1.07158  k_pred=1.07727  |Δρ|=493.2 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0035_sample022.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0035_sample044.png
+  [flux_plot] epoch 35  sample 44  k_ref=1.13355  k_pred=1.13734  |Δρ|=293.6 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0035_sample044.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0035_sample055.png
+  [flux_plot] epoch 35  sample 55  k_ref=1.14938  k_pred=1.14159  |Δρ|=593.2 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0035_sample055.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0035_sample068.png
+  [flux_plot] epoch 35  sample 68  k_ref=1.18485  k_pred=1.18403  |Δρ|=58.5 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0035_sample068.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0035_sample082.png
+  [flux_plot] epoch 35  sample 82  k_ref=1.25368  k_pred=1.25770  |Δρ|=254.5 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0035_sample082.png
+/global/home/users/caterinafrau/PEDS_NT/modules/PEDS.py:2202: DeprecationWarning: '.value' access is now deprecated. For Variable[Array] instances use:
+
+  variable[...]
+
+For other Variable types use:
+
+  variable.get_value()
+
+  current_lr = float(lr_schedule(optimizer.step.value))
+Epoch   36 | LR = 2.53e-04
+  grad_norm: min=0.007 mean=0.114 max=6.969 frac_clipped(>0.5)=3.26%
+  ⏱  validation step                     1064.8 ms
+[Epoch   36] TRAIN | MSE=0.000018 | MAE_k=    0.0 | mean=  241.7 pcm | median=  168.9 pcm | p95=  676.3 pcm | std= 248.2 | <650pcm=94.3% | <100pcm=30.5%
+[Epoch   36] VAL   | MSE=0.000030 | MAE_k=    0.0 | mean=  327.8 pcm | median=  232.4 pcm | p95= 1130.2 pcm | std= 307.5 | <650pcm=91.0% | <100pcm=21.0%
+  ✓ new best val_mean_pcm = 381.1 pcm (epoch 36) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   37 | LR = 2.41e-04
+  grad_norm: min=0.006 mean=0.113 max=6.969 frac_clipped(>0.5)=3.24%
+  ⏱  validation step                     1035.8 ms
+[Epoch   37] TRAIN | MSE=0.000018 | MAE_k=    0.0 | mean=  244.0 pcm | median=  173.7 pcm | p95=  703.5 pcm | std= 250.3 | <650pcm=93.8% | <100pcm=30.9%
+[Epoch   37] VAL   | MSE=0.000021 | MAE_k=    0.0 | mean=  270.6 pcm | median=  160.3 pcm | p95=  885.4 pcm | std= 279.8 | <650pcm=90.0% | <100pcm=31.0%
+  ✓ new best val_mean_pcm = 364.5 pcm (epoch 37) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   38 | LR = 2.30e-04
+  grad_norm: min=0.006 mean=0.111 max=6.969 frac_clipped(>0.5)=3.22%
+  ⏱  validation step                     1148.1 ms
+[Epoch   38] TRAIN | MSE=0.000013 | MAE_k=    0.0 | mean=  213.2 pcm | median=  156.8 pcm | p95=  585.6 pcm | std= 200.9 | <650pcm=96.2% | <100pcm=32.9%
+[Epoch   38] VAL   | MSE=0.000024 | MAE_k=    0.0 | mean=  287.5 pcm | median=  187.6 pcm | p95=  817.3 pcm | std= 279.9 | <650pcm=88.0% | <100pcm=29.0%
+  ✓ new best val_mean_pcm = 353.0 pcm (epoch 38) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   39 | LR = 2.19e-04
+  grad_norm: min=0.006 mean=0.110 max=6.969 frac_clipped(>0.5)=3.21%
+  ⏱  validation step                     1021.0 ms
+[Epoch   39] TRAIN | MSE=0.000017 | MAE_k=    0.0 | mean=  238.1 pcm | median=  173.5 pcm | p95=  633.0 pcm | std= 248.5 | <650pcm=95.4% | <100pcm=29.6%
+[Epoch   39] VAL   | MSE=0.000027 | MAE_k=    0.0 | mean=  317.4 pcm | median=  235.5 pcm | p95=  829.6 pcm | std= 306.1 | <650pcm=89.0% | <100pcm=21.0%
+  ✓ new best val_mean_pcm = 347.6 pcm (epoch 39) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   40 | LR = 2.08e-04
+  grad_norm: min=0.005 mean=0.109 max=6.969 frac_clipped(>0.5)=3.19%
+  ⏱  validation step                     1120.9 ms
+[Epoch   40] TRAIN | MSE=0.000013 | MAE_k=    0.0 | mean=  214.6 pcm | median=  165.4 pcm | p95=  620.1 pcm | std= 196.7 | <650pcm=95.4% | <100pcm=31.7%
+[Epoch   40] VAL   | MSE=0.000026 | MAE_k=    0.0 | mean=  300.6 pcm | median=  204.9 pcm | p95=  890.4 pcm | std= 303.8 | <650pcm=87.0% | <100pcm=23.0%
+  ✓ new best val_mean_pcm = 340.6 pcm (epoch 40) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   41 | LR = 1.97e-04
+  grad_norm: min=0.005 mean=0.107 max=6.969 frac_clipped(>0.5)=3.11%
+  ⏱  validation step                     2533.0 ms
+[Epoch   41] TRAIN | MSE=0.000012 | MAE_k=    0.0 | mean=  209.0 pcm | median=  160.8 pcm | p95=  564.8 pcm | std= 188.0 | <650pcm=97.6% | <100pcm=33.3%
+[Epoch   41] VAL   | MSE=0.000023 | MAE_k=    0.0 | mean=  281.2 pcm | median=  184.1 pcm | p95=  947.1 pcm | std= 286.2 | <650pcm=92.0% | <100pcm=28.0%
+  ✓ new best val_mean_pcm = 331.7 pcm (epoch 41) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   42 | LR = 1.87e-04
+  grad_norm: min=0.005 mean=0.105 max=6.969 frac_clipped(>0.5)=3.04%
+  ⏱  validation step                     1084.5 ms
+[Epoch   42] TRAIN | MSE=0.000011 | MAE_k=    0.0 | mean=  195.9 pcm | median=  144.6 pcm | p95=  550.0 pcm | std= 185.9 | <650pcm=97.0% | <100pcm=36.6%
+[Epoch   42] VAL   | MSE=0.000023 | MAE_k=    0.0 | mean=  279.4 pcm | median=  180.1 pcm | p95=  856.2 pcm | std= 280.1 | <650pcm=91.0% | <100pcm=29.0%
+  ✓ new best val_mean_pcm = 323.8 pcm (epoch 42) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   43 | LR = 1.76e-04
+  grad_norm: min=0.005 mean=0.104 max=6.969 frac_clipped(>0.5)=3.02%
+  ⏱  validation step                     1029.5 ms
+[Epoch   43] TRAIN | MSE=0.000011 | MAE_k=    0.0 | mean=  194.4 pcm | median=  147.2 pcm | p95=  552.4 pcm | std= 189.1 | <650pcm=96.6% | <100pcm=34.9%
+[Epoch   43] VAL   | MSE=0.000028 | MAE_k=    0.0 | mean=  321.8 pcm | median=  230.8 pcm | p95=  935.5 pcm | std= 283.1 | <650pcm=88.0% | <100pcm=22.0%
+  ✓ new best val_mean_pcm = 323.5 pcm (epoch 43) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   44 | LR = 1.66e-04
+  grad_norm: min=0.005 mean=0.103 max=6.969 frac_clipped(>0.5)=2.95%
+  ⏱  validation step                     1110.4 ms
+[Epoch   44] TRAIN | MSE=0.000021 | MAE_k=    0.0 | mean=  255.4 pcm | median=  196.4 pcm | p95=  714.8 pcm | std= 268.2 | <650pcm=93.8% | <100pcm=28.2%
+[Epoch   44] VAL   | MSE=0.000027 | MAE_k=    0.0 | mean=  305.8 pcm | median=  229.6 pcm | p95=  784.9 pcm | std= 306.4 | <650pcm=89.0% | <100pcm=25.0%
+  ✓ new best val_mean_pcm = 320.9 pcm (epoch 44) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   45 | LR = 1.55e-04
+  grad_norm: min=0.005 mean=0.101 max=6.969 frac_clipped(>0.5)=2.94%
+  ⏱  validation step                     1117.8 ms
+[Epoch   45] TRAIN | MSE=0.000011 | MAE_k=    0.0 | mean=  198.9 pcm | median=  140.0 pcm | p95=  578.7 pcm | std= 193.6 | <650pcm=96.6% | <100pcm=36.2%
+[Epoch   45] VAL   | MSE=0.000024 | MAE_k=    0.0 | mean=  288.1 pcm | median=  187.1 pcm | p95=  794.6 pcm | std= 270.8 | <650pcm=89.0% | <100pcm=26.0%
+  ✓ new best val_mean_pcm = 316.0 pcm (epoch 45) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   46 | LR = 1.45e-04
+  grad_norm: min=0.005 mean=0.100 max=6.969 frac_clipped(>0.5)=2.93%
+  ⏱  validation step                     1004.3 ms
+[Epoch   46] TRAIN | MSE=0.000011 | MAE_k=    0.0 | mean=  194.9 pcm | median=  143.9 pcm | p95=  548.9 pcm | std= 189.6 | <650pcm=97.0% | <100pcm=36.7%
+[Epoch   46] VAL   | MSE=0.000025 | MAE_k=    0.0 | mean=  299.0 pcm | median=  213.1 pcm | p95=  855.3 pcm | std= 277.3 | <650pcm=88.0% | <100pcm=25.0%
+  ✓ new best val_mean_pcm = 313.4 pcm (epoch 46) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   47 | LR = 1.35e-04
+  grad_norm: min=0.005 mean=0.098 max=6.969 frac_clipped(>0.5)=2.87%
+  ⏱  validation step                     1146.3 ms
+[Epoch   47] TRAIN | MSE=0.000010 | MAE_k=    0.0 | mean=  187.8 pcm | median=  137.1 pcm | p95=  534.9 pcm | std= 182.6 | <650pcm=97.3% | <100pcm=37.1%
+[Epoch   47] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  284.8 pcm | median=  172.1 pcm | p95=  751.6 pcm | std= 272.7 | <650pcm=93.0% | <100pcm=26.0%
+  ✓ new best val_mean_pcm = 309.1 pcm (epoch 47) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   48 | LR = 1.26e-04
+  grad_norm: min=0.005 mean=0.097 max=6.969 frac_clipped(>0.5)=2.81%
+  ⏱  validation step                     1095.2 ms
+[Epoch   48] TRAIN | MSE=0.000009 | MAE_k=    0.0 | mean=  178.1 pcm | median=  129.8 pcm | p95=  507.0 pcm | std= 165.9 | <650pcm=98.0% | <100pcm=39.2%
+[Epoch   48] VAL   | MSE=0.000023 | MAE_k=    0.0 | mean=  292.4 pcm | median=  228.8 pcm | p95=  804.4 pcm | std= 265.5 | <650pcm=92.0% | <100pcm=22.0%
+  ✓ new best val_mean_pcm = 306.6 pcm (epoch 48) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   49 | LR = 1.16e-04
+  grad_norm: min=0.003 mean=0.095 max=6.969 frac_clipped(>0.5)=2.76%
+  ⏱  validation step                     1019.8 ms
+[Epoch   49] TRAIN | MSE=0.000009 | MAE_k=    0.0 | mean=  173.6 pcm | median=  127.4 pcm | p95=  502.8 pcm | std= 169.5 | <650pcm=97.9% | <100pcm=40.7%
+[Epoch   49] VAL   | MSE=0.000023 | MAE_k=    0.0 | mean=  280.8 pcm | median=  185.0 pcm | p95=  807.5 pcm | std= 283.8 | <650pcm=89.0% | <100pcm=27.0%
+  ✓ new best val_mean_pcm = 302.7 pcm (epoch 49) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   50 | LR = 1.07e-04
+  grad_norm: min=0.003 mean=0.094 max=6.969 frac_clipped(>0.5)=2.70%
+  ⏱  validation step                     1045.5 ms
+[Epoch   50] TRAIN | MSE=0.000009 | MAE_k=    0.0 | mean=  176.0 pcm | median=  129.3 pcm | p95=  515.9 pcm | std= 166.5 | <650pcm=97.5% | <100pcm=40.1%
+[Epoch   50] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  280.7 pcm | median=  215.0 pcm | p95=  781.1 pcm | std= 256.6 | <650pcm=91.0% | <100pcm=27.0%
+  ✓ new best val_mean_pcm = 299.4 pcm (epoch 50) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   51 | LR = 9.82e-05
+  grad_norm: min=0.003 mean=0.093 max=6.969 frac_clipped(>0.5)=2.65%
+  ⏱  validation step                     1156.3 ms
+[Epoch   51] TRAIN | MSE=0.000008 | MAE_k=    0.0 | mean=  174.3 pcm | median=  136.9 pcm | p95=  500.2 pcm | std= 162.8 | <650pcm=97.7% | <100pcm=39.8%
+[Epoch   51] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  283.3 pcm | median=  188.4 pcm | p95=  766.8 pcm | std= 265.9 | <650pcm=89.0% | <100pcm=25.0%
+  ✓ new best val_mean_pcm = 297.0 pcm (epoch 51) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   52 | LR = 8.97e-05
+  grad_norm: min=0.003 mean=0.091 max=6.969 frac_clipped(>0.5)=2.60%
+  ⏱  validation step                     1020.2 ms
+[Epoch   52] TRAIN | MSE=0.000008 | MAE_k=    0.0 | mean=  166.4 pcm | median=  123.9 pcm | p95=  477.4 pcm | std= 156.6 | <650pcm=98.0% | <100pcm=40.6%
+[Epoch   52] VAL   | MSE=0.000021 | MAE_k=    0.0 | mean=  270.4 pcm | median=  182.3 pcm | p95=  811.9 pcm | std= 264.9 | <650pcm=93.0% | <100pcm=28.0%
+  ✓ new best val_mean_pcm = 293.0 pcm (epoch 52) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   53 | LR = 8.15e-05
+  grad_norm: min=0.003 mean=0.090 max=6.969 frac_clipped(>0.5)=2.59%
+  ⏱  validation step                     1045.1 ms
+[Epoch   53] TRAIN | MSE=0.000008 | MAE_k=    0.0 | mean=  166.3 pcm | median=  123.4 pcm | p95=  477.9 pcm | std= 162.6 | <650pcm=98.2% | <100pcm=42.5%
+[Epoch   53] VAL   | MSE=0.000021 | MAE_k=    0.0 | mean=  271.1 pcm | median=  188.0 pcm | p95=  851.5 pcm | std= 272.3 | <650pcm=92.0% | <100pcm=26.0%
+  ✓ new best val_mean_pcm = 289.7 pcm (epoch 53) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   54 | LR = 7.36e-05
+  grad_norm: min=0.003 mean=0.089 max=6.969 frac_clipped(>0.5)=2.55%
+  ⏱  validation step                     1115.0 ms
+[Epoch   54] TRAIN | MSE=0.000007 | MAE_k=    0.0 | mean=  160.8 pcm | median=  119.2 pcm | p95=  454.3 pcm | std= 151.8 | <650pcm=98.2% | <100pcm=42.9%
+[Epoch   54] VAL   | MSE=0.000021 | MAE_k=    0.0 | mean=  269.4 pcm | median=  204.2 pcm | p95=  794.9 pcm | std= 257.6 | <650pcm=93.0% | <100pcm=31.0%
+  ✓ new best val_mean_pcm = 286.7 pcm (epoch 54) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   55 | LR = 6.61e-05
+  grad_norm: min=0.003 mean=0.088 max=6.969 frac_clipped(>0.5)=2.50%
+  ⏱  validation step                     1016.0 ms
+[Epoch   55] TRAIN | MSE=0.000008 | MAE_k=    0.0 | mean=  168.3 pcm | median=  122.0 pcm | p95=  484.2 pcm | std= 159.8 | <650pcm=98.0% | <100pcm=40.6%
+[Epoch   55] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  279.6 pcm | median=  191.7 pcm | p95=  797.8 pcm | std= 270.2 | <650pcm=92.0% | <100pcm=30.0%
+  ✓ new best val_mean_pcm = 285.6 pcm (epoch 55) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   56 | LR = 5.90e-05
+  grad_norm: min=0.003 mean=0.087 max=6.969 frac_clipped(>0.5)=2.46%
+  ⏱  validation step                     1115.8 ms
+[Epoch   56] TRAIN | MSE=0.000008 | MAE_k=    0.0 | mean=  164.2 pcm | median=  122.6 pcm | p95=  461.5 pcm | std= 154.4 | <650pcm=98.6% | <100pcm=40.7%
+[Epoch   56] VAL   | MSE=0.000023 | MAE_k=    0.0 | mean=  277.6 pcm | median=  184.7 pcm | p95=  794.9 pcm | std= 287.6 | <650pcm=92.0% | <100pcm=30.0%
+  ✓ new best val_mean_pcm = 284.4 pcm (epoch 56) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   57 | LR = 5.23e-05
+  grad_norm: min=0.003 mean=0.086 max=6.969 frac_clipped(>0.5)=2.41%
+  ⏱  validation step                     1069.4 ms
+[Epoch   57] TRAIN | MSE=0.000007 | MAE_k=    0.0 | mean=  158.0 pcm | median=  117.5 pcm | p95=  461.1 pcm | std= 150.2 | <650pcm=98.4% | <100pcm=43.4%
+[Epoch   57] VAL   | MSE=0.000021 | MAE_k=    0.0 | mean=  275.2 pcm | median=  191.2 pcm | p95=  755.4 pcm | std= 259.2 | <650pcm=93.0% | <100pcm=27.0%
+  ✓ new best val_mean_pcm = 283.0 pcm (epoch 57) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   58 | LR = 4.59e-05
+  grad_norm: min=0.003 mean=0.085 max=6.969 frac_clipped(>0.5)=2.37%
+  ⏱  validation step                     1037.1 ms
+[Epoch   58] TRAIN | MSE=0.000007 | MAE_k=    0.0 | mean=  156.6 pcm | median=  122.0 pcm | p95=  448.9 pcm | std= 145.7 | <650pcm=98.8% | <100pcm=43.0%
+[Epoch   58] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  280.0 pcm | median=  206.8 pcm | p95=  786.3 pcm | std= 259.6 | <650pcm=92.0% | <100pcm=28.0%
+  ✓ new best val_mean_pcm = 282.6 pcm (epoch 58) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   59 | LR = 4.00e-05
+  grad_norm: min=0.003 mean=0.084 max=6.969 frac_clipped(>0.5)=2.33%
+  ⏱  validation step                     1008.0 ms
+[Epoch   59] TRAIN | MSE=0.000007 | MAE_k=    0.0 | mean=  154.3 pcm | median=  115.3 pcm | p95=  424.7 pcm | std= 144.3 | <650pcm=98.5% | <100pcm=44.0%
+[Epoch   59] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  272.6 pcm | median=  176.0 pcm | p95=  768.5 pcm | std= 271.7 | <650pcm=93.0% | <100pcm=30.0%
+  ✓ new best val_mean_pcm = 281.1 pcm (epoch 59) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   60 | LR = 3.46e-05
+  grad_norm: min=0.003 mean=0.083 max=6.969 frac_clipped(>0.5)=2.29%
+  ⏱  validation step                     1003.3 ms
+[Epoch   60] TRAIN | MSE=0.000007 | MAE_k=    0.0 | mean=  152.8 pcm | median=  115.1 pcm | p95=  414.6 pcm | std= 144.3 | <650pcm=98.8% | <100pcm=43.9%
+[Epoch   60] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  269.1 pcm | median=  174.7 pcm | p95=  769.6 pcm | std= 275.2 | <650pcm=93.0% | <100pcm=32.0%
+  ✓ new best val_mean_pcm = 279.3 pcm (epoch 60) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   61 | LR = 2.95e-05
+  grad_norm: min=0.003 mean=0.082 max=6.969 frac_clipped(>0.5)=2.25%
+  ⏱  validation step                     2612.4 ms
+[Epoch   61] TRAIN | MSE=0.000006 | MAE_k=    0.0 | mean=  150.4 pcm | median=  113.3 pcm | p95=  417.1 pcm | std= 142.1 | <650pcm=98.9% | <100pcm=45.6%
+[Epoch   61] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  274.4 pcm | median=  188.0 pcm | p95=  742.1 pcm | std= 271.1 | <650pcm=93.0% | <100pcm=28.0%
+  ✓ new best val_mean_pcm = 278.5 pcm (epoch 61) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   62 | LR = 2.49e-05
+  grad_norm: min=0.003 mean=0.081 max=6.969 frac_clipped(>0.5)=2.22%
+  ⏱  validation step                     1039.7 ms
+[Epoch   62] TRAIN | MSE=0.000006 | MAE_k=    0.0 | mean=  148.9 pcm | median=  108.6 pcm | p95=  422.7 pcm | std= 143.6 | <650pcm=98.8% | <100pcm=46.8%
+[Epoch   62] VAL   | MSE=0.000021 | MAE_k=    0.0 | mean=  273.2 pcm | median=  188.2 pcm | p95=  736.0 pcm | std= 270.8 | <650pcm=93.0% | <100pcm=30.0%
+  ✓ new best val_mean_pcm = 277.7 pcm (epoch 62) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   63 | LR = 2.08e-05
+  grad_norm: min=0.003 mean=0.080 max=6.969 frac_clipped(>0.5)=2.18%
+  ⏱  validation step                     1102.7 ms
+[Epoch   63] TRAIN | MSE=0.000007 | MAE_k=    0.0 | mean=  152.6 pcm | median=  115.0 pcm | p95=  433.0 pcm | std= 144.2 | <650pcm=99.0% | <100pcm=44.5%
+[Epoch   63] VAL   | MSE=0.000021 | MAE_k=    0.0 | mean=  270.3 pcm | median=  177.1 pcm | p95=  746.0 pcm | std= 272.1 | <650pcm=93.0% | <100pcm=30.0%
+  ✓ new best val_mean_pcm = 276.6 pcm (epoch 63) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   64 | LR = 1.71e-05
+  grad_norm: min=0.003 mean=0.079 max=6.969 frac_clipped(>0.5)=2.15%
+  ⏱  validation step                     1068.0 ms
+[Epoch   64] TRAIN | MSE=0.000006 | MAE_k=    0.0 | mean=  148.6 pcm | median=  109.1 pcm | p95=  422.2 pcm | std= 140.6 | <650pcm=98.7% | <100pcm=46.6%
+[Epoch   64] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  270.1 pcm | median=  182.2 pcm | p95=  757.5 pcm | std= 276.2 | <650pcm=92.0% | <100pcm=29.0%
+  ✓ new best val_mean_pcm = 275.6 pcm (epoch 64) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   65 | LR = 1.39e-05
+  grad_norm: min=0.003 mean=0.078 max=6.969 frac_clipped(>0.5)=2.12%
+  ⏱  validation step                     1092.3 ms
+[Epoch   65] TRAIN | MSE=0.000006 | MAE_k=    0.0 | mean=  148.7 pcm | median=  110.4 pcm | p95=  417.6 pcm | std= 139.6 | <650pcm=98.7% | <100pcm=45.2%
+[Epoch   65] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  275.3 pcm | median=  191.6 pcm | p95=  747.7 pcm | std= 269.7 | <650pcm=93.0% | <100pcm=28.0%
+  ✓ new best val_mean_pcm = 275.6 pcm (epoch 65) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   66 | LR = 1.12e-05
+  grad_norm: min=0.003 mean=0.077 max=6.969 frac_clipped(>0.5)=2.08%
+  ⏱  validation step                     1074.1 ms
+[Epoch   66] TRAIN | MSE=0.000006 | MAE_k=    0.0 | mean=  146.8 pcm | median=  109.5 pcm | p95=  422.6 pcm | std= 138.9 | <650pcm=99.0% | <100pcm=46.2%
+[Epoch   66] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  270.9 pcm | median=  179.4 pcm | p95=  750.7 pcm | std= 273.6 | <650pcm=92.0% | <100pcm=30.0%
+  ✓ new best val_mean_pcm = 274.9 pcm (epoch 66) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   67 | LR = 8.98e-06
+  grad_norm: min=0.003 mean=0.076 max=6.969 frac_clipped(>0.5)=2.05%
+  ⏱  validation step                     1101.6 ms
+[Epoch   67] TRAIN | MSE=0.000006 | MAE_k=    0.0 | mean=  146.1 pcm | median=  107.8 pcm | p95=  418.4 pcm | std= 139.2 | <650pcm=98.7% | <100pcm=46.6%
+[Epoch   67] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  274.4 pcm | median=  185.8 pcm | p95=  719.3 pcm | std= 267.5 | <650pcm=93.0% | <100pcm=28.0%
+  ✓ new best val_mean_pcm = 274.8 pcm (epoch 67) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   68 | LR = 7.24e-06
+  grad_norm: min=0.003 mean=0.076 max=6.969 frac_clipped(>0.5)=2.02%
+  ⏱  validation step                     1208.6 ms
+[Epoch   68] TRAIN | MSE=0.000006 | MAE_k=    0.0 | mean=  146.2 pcm | median=  108.3 pcm | p95=  406.9 pcm | std= 139.1 | <650pcm=98.9% | <100pcm=46.2%
+[Epoch   68] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  271.9 pcm | median=  184.3 pcm | p95=  747.6 pcm | std= 272.4 | <650pcm=92.0% | <100pcm=29.0%
+  ✓ new best val_mean_pcm = 274.4 pcm (epoch 68) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   69 | LR = 6.00e-06
+  grad_norm: min=0.003 mean=0.075 max=6.969 frac_clipped(>0.5)=1.99%
+  ⏱  validation step                     1087.1 ms
+[Epoch   69] TRAIN | MSE=0.000006 | MAE_k=    0.0 | mean=  146.0 pcm | median=  110.0 pcm | p95=  407.6 pcm | std= 138.3 | <650pcm=99.0% | <100pcm=46.9%
+[Epoch   69] VAL   | MSE=0.000021 | MAE_k=    0.0 | mean=  272.5 pcm | median=  186.1 pcm | p95=  748.1 pcm | std= 269.4 | <650pcm=93.0% | <100pcm=28.0%
+  ✓ new best val_mean_pcm = 274.1 pcm (epoch 69) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Epoch   70 | LR = 5.25e-06
+  grad_norm: min=0.002 mean=0.074 max=6.969 frac_clipped(>0.5)=1.96%
+  ⏱  validation step                     1134.2 ms
+[Epoch   70] TRAIN | MSE=0.000006 | MAE_k=    0.0 | mean=  145.9 pcm | median=  110.4 pcm | p95=  410.4 pcm | std= 138.3 | <650pcm=99.0% | <100pcm=46.9%
+[Epoch   70] VAL   | MSE=0.000022 | MAE_k=    0.0 | mean=  273.2 pcm | median=  191.4 pcm | p95=  741.5 pcm | std= 269.3 | <650pcm=92.0% | <100pcm=29.0%
+  ✓ new best val_mean_pcm = 274.0 pcm (epoch 70) — saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+XS heatmap saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_heatmap/epoch_0070.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0070_sample022.png
+  [subplot] epoch 70  sample 22  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0070_sample022.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0070_sample044.png
+  [subplot] epoch 70  sample 44  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0070_sample044.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0070_sample055.png
+  [subplot] epoch 70  sample 55  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0070_sample055.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0070_sample068.png
+  [subplot] epoch 70  sample 68  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0070_sample068.png
+[xs_subplots] saved to: /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0070_sample082.png
+  [subplot] epoch 70  sample 82  →  /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/xs_subplots/epoch_0070_sample082.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0070_sample022.png
+  [flux_plot] epoch 70  sample 22  k_ref=1.07158  k_pred=1.07714  |Δρ|=481.7 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0070_sample022.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0070_sample044.png
+  [flux_plot] epoch 70  sample 44  k_ref=1.13355  k_pred=1.13545  |Δρ|=147.6 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0070_sample044.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0070_sample055.png
+  [flux_plot] epoch 70  sample 55  k_ref=1.14938  k_pred=1.13970  |Δρ|=738.6 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0070_sample055.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0070_sample068.png
+  [flux_plot] epoch 70  sample 68  k_ref=1.18485  k_pred=1.18219  |Δρ|=190.4 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0070_sample068.png
+  [Plot saved] → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0070_sample082.png
+  [flux_plot] epoch 70  sample 82  k_ref=1.25368  k_pred=1.25605  |Δρ|=150.5 pcm  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/flux_plots/epoch_0070_sample082.png
+Saved last-epoch checkpoint (model+optimizer) → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/last_checkpoint.pkl
+Best epoch was 70  (val_mean_pcm = 274.0 pcm)  → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/checkpoints/best_model.pkl
+Loaded best checkpoint from epoch 70 (val_mean_pcm=274.0) for final evaluation.
+  [train] saving XS CSV: 0/1250
+  [train] saving XS CSV: 100/1250
+  [train] saving XS CSV: 200/1250
+  [train] saving XS CSV: 300/1250
+  [train] saving XS CSV: 400/1250
+  [train] saving XS CSV: 500/1250
+  [train] saving XS CSV: 600/1250
+  [train] saving XS CSV: 700/1250
+  [train] saving XS CSV: 800/1250
+  [train] saving XS CSV: 900/1250
+  [train] saving XS CSV: 1000/1250
+  [train] saving XS CSV: 1100/1250
+  [train] saving XS CSV: 1200/1250
+Saved final XS (train): /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/XS/final_xs_train.csv  [1250 samples]
+  [val] saving XS CSV: 0/100
+Saved final XS (val): /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/XS/final_xs_val.csv  [100 samples]
+
+=== Final evaluation on held-out TEST set (never seen during training) ===
+[Epoch   70] TEST  | MSE=0.000017 | MAE_k=    0.0 | mean=  240.1 pcm | median=  174.8 pcm | p95=  671.0 pcm | std= 246.6 | <650pcm=93.0% | <100pcm=34.0%
+  [test] saving XS CSV: 0/100
+Saved final XS (test): /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/XS/test_final_xs.csv  [100 samples]
+df shape: (7100, 7)
+last epoch = 70, type = <class 'numpy.int64'>
+=== TOP 10 WORST SAMPLES AT FINAL EPOCH ===
+      sample_idx  keff_openmc  keff_peds  delta_rho_pcm
+7019          19     1.053255   1.036560         1529.3
+7006           6     1.033376   1.047814         1333.3
+7086          86     1.247014   1.231885          984.8
+7012          12     1.055964   1.065111          813.3
+7003           3     1.009882   1.001826          796.3
+7055          55     1.149376   1.139700          738.6
+7018          18     1.049205   1.056943          697.7
+7005           5     1.019217   1.012466          654.2
+7024          24     1.083429   1.090388          589.1
+7010          10     1.058574   1.052113          580.1
+
+Bad sample indices: [19  6 86 12  3 55 18  5 24 10]
+
+=== GEOMETRY OF WORST 10 SAMPLES AT FINAL EPOCH ===
+
+  Sample 19 | k_ref=1.0533 | delta_rho=1529.3 pcm
+    b4c_r: normalized=0.027  raw=1.1395
+    cr_frac: normalized=0.410  raw=0.4109
+    fuel_r: normalized=0.021  raw=13.3747
+    enrich: normalized=0.884  raw=9.0267
+    f_mod: normalized=0.746  raw=0.6982
+    water_r: normalized=0.196  raw=47.8430
+
+  Sample 6 | k_ref=1.0334 | delta_rho=1333.3 pcm
+    b4c_r: normalized=0.918  raw=5.5887
+    cr_frac: normalized=0.073  raw=0.0746
+    fuel_r: normalized=0.961  raw=43.7184
+    enrich: normalized=0.006  raw=1.6573
+    f_mod: normalized=0.400  raw=0.5603
+    water_r: normalized=0.417  raw=56.6495
+
+  Sample 86 | k_ref=1.2470 | delta_rho=984.8 pcm
+    b4c_r: normalized=0.917  raw=5.5865
+    cr_frac: normalized=0.804  raw=0.8046
+    fuel_r: normalized=0.800  raw=38.5171
+    enrich: normalized=0.278  raw=3.9411
+    f_mod: normalized=0.872  raw=0.7486
+    water_r: normalized=0.397  raw=55.8682
+
+  Sample 12 | k_ref=1.0560 | delta_rho=813.3 pcm
+    b4c_r: normalized=0.949  raw=5.7471
+    cr_frac: normalized=0.918  raw=0.9184
+    fuel_r: normalized=0.220  raw=19.8012
+    enrich: normalized=0.829  raw=8.5629
+    f_mod: normalized=0.603  raw=0.6410
+    water_r: normalized=0.288  raw=51.5069
+
+  Sample 3 | k_ref=1.0099 | delta_rho=796.3 pcm
+    b4c_r: normalized=0.371  raw=2.8584
+    cr_frac: normalized=0.563  raw=0.5636
+    fuel_r: normalized=0.180  raw=18.4892
+    enrich: normalized=0.739  raw=7.8040
+    f_mod: normalized=0.140  raw=0.4566
+    water_r: normalized=0.134  raw=45.3522
+
+  Sample 55 | k_ref=1.1494 | delta_rho=738.6 pcm
+    b4c_r: normalized=0.712  raw=4.5604
+    cr_frac: normalized=0.001  raw=0.0027
+    fuel_r: normalized=0.432  raw=26.6425
+    enrich: normalized=0.669  raw=7.2220
+    f_mod: normalized=0.232  raw=0.4930
+    water_r: normalized=0.159  raw=46.3728
+
+  Sample 18 | k_ref=1.0492 | delta_rho=697.7 pcm
+    b4c_r: normalized=0.668  raw=4.3410
+    cr_frac: normalized=0.296  raw=0.2967
+    fuel_r: normalized=0.090  raw=15.5796
+    enrich: normalized=0.877  raw=8.9636
+    f_mod: normalized=0.876  raw=0.7500
+    water_r: normalized=0.400  raw=55.9802
+
+  Sample 5 | k_ref=1.0192 | delta_rho=654.2 pcm
+    b4c_r: normalized=0.116  raw=1.5815
+    cr_frac: normalized=0.726  raw=0.7263
+    fuel_r: normalized=0.029  raw=13.6086
+    enrich: normalized=0.729  raw=7.7248
+    f_mod: normalized=0.709  raw=0.6836
+    water_r: normalized=0.290  raw=51.6033
+
+  Sample 24 | k_ref=1.0834 | delta_rho=589.1 pcm
+    b4c_r: normalized=0.825  raw=5.1235
+    cr_frac: normalized=0.853  raw=0.8530
+    fuel_r: normalized=0.414  raw=26.0520
+    enrich: normalized=0.244  raw=3.6526
+    f_mod: normalized=0.636  raw=0.6545
+    water_r: normalized=0.550  raw=61.9656
+
+  Sample 10 | k_ref=1.0586 | delta_rho=580.1 pcm
+    b4c_r: normalized=0.916  raw=5.5810
+    cr_frac: normalized=0.635  raw=0.6357
+    fuel_r: normalized=0.319  raw=22.9970
+    enrich: normalized=0.844  raw=8.6857
+    f_mod: normalized=0.193  raw=0.4778
+    water_r: normalized=0.326  raw=53.0430
+History plot saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/training_history.png
+Reactivity log-scale plot saved → /global/home/users/caterinafrau/PEDS_NT/modules/RUNS/different_ranges/supercritical/train_1250_seed_1/val_reactivity_logscale.png
+
+============================================================
+                       TIMING REPORT                        
+============================================================
+Step                                 calls   total(s)   mean(ms)    min(ms)
+------------------------------------------------------------
+  bwd: vjp A@phi, F@phi -> numerator   2800       2.77        1.0        0.0
+  solver: eigenvalue solve (fwd)      4365      34.05        7.8        3.4
+NN generated XS log ratios            3246      16.94        5.2        1.7
+forward: solver loop (all samples)    2800     220.21       78.6        4.7
+fwd pre-solve batch wall              2800     686.21      245.1        9.7
+fwd pre-solve worker sample          87500    8012.37       91.6        5.8
+fwd val worker sample                 7000     918.56      131.2        6.5
+log baselines from xs first guess     3246       6.65        2.0        0.1
+loss_fn forward pass                  2800     381.84      136.4       37.3
+train step: forward+backward+optiupd   2800     449.79      160.6       50.5
+validation step                         70      82.65     1180.7      992.3
+============================================================
+
+Done.
+  Final val mean |Δρ|   : 273.2 pcm
+  Final val median |Δρ| : 191.4 pcm
+  Final val p95 |Δρ|    : 741.5 pcm
+  Final % below 650 pcm : 92.0%
+Finished at  : 2026-07-07 17:38:26
+Elapsed time : 0.40 hours
