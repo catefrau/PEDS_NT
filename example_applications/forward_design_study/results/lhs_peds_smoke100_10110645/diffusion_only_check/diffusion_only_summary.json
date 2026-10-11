@@ -1,0 +1,21 @@
+{
+  "target_keff": 1.0,
+  "tol_pcm": 1500.0,
+  "n_cases_from_peds_feasible_file": 4,
+  "n_feasible_peds": 4,
+  "n_feasible_diffusion_only": 0,
+  "n_peds_feasible_but_not_diffusion_feasible": 4,
+  "pct_peds_feasible_not_diffusion_feasible": 100.0,
+  "top_k": 30,
+  "n_peds_top_k": 4,
+  "n_overlap_peds_vs_diffusion_top_k": 4,
+  "n_peds_top_k_not_selected_by_diffusion_top_k": 0,
+  "pct_peds_top_k_not_selected_by_diffusion_top_k": 0.0,
+  "diffusion_eval_wall_s": 0.0586223378777504,
+  "diffusion_eval_mean_s_per_case": 0.0146555844694376,
+  "n_hf_rows_available_for_accuracy_comparison": 2,
+  "mae_pcm_peds_vs_hf": 45.8997833768527,
+  "mae_pcm_diffusion_only_vs_hf": 5945.857476367486,
+  "mae_ppf_peds_vs_hf": 2.0870858989677474,
+  "mae_ppf_diffusion_only_vs_hf": 2.213393513597107
+}

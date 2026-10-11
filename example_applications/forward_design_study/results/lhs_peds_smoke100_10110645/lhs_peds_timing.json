@@ -1,0 +1,10 @@
+{
+  "started_at": "2026-10-11T06:45:21",
+  "n_lhs": 100,
+  "n_valid": 100,
+  "n_feasible": 4,
+  "top_k": 2,
+  "eval_wall_s": 48.86879852972925,
+  "mean_s_per_valid_all_seeds": 0.045993036329746245,
+  "mean_keff_ensemble_std_on_feasible": 0.002190370093235189
+}

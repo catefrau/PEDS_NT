@@ -32,6 +32,8 @@ import pandas as pd
 THIS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = THIS_DIR.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "models"))
+sys.path.insert(0, str(PROJECT_ROOT / "config_and_run"))
 
 from NTcode_config_data.config_run import GEO_CYL as GEO
 from PEDS_subdivision.context import update_geo

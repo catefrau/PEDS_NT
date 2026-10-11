@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import time
+import types
 from datetime import datetime
 from pathlib import Path
 
@@ -47,6 +48,11 @@ from models.PEDS_subdivision.analysis.evaluate_test_metrics import (
 )
 from PEDS_subdivision.context import update_geo
 from solvers.NTdiffusion.diffusion_solver import xs_layout
+import models.PEDS_subdivision.analysis.evaluate_test_metrics as _eval_metrics
+
+# Stored training snapshots predate the current PEDS package layout.
+# Evaluate with the live model code and the saved checkpoints.
+_eval_metrics.USE_CURRENT_PEDS = True
 
 RESULTS_DIR = THIS_DIR / "results"
 
@@ -62,11 +68,11 @@ SEEDS = [0, 1, 2, 3, 4]
 RUN_DIR_TEMPLATE = str(PROJECT_ROOT / "modules" / "RUNS" / "precise_param_strat" / "train_1000_seed_{seed}")
 TRAIN_SIZE = 1000
 
-N_LHS = 100
+N_LHS = 3000
 LHS_SEED = 0
 TARGET_KEFF = 1.0
 TOL_PCM = 1000.0
-TOP_K = 2
+TOP_K = 50
 NN_BATCH = 128
 
 # Choose ranking among feasible points:
@@ -77,7 +83,7 @@ RANK_MODE = "keff_first"
 if RANK_MODE not in {"ppf_first", "keff_first"}:
     raise ValueError(f"Unsupported RANK_MODE={RANK_MODE!r}")
 
-RUN_TAG = "smoke100"
+RUN_TAG = "ens_clean"
 OUT_DIR = RESULTS_DIR / f"lhs_peds_{RUN_TAG}_{datetime.now().strftime('%m%d%H%M')}"
 LATEST_MARKER = THIS_DIR / "LATEST_RUN.txt"
 
@@ -91,6 +97,21 @@ STUDY_BOUNDS = {
 }
 PARAM_ORDER = ["b4c_r", "cr_frac", "fuel_r", "enrichment", "f_mod", "water_r"]
 PARAM_RAW_IDX = {name: i for i, name in enumerate(PARAM_ORDER)}
+
+
+def _stub_removed_plot_import() -> None:
+    """Training snapshots import plot_functions.xs_heatmap at load time.
+
+    That package is no longer in the tree. Screening never calls it.
+    """
+    if "plot_functions.xs_heatmap" in sys.modules:
+        return
+    plot_functions = types.ModuleType("plot_functions")
+    xs_heatmap = types.ModuleType("plot_functions.xs_heatmap")
+    xs_heatmap.plot_xs_subplots = lambda *args, **kwargs: None
+    plot_functions.xs_heatmap = xs_heatmap
+    sys.modules["plot_functions"] = plot_functions
+    sys.modules["plot_functions.xs_heatmap"] = xs_heatmap
 
 
 def compute_delta_rho_pcm(k_a: float, k_b: float) -> float:
@@ -316,6 +337,7 @@ def _rank_key(row: dict):
 
 
 def main():
+    _stub_removed_plot_import()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     log_path = OUT_DIR / "lhs_peds_ensemble_run_log.txt"
 
