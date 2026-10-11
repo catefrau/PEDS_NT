@@ -1,0 +1,128 @@
+<?xml version='1.0' encoding='utf-8'?>
+<model>
+  <materials>
+    <material id="1" name="b4c_rod">
+      <density value="4.935816324663319" units="g/cm3"/>
+      <nuclide name="B10" ao="0.08731253104927095"/>
+      <nuclide name="B11" ao="0.35144390638425144"/>
+      <nuclide name="C12" ao="0.1096891093583806"/>
+      <nuclide name="Fe56" ao="0.45155445320809706"/>
+    </material>
+    <material id="2" name="fuel_annulus" depletable="true">
+      <density value="4.0655469446884585" units="g/cm3"/>
+      <nuclide name="U235" ao="0.00782496642702847"/>
+      <nuclide name="U238" ao="0.1043351443935029"/>
+      <nuclide name="H1" ao="0.5918932594529791"/>
+      <nuclide name="O16" ao="0.29594662972648955"/>
+    </material>
+    <material id="3" name="water">
+      <density value="1.0" units="g/cm3"/>
+      <nuclide name="H1" ao="0.6666666666666666"/>
+      <nuclide name="O16" ao="0.3333333333333333"/>
+    </material>
+  </materials>
+  <geometry>
+    <cell id="1" name="b4c_rod" material="1" region="-3 1 -2" universe="1"/>
+    <cell id="2" name="fuel_annulus" material="2" region="3 -4 1 -2" universe="1"/>
+    <cell id="3" name="water" material="3" region="4 -5 1 -2" universe="1"/>
+    <surface id="1" type="z-plane" boundary="reflective" coeffs="-50.0"/>
+    <surface id="2" type="z-plane" boundary="reflective" coeffs="50.0"/>
+    <surface id="3" type="z-cylinder" coeffs="0.0 0.0 1.5771675068056372"/>
+    <surface id="4" type="z-cylinder" coeffs="0.0 0.0 23.966281506102874"/>
+    <surface id="5" type="z-cylinder" boundary="vacuum" coeffs="0.0 0.0 62.057660946323836"/>
+  </geometry>
+  <settings>
+    <run_mode>eigenvalue</run_mode>
+    <particles>20000</particles>
+    <batches>200</batches>
+    <inactive>50</inactive>
+    <generations_per_batch>1</generations_per_batch>
+    <keff_trigger>
+      <threshold>0.0004</threshold>
+      <type>std_dev</type>
+    </keff_trigger>
+    <state_point>
+      <batches>300 400</batches>
+    </state_point>
+    <entropy_mesh>2</entropy_mesh>
+    <mesh id="2">
+      <dimension>20 20 1</dimension>
+      <lower_left>-62.057660946323836 -62.057660946323836 -50.0</lower_left>
+      <upper_right>62.057660946323836 62.057660946323836 50.0</upper_right>
+    </mesh>
+    <trigger>
+      <active>true</active>
+      <max_batches>400</max_batches>
+    </trigger>
+  </settings>
+  <tallies>
+    <mesh id="1" type="cylindrical">
+      <r_grid>0.0 0.7568007432478516 1.5136014864957033 2.2704022297435547 3.0272029729914065 3.7840037162392584 4.540804459487109 5.297605202734961 6.054405945982813 6.811206689230665 7.568007432478517 8.324808175726368 9.081608918974219 9.838409662222071 10.595210405469922 11.352011148717775 12.108811891965626 12.865612635213477 13.62241337846133 14.37921412170918 15.136014864957033 15.892815608204884 16.649616351452735 17.406417094700586 18.163217837948437 18.92001858119629 19.676819324444143 20.433620067691994 21.190420810939845 21.947221554187696 22.70402229743555 23.4608230406834 24.217623783931252 24.974424527179103 25.731225270426954 26.48802601367481 27.24482675692266 28.00162750017051 28.75842824341836 29.515228986666212 30.272029729914067 31.028830473161918 32.50639382902677 33.98395718489162 35.46152054075648 36.939083896621334 38.416647252486186 39.89421060835104 41.37177396421589 42.84933732008074 44.326900675945595 45.804464031810454 47.2820273876753 48.75959074354016 50.23715409940501 51.71471745526986 53.19228081113472 54.66984416699957 56.14740752286443 57.62497087872928 59.10253423459413 60.58009759045898 62.057660946323836</r_grid>
+      <phi_grid>0.0 6.283185307179586</phi_grid>
+      <z_grid>-50.0 50.0</z_grid>
+      <origin>0.0 0.0 0.0</origin>
+    </mesh>
+    <filter id="61" type="cell">
+      <bins>1 2 3</bins>
+    </filter>
+    <filter id="5" type="energy">
+      <bins>0.0 0.625 20000000.0</bins>
+    </filter>
+    <filter id="6" type="energyout">
+      <bins>0.0 0.625 20000000.0</bins>
+    </filter>
+    <filter id="7" type="legendre">
+      <order>1</order>
+    </filter>
+    <filter id="18" type="energy">
+      <bins>0.0 20000000.0</bins>
+    </filter>
+    <filter id="1" type="mesh">
+      <bins>1</bins>
+    </filter>
+    <tally id="60">
+      <filters>61 5</filters>
+      <nuclides>total</nuclides>
+      <scores>flux total absorption nu-fission</scores>
+      <estimator>tracklength</estimator>
+    </tally>
+    <tally id="63">
+      <filters>61 5</filters>
+      <nuclides>total</nuclides>
+      <scores>flux</scores>
+      <estimator>analog</estimator>
+    </tally>
+    <tally id="52">
+      <filters>61 6 7</filters>
+      <nuclides>total</nuclides>
+      <scores>scatter</scores>
+      <estimator>analog</estimator>
+    </tally>
+    <tally id="64">
+      <filters>61 5 6 7</filters>
+      <nuclides>total</nuclides>
+      <scores>scatter</scores>
+      <estimator>analog</estimator>
+    </tally>
+    <tally id="67">
+      <filters>61 18</filters>
+      <nuclides>total</nuclides>
+      <scores>nu-fission</scores>
+      <estimator>analog</estimator>
+    </tally>
+    <tally id="68">
+      <filters>61 6</filters>
+      <nuclides>total</nuclides>
+      <scores>nu-fission</scores>
+      <estimator>analog</estimator>
+    </tally>
+    <tally id="1" name="flux_spatial">
+      <filters>1 5</filters>
+      <scores>flux</scores>
+    </tally>
+    <tally id="2" name="power_spatial">
+      <filters>1</filters>
+      <scores>kappa-fission</scores>
+    </tally>
+  </tallies>
+</model>
