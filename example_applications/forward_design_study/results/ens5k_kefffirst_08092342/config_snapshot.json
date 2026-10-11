@@ -1,0 +1,45 @@
+{
+  "MODE": "ensemble_extend",
+  "SEEDS": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "RUN_DIRS": [
+    "/global/home/users/caterinafrau/PEDS_NT/modules/RUNS/precise_param_strat/train_1000_seed_0",
+    "/global/home/users/caterinafrau/PEDS_NT/modules/RUNS/precise_param_strat/train_1000_seed_1",
+    "/global/home/users/caterinafrau/PEDS_NT/modules/RUNS/precise_param_strat/train_1000_seed_2",
+    "/global/home/users/caterinafrau/PEDS_NT/modules/RUNS/precise_param_strat/train_1000_seed_3",
+    "/global/home/users/caterinafrau/PEDS_NT/modules/RUNS/precise_param_strat/train_1000_seed_4"
+  ],
+  "TRAIN_SIZE": 1000,
+  "PRIOR_ENSEMBLE_DIR": "/global/home/users/caterinafrau/PEDS_NT/modules/inverse_design/lhs_peds_baseline/results/lhs_peds_ensemble_080822",
+  "N_PRIOR": 3000,
+  "N_EXTRA": 2000,
+  "N_LHS_TOTAL": 5000,
+  "LHS_SEED_EXTRA": 1,
+  "TARGET_KEFF": 1.0,
+  "TOL_PCM": 1000.0,
+  "HF_FEAS_PCM": 1500.0,
+  "TOP_K": 30,
+  "NN_BATCH": 128,
+  "RANKING": "keff_first_then_ppf",
+  "effective_lo": [
+    1.0043671131134033,
+    0.0005024683778174222,
+    10.107303619384766,
+    1.5,
+    0.40049228072166443,
+    40.00022888183594
+  ],
+  "effective_hi": [
+    5.999790668487549,
+    0.9998986124992371,
+    40.0,
+    9.991788864135742,
+    0.7996081709861755,
+    79.96878814697266
+  ]
+}

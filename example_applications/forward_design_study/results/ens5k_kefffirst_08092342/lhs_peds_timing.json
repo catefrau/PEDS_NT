@@ -1,0 +1,19 @@
+{
+  "started_at": "2026-08-09T23:42:28",
+  "mode": "ensemble_extend",
+  "n_prior": 3000,
+  "n_extra": 2000,
+  "n_lhs": 5000,
+  "n_valid": 5000,
+  "n_feasible": 154,
+  "top_k": 30,
+  "hf_reused": 9,
+  "hf_still_needed": 21,
+  "top_from_prior_batch": 18,
+  "top_from_extra_batch": 12,
+  "eval_wall_s_extra_only": 115.60314114484936,
+  "tol_pcm_peds": 1000.0,
+  "hf_feas_pcm_reporting": 1500.0,
+  "ranking": "keff_first_then_ppf",
+  "mean_keff_ensemble_std_on_feasible": 0.003464011953514559
+}
