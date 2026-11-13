@@ -6,25 +6,24 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --time=08:00:00
-# Submit from the repo root (PEDS_NT):
-#   sbatch models/PEDS_subdivision/analysis/run_analysis.sh
-#SBATCH --output=models/PEDS_subdivision/analysis/slurm_logs/study_analysis_%j.out
-#SBATCH --error=models/PEDS_subdivision/analysis/slurm_logs/study_analysis_%j.err
+# Submit from utils/:
+#   cd utils && sbatch run_analysis.sh
+#SBATCH --output=slurm_logs/study_analysis_%j.out
+#SBATCH --error=slurm_logs/study_analysis_%j.err
 
 set -euo pipefail
 
-# -----------------------------------------------------------------------------
 # Slurm copies this script to a spool directory on compute nodes, so do NOT
 # resolve paths from BASH_SOURCE. Use SLURM_SUBMIT_DIR (directory where sbatch
 # was run) or fall back to a fixed repo path.
 # -----------------------------------------------------------------------------
 
-REPO_ROOT="${SLURM_SUBMIT_DIR:-/global/home/users/caterinafrau/PEDS_NT}"
-# Analysis code lives with the model stack; study outputs live with the launchers.
+SUBMIT_DIR="${SLURM_SUBMIT_DIR:-/global/home/users/caterinafrau/PEDS_NT/utils}"
+REPO_ROOT="$(cd "$SUBMIT_DIR/.." && pwd)"
 MODELS_DIR="$REPO_ROOT/models"
 CONFIG_RUN_DIR="$REPO_ROOT/config_and_run"
-SLURM_LOG_DIR="$MODELS_DIR/PEDS_subdivision/analysis/slurm_logs"
-ANALYSIS_PY="$MODELS_DIR/PEDS_subdivision/analysis/run_study_analysis.py"
+SLURM_LOG_DIR="$SUBMIT_DIR/slurm_logs"
+ANALYSIS_PY="$REPO_ROOT/utils/analysis/run_study_analysis.py"
 
 mkdir -p "$SLURM_LOG_DIR"
 cd "$CONFIG_RUN_DIR"
@@ -44,27 +43,22 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 
 # ============================== CONFIG (EDIT) ==============================
-# RUNS or RESULTS — parent folder under config_and_run/ that contains your study.
-STUDY_PARENT_FOLDER="RESULTS"
+# Parent folder containing your study: RUNS/RESULTS (under config_and_run/) or an absolute path.
+STUDY_PARENT_FOLDER="$REPO_ROOT/example_applications/main_results"
 
-# Study folder name, e.g. complete_strat or precise_param_strat.
-STUDY_FOLDER="complete_strat"
+# Study folder name, e.g. complete_strat or PEDS.
+STUDY_FOLDER="PEDS"
 
 # Run used for XS-stats inputs (must contain XS/test_final_xs.csv and
-# XS/logratio_saturation.csv under config_and_run/<parent>/<study>/<run>/).
-XS_SOURCE_RUN="train_1000_seed_2"
+# XS/logratio_saturation.csv under <parent>/<study>/<run>/).
+XS_SOURCE_RUN="train_1000_seed_0"
 
 # Error metric mode:
 #   "false"  → |Δρ| = |(k_pred - k_ref) / (k_pred·k_ref)| × 10^5 pcm  (reactivity, default)
 #   "true"   → |Δk| = |k_pred - k_ref| × 10^5 pcm  (linear in keff, mode-insensitive)
-# When "true", outputs go to separate *_dk subdirectories so both sets of
-# results coexist and can be compared directly.
 USE_DELTA_K="true"
 
-# Tasks to run: "all" or comma-separated subset, e.g.:
-#   TASKS="all"
-#   TASKS="param-error,training-diagnostics"
-#   TASKS="test-metrics"
+# Tasks: "all" or comma-separated, e.g. test-metrics,param-error
 TASKS="all"
 # ===========================================================================
 

@@ -12,11 +12,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-MODELS_DIR = Path(__file__).resolve().parents[2]
-if str(MODELS_DIR) not in sys.path:
-    sys.path.insert(0, str(MODELS_DIR))
+MODELS_DIR = Path(__file__).resolve().parents[2] / "models"  # models/ (model stack)
+for _p in (str(MODELS_DIR), str(MODELS_DIR.parent)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-from PEDS_subdivision.analysis.config import (
+from utils.analysis.config import (
     STUDY_FOLDER,
     STUDY_PARENT_FOLDER,
     all_train_run_glob,

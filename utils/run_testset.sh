@@ -1,10 +1,10 @@
 #!/bin/bash
 # Evaluate held-out test metrics for one or more study roots.
 #
-#   cd config_and_run && sbatch launch_metrics.sh
+#   cd utils && sbatch run_testset.sh
 #
-# LOGS_ROOTS entries are paths relative to this directory (config_and_run/),
-# e.g. RUNS/<study>/ or RESULTS/<study>/. One array task per entry.
+# LOGS_ROOTS entries are paths relative to the repo root,
+# e.g. example_applications/main_results/PEDS. One array task per entry.
 #SBATCH --job-name=eval_metrics
 #SBATCH --account=fc_neutronix
 #SBATCH --partition=savio3
@@ -25,14 +25,14 @@ export OPENBLAS_NUM_THREADS=32
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 
-# Define LOGS roots here — one array task per entry.
+# Define LOGS roots (relative to repo root or absolute) here — one array task per entry.
 # Override without editing the file:
-#   PEDS_LOGS_ROOTS="RUNS/a RUNS/b" sbatch --array=0-1 launch_metrics.sh
+#   PEDS_LOGS_ROOTS="example_applications/a example_applications/b" sbatch --array=0-1 run_testset.sh
 if [ -n "${PEDS_LOGS_ROOTS:-}" ]; then
   read -r -a LOGS_ROOTS <<< "$PEDS_LOGS_ROOTS"
 else
   LOGS_ROOTS=(
-    RUNS/agent_studies/r13_1k_elu6e4
+    example_applications/main_results/PEDS
   )
 fi
 
@@ -48,19 +48,18 @@ LOGS_ROOT=${LOGS_ROOTS[$SLURM_ARRAY_TASK_ID]}
 
 # Slurm copies this script to a spool directory on the compute node, so paths
 # must NOT be resolved from BASH_SOURCE. Use the directory sbatch was run from.
-CONFIG_RUN_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
-REPO_ROOT="$(dirname "$CONFIG_RUN_DIR")"
-# The analysis code moved to models/ with the rest of the PEDS stack.
-EVAL_PY="$REPO_ROOT/models/PEDS_subdivision/analysis/evaluate_test_metrics.py"
+SUBMIT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"   # utils/
+REPO_ROOT="$(cd "$SUBMIT_DIR/.." && pwd)"
+EVAL_PY="$REPO_ROOT/utils/analysis/evaluate_test_metrics.py"
 
-cd "$CONFIG_RUN_DIR"
-mkdir -p slurm_logs
+cd "$REPO_ROOT"
+mkdir -p "$SUBMIT_DIR/slurm_logs"
 
 echo "Task $SLURM_ARRAY_TASK_ID -> LOGS_ROOT=$LOGS_ROOT"
 echo "Evaluating with $EVAL_PY"
 
 conda activate jax-env
 
-python "$EVAL_PY" "$LOGS_ROOT" \
+python "$EVAL_PY" "$REPO_ROOT/$LOGS_ROOT" \
   --with-val-study \
   --results-dirname analysis/testset_results

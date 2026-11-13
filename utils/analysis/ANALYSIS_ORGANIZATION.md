@@ -1,6 +1,6 @@
 # Study analysis organization
 
-All analysis code lives under `models/PEDS_subdivision/analysis/`.
+All analysis code lives under `utils/analysis/`.
 
 ## Package modules
 
@@ -23,31 +23,33 @@ All analysis code lives under `models/PEDS_subdivision/analysis/`.
 | `run_xs_stats_report.py` | XS stats only |
 | `run_training_diagnostics.py` | Training diagnostics only |
 | `run_evaluate_test_metrics.py` | Test-set evaluation only |
-| `run_analysis.sh` | **Slurm batch script** (conda + config block) |
+
+Slurm launchers live one level up in `utils/`:
+
+| File | What it runs |
+|------|----------------|
+| `../run_analysis.sh` | Full study analysis via `run_study_analysis.py` |
+| `../run_testset.sh` | Held-out test metrics only (`evaluate_test_metrics.py`) |
 
 ## Slurm: submit and find logs
 
-From the **repo root** (`PEDS_NT`):
+From `utils/`:
 
 ```bash
-sbatch models/PEDS_subdivision/analysis/run_analysis.sh
+cd utils
+sbatch run_analysis.sh    # full post-processing pipeline
+sbatch run_testset.sh     # test-set evaluation only
 ```
 
-**Logs are written here** (not in repo-root `slurm_logs/`):
+**Logs:**
 
 ```
-models/PEDS_subdivision/analysis/slurm_logs/study_analysis_<JOBID>.out
-models/PEDS_subdivision/analysis/slurm_logs/study_analysis_<JOBID>.err
+utils/slurm_logs/study_analysis_<JOBID>.out
+utils/slurm_logs/study_analysis_<JOBID>.err
+utils/slurm_logs/eval_metrics_<ARRAY_JOB>_<TASK>.out
 ```
 
-After submitting job `38358212`, check:
-
-```bash
-cat models/PEDS_subdivision/analysis/slurm_logs/study_analysis_38358212.err
-cat models/PEDS_subdivision/analysis/slurm_logs/study_analysis_38358212.out
-```
-
-Edit the `CONFIG` block inside `run_analysis.sh` before submitting.
+Edit the `CONFIG` block inside `utils/run_analysis.sh` (or `LOGS_ROOTS` in `run_testset.sh`) before submitting.
 
 ## Configuration defaults
 
@@ -62,7 +64,7 @@ Paths resolve to `config_and_run/<parent>/<study>/...`.
 ## CLI arguments (orchestrator)
 
 ```bash
-python models/PEDS_subdivision/analysis/run_study_analysis.py \
+python utils/analysis/run_study_analysis.py \
   --study-parent-folder RESULTS \
   --study-folder complete_strat \
   --xs-source-run train_1000_seed_2
@@ -86,10 +88,10 @@ Written under `config_and_run/<parent>/<study>/`:
 
 Thin re-exports kept at parent level for old import paths:
 
-- `models/PEDS_subdivision/analysis/evaluate_test_metrics.py`
-- `models/PEDS_subdivision/analysis/param_error_analysis.py`
+- `utils/analysis/evaluate_test_metrics.py`
+- `utils/analysis/param_error_analysis.py`
 - `archive/standalone_tools/plot_functions_scripts/plot_test_pub_keff.py` (archived)
-- `models/PEDS_subdivision/analysis/xs_stats_report.py`
-- `models/PEDS_subdivision/study_analysis_config.py`
+- `utils/analysis/xs_stats_report.py`
+- `utils/analysis/study_analysis_config.py`
 
 Implementations are in this `analysis/` package.

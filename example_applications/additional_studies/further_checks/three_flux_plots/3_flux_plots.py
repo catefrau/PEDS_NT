@@ -48,7 +48,7 @@ def _find_project_root(start: Path) -> Path:
 PROJECT_ROOT = _find_project_root(STUDY_DIR)
 CHECKS_DIR = STUDY_DIR.parent
 MODELS_DIR = PROJECT_ROOT / "models"
-ANALYSIS_DIR = MODELS_DIR / "PEDS_subdivision" / "analysis"
+ANALYSIS_DIR = PROJECT_ROOT / "utils" / "analysis"
 CONFIG_RUN_DIR = PROJECT_ROOT / "config_and_run"
 SELECTED_CSV = CHECKS_DIR / "mesh_conv_study" / "selected_cases.csv"
 OUT_DIR = STUDY_DIR

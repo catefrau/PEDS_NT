@@ -13,16 +13,17 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Patch
 
-MODELS_DIR = Path(__file__).resolve().parents[2]
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-if str(MODELS_DIR) not in sys.path:
-    sys.path.insert(0, str(MODELS_DIR))
+MODELS_DIR = Path(__file__).resolve().parents[2] / "models"  # models/ (model stack)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+for _p in (str(MODELS_DIR), str(MODELS_DIR.parent)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from solvers.LF_diffusion.config_run import GEO_CYL as GEO
 from PEDS_subdivision.context import update_geo
-from PEDS_subdivision.analysis.config import (
+from utils.analysis.config import (
     STUDY_FOLDER,
     STUDY_PARENT_FOLDER,
     XS_SOURCE_RUN,

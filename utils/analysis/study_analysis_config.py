@@ -2,5 +2,5 @@
 
 from __future__ import annotations
 
-from PEDS_subdivision.analysis.config import *  # noqa: F401,F403
+from utils.analysis.config import *  # noqa: F401,F403
 

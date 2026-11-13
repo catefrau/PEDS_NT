@@ -5,20 +5,20 @@ Examples
 --------
 Run everything (default)::
 
-    python models/PEDS_subdivision/analysis/run_study_analysis.py
+    python utils/analysis/run_study_analysis.py
 
 Run one task::
 
-    python models/PEDS_subdivision/analysis/run_study_analysis.py --tasks param-error
+    python utils/analysis/run_study_analysis.py --tasks param-error
 
 Run several tasks::
 
-    python models/PEDS_subdivision/analysis/run_study_analysis.py \\
+    python utils/analysis/run_study_analysis.py \\
         --tasks test-metrics,pub-keff --use-delta-k
 
 Skip tasks when running all::
 
-    python models/PEDS_subdivision/analysis/run_study_analysis.py --skip-xs-stats
+    python utils/analysis/run_study_analysis.py --skip-xs-stats
 """
 
 from __future__ import annotations
@@ -28,11 +28,12 @@ import glob
 import sys
 from pathlib import Path
 
-MODELS_DIR = Path(__file__).resolve().parents[2]
-if str(MODELS_DIR) not in sys.path:
-    sys.path.insert(0, str(MODELS_DIR))
+MODELS_DIR = Path(__file__).resolve().parents[2] / "models"  # models/ (model stack)
+for _p in (str(MODELS_DIR), str(MODELS_DIR.parent)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-from PEDS_subdivision.analysis.config import (
+from utils.analysis.config import (
     STUDY_FOLDER,
     STUDY_PARENT_FOLDER,
     XS_SOURCE_RUN,
@@ -45,11 +46,11 @@ from PEDS_subdivision.analysis.config import (
     xs_logratio_csv,
     xs_stats_outdir,
 )
-from PEDS_subdivision.analysis.evaluate_test_metrics import evaluate_study
-from PEDS_subdivision.analysis.param_error_analysis import main as run_param_error
-from PEDS_subdivision.analysis.pub_keff_plots import generate_all as run_pub_keff
-from PEDS_subdivision.analysis.training_diagnostics import generate_training_diagnostics
-from PEDS_subdivision.analysis.xs_stats_report import generate_xs_stats
+from utils.analysis.evaluate_test_metrics import evaluate_study
+from utils.analysis.param_error_analysis import main as run_param_error
+from utils.analysis.pub_keff_plots import generate_all as run_pub_keff
+from utils.analysis.training_diagnostics import generate_training_diagnostics
+from utils.analysis.xs_stats_report import generate_xs_stats
 
 ALL_TASKS = (
     "test-metrics",

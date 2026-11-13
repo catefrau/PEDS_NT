@@ -15,7 +15,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate jax-env
 
 PROJECT_ROOT="/global/home/users/caterinafrau/PEDS_NT"
-SCRIPT_PATH="$PROJECT_ROOT/modules/PEDS_subdivision/analysis/xs_stats_report.py"
+SCRIPT_PATH="$PROJECT_ROOT/utils/analysis/xs_stats_report.py"
 
 python "$SCRIPT_PATH" \
   --study-parent-folder "RESULTS" \

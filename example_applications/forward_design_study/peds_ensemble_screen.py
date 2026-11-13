@@ -36,7 +36,7 @@ THIS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = THIS_DIR.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from models.PEDS_subdivision.analysis.evaluate_test_metrics import (
+from utils.analysis.evaluate_test_metrics import (
     _DEFAULT_DATA_FILEPATH,
     _detect_data_filepath,
     _read_indices_from_split_log,
@@ -48,7 +48,7 @@ from models.PEDS_subdivision.analysis.evaluate_test_metrics import (
 )
 from PEDS_subdivision.context import update_geo
 from solvers.LF_diffusion.diffusion_solver import xs_layout
-import models.PEDS_subdivision.analysis.evaluate_test_metrics as _eval_metrics
+import utils.analysis.evaluate_test_metrics as _eval_metrics
 
 # Stored training snapshots predate the current PEDS package layout.
 # Evaluate with the live model code and the saved checkpoints.

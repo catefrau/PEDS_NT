@@ -60,23 +60,20 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-MODELS_DIR = Path(__file__).resolve().parents[2]      # models/ — model stack
-PROJECT_ROOT = MODELS_DIR.parent
-CONFIG_RUN_DIR = PROJECT_ROOT / "config_and_run"      # launchers, RUNS/, plot_functions
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CONFIG_RUN_DIR = PROJECT_ROOT / "config_and_run"      # launchers, RUNS/
+MODELS_DIR = PROJECT_ROOT / "models"                  # models/ (model stack)
 
-# Must come before the project imports below: this file sits three levels under
-# models/, so neither the model stack nor the launcher tree is importable yet.
+# Must come before the project imports below: the model stack, launcher tree and
+# repo root must be importable first.
 for _root in (str(MODELS_DIR), str(CONFIG_RUN_DIR), str(PROJECT_ROOT)):
     if _root not in sys.path:
         sys.path.insert(0, _root)
 
 # Fallback when a run folder has no code_snapshot_*.py (imported lazily in get_run_eval_context)
 from PEDS import _DATA_FILEPATH as _DEFAULT_DATA_FILEPATH  # noqa: E402
-# plots_all.py lives in this same analysis/ folder.
-if __package__:
-    from .plots_all import plot_keff_scatter, plot_parallel_coords, plot_error_vs_keff  # noqa: E402
-else:
-    from plots_all import plot_keff_scatter, plot_parallel_coords, plot_error_vs_keff  # noqa: E402
+# plots_all.py lives in utils/analysis/.
+from utils.analysis.plots_all import plot_keff_scatter, plot_parallel_coords, plot_error_vs_keff  # noqa: E402
 
 # rawparams column order → names expected by plots_all's plot_parallel_coords (PARAMS).
 PARAM_COLS = [

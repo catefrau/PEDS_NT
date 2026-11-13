@@ -28,7 +28,7 @@ export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 # ── tiny-but-complete configuration ─────────────────────────────────────────
 export PEDS_STUDY_NAME=_smoke_test
 # Analysis scripts parse train_size/seed out of the folder name, so keep the
-# train_<N>_seed_<S> convention or launch_metrics.sh will find no runs.
+# train_<N>_seed_<S> convention or run_testset.sh will find no runs.
 export PEDS_EXP_NAME=train_120_seed_0
 export PEDS_TRAIN_SIZE=120
 export PEDS_VAL_SIZE=60

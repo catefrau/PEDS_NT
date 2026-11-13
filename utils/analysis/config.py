@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-MODELS_DIR = Path(__file__).resolve().parents[2]        # models/
+MODELS_DIR = Path(__file__).resolve().parents[2] / "models"  # models/ (model stack)
 PROJECT_ROOT = MODELS_DIR.parent
 # Study outputs live next to the launchers, not next to the model code.
 CONFIG_RUN_DIR = PROJECT_ROOT / "config_and_run"

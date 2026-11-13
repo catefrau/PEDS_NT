@@ -20,11 +20,12 @@ import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-MODULES_DIR = PROJECT_ROOT / "config_and_run"
-if str(MODULES_DIR) not in sys.path:
-    sys.path.insert(0, str(MODULES_DIR))
+MODULES_DIR = PROJECT_ROOT / "models"
+for _p in (str(MODULES_DIR), str(PROJECT_ROOT)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-from PEDS_subdivision.analysis.pub_keff_plots import _apply_pub_rc, plot_rho_histogram
+from utils.analysis.pub_keff_plots import _apply_pub_rc, plot_rho_histogram
 
 STD_DIR = Path(__file__).resolve().parent
 
