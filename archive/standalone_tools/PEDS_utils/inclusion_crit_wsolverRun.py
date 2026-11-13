@@ -9,10 +9,10 @@ PARENT_DIR = os.path.dirname(THIS_DIR)
 
 sys.path.insert(0, PARENT_DIR)
 
-from NTcode_config_data.config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
-from solvers.NTdiffusion.diffusion_solver import run_diffusion_solver, precompute_geometry, predict_xs, build_xs_callables, fn_xs_per_region, xs_layout
-from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import DiffusionEigenvalue_MG
-from NTcode_config_data.config_run import GEO_CYL  # to reuse G, geometry, bc, mesh_size
+from solvers.LF_diffusion.config_def import GeometryConfig, MaterialSpec, BoundarySpec, BoundaryCondition, MatProperties
+from solvers.LF_diffusion.diffusion_solver import run_diffusion_solver, precompute_geometry, predict_xs, build_xs_callables, fn_xs_per_region, xs_layout
+from solvers.LF_diffusion.core.MG1D_eigenvalue_nregions import DiffusionEigenvalue_MG
+from solvers.LF_diffusion.config_run import GEO_CYL  # to reuse G, geometry, bc, mesh_size
 
 
 

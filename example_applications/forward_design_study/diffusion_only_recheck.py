@@ -35,9 +35,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "models"))
 sys.path.insert(0, str(PROJECT_ROOT / "config_and_run"))
 
-from NTcode_config_data.config_run import GEO_CYL as GEO
+from solvers.LF_diffusion.config_run import GEO_CYL as GEO
 from PEDS_subdivision.context import update_geo
-from solvers.NTdiffusion.diffusion_solver import (
+from solvers.LF_diffusion.diffusion_solver import (
     precompute_geometry,
     predict_xs,
     run_diffusion_solver,

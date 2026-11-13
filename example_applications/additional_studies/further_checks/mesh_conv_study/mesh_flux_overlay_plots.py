@@ -71,7 +71,7 @@ def select_top_cases(n: int = N_CASES) -> pd.DataFrame:
 
 
 def update_geo(geo_template, params, mesh_size: float):
-    from NTcode_config_data.config_def import (
+    from solvers.LF_diffusion.config_def import (
         GeometryConfig, BoundarySpec, MatProperties,
     )
     return GeometryConfig(
@@ -237,8 +237,8 @@ def plot_mesh_flux_overlay(
 # ── Phase: diffusion at several meshes ───────────────────────────────────────
 
 def phase_diffusion(cases: pd.DataFrame, meshes: list[float]) -> None:
-    from NTcode_config_data.config_run import GEO_CYL as GEO
-    from solvers.NTdiffusion.diffusion_solver import run_diffusion_solver
+    from solvers.LF_diffusion.config_run import GEO_CYL as GEO
+    from solvers.LF_diffusion.diffusion_solver import run_diffusion_solver
 
     if not XS_NPZ.is_file():
         raise FileNotFoundError(f"Missing saved XS tensors: {XS_NPZ}")

@@ -21,7 +21,7 @@ from typing import Iterable
 
 MODELS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = MODELS_DIR.parent
-# NTcode_config_data/plot_functions live under config_and_run/, while this script and
+# plot_functions live under config_and_run/, while this script and
 # PEDS_subdivision now live under models/.
 CONFIG_RUN_DIR = PROJECT_ROOT / "config_and_run"
 for _p in (str(PROJECT_ROOT), str(MODELS_DIR), str(CONFIG_RUN_DIR)):
@@ -35,7 +35,7 @@ import optax
 import pandas as pd
 from flax import nnx
 
-from NTcode_config_data.config_run import GEO_CYL as GEO
+from solvers.LF_diffusion.config_run import GEO_CYL as GEO
 from PEDS_subdivision import context as peds_context
 from PEDS_subdivision.data_loading import compute_batch_baselines, compute_phi_features
 

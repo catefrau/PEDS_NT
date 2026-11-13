@@ -297,10 +297,10 @@ def phase_diffusion(cases: pd.DataFrame) -> None:
         _read_indices_from_split_log,
         load_dataset_arrays,
     )
-    from NTcode_config_data.config_def import (
+    from solvers.LF_diffusion.config_def import (
         GeometryConfig, BoundarySpec, MatProperties,
     )
-    from solvers.NTdiffusion.diffusion_solver import (
+    from solvers.LF_diffusion.diffusion_solver import (
         run_diffusion_solver, predict_xs,
     )
 

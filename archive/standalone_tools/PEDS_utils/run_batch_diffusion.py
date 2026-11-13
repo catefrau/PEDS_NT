@@ -46,11 +46,11 @@ print("Contents:", list(SOLVER_ROOT.iterdir()))
 sys.path.insert(0, str(SOLVER_ROOT))
 
 # ── Imports ───────────────────────────────────────────────────────────────────
-from NTdiffusion.diffusion_solver import (
+from solvers.LF_diffusion.diffusion_solver import (
     get_xs_basedon_geo,
     run_diffusion_solver,
 )
-from NTcode_config_data.config_def import (
+from solvers.LF_diffusion.config_def import (
     GeometryConfig,
     MaterialSpec,
     BoundarySpec,

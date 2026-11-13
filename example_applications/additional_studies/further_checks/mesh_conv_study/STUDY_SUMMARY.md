@@ -43,7 +43,7 @@ Secondary goals:
 
 ### Why not vary mesh inside the trained PEDS JAX model?
 
-PEDS was trained at `mesh_size = 1 cm` (`modules/NTcode_config_data/config_run.py`).
+PEDS was trained at `mesh_size = 1 cm` (`solvers/LF_diffusion/config_run.py`).
 The training forward path pads flux vectors to a fixed `N_FLAT_MAX` sized for that
 mesh. Changing mesh inside the live PEDS callback is therefore unsafe / invalid.
 
@@ -83,7 +83,7 @@ Signed reactivity difference (same as study CSVs):
 | Case selection | `RUNS/precise_param_strat/testset_results/run_train1000_seed1_keff_comparison.csv` (final epoch) |
 | Geometry / HF keff | `data/highfidelity/17jul_0.8_1.2.npz` (params checked vs CSV) |
 | PEDS checkpoint | `modules/pretrained_models/train_1000_seed_1` (= `RUNS/precise_param_strat/train_1000_seed_1`, seed 1, best) |
-| Poly XS | `solvers/NTdiffusion/diffusion_solver.predict_xs` |
+| Poly XS | `solvers/LF_diffusion/diffusion_solver.predict_xs` |
 | Training mesh | 1 cm |
 | Solves | `DiffusionEigenvalue_MG` (forward only) |
 

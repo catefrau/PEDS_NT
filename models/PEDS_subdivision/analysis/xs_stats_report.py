@@ -20,7 +20,7 @@ if str(MODELS_DIR) not in sys.path:
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from NTcode_config_data.config_run import GEO_CYL as GEO
+from solvers.LF_diffusion.config_run import GEO_CYL as GEO
 from PEDS_subdivision.context import update_geo
 from PEDS_subdivision.analysis.config import (
     STUDY_FOLDER,
@@ -30,7 +30,7 @@ from PEDS_subdivision.analysis.config import (
     xs_logratio_csv,
     xs_stats_outdir,
 )
-from solvers.NTdiffusion.diffusion_solver import predict_xs
+from solvers.LF_diffusion.diffusion_solver import predict_xs
 
 XS_TYPES = ["D1", "D2", "Sa1", "Sa2", "nSf1", "nSf2", "Ss11", "Ss22", "Ss12", "Ss21", "chi1", "chi2"]
 REGION_LABEL_MAP = {"CR": "absorber", "Core": "fuel", "Mod": "moderator", "Moderator": "moderator"}

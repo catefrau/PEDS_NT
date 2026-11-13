@@ -44,11 +44,11 @@ soft, hard = resource.getrlimit(resource.RLIMIT_AS)
 print(f"Memory limit: soft={soft/1e9:.1f}GB hard={hard/1e9:.1f}GB")
 
 from matrix_JAX_optimized import diffusion_setup_jax, Aphi_Fphi_scan, Aphi_Fphi_vjp
-from NTcode_config_data.config_def import (GeometryConfig, MaterialSpec,
+from solvers.LF_diffusion.config_def import (GeometryConfig, MaterialSpec,
     BoundarySpec, BoundaryCondition, MatProperties)
-from NTcode_config_data.config_run import GEO_CYL as GEO
-from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import diffusion_setup, region_index
-from solvers.NTdiffusion.diffusion_solver import (
+from solvers.LF_diffusion.config_run import GEO_CYL as GEO
+from solvers.LF_diffusion.core.MG1D_eigenvalue_nregions import diffusion_setup, region_index
+from solvers.LF_diffusion.diffusion_solver import (
     get_xs_basedon_geo, run_diffusion_solver, is_homogeneous,
     predict_xs, precompute_geometry, xs_layout, _plot_fluxes,
     build_xs_callables, fn_xs_per_region, bc_to_coeffs, GEOMETRY_CODE)

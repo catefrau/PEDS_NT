@@ -8,7 +8,7 @@ import numpy as np
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from solvers.NTdiffusion.diffusion_solver import predict_xs, run_diffusion_solver, _plot_fluxes
+from solvers.LF_diffusion.diffusion_solver import predict_xs, run_diffusion_solver, _plot_fluxes
 from plot_functions.xs_heatmap import plot_xs_subplots
 from PEDS_core.fwd_bwd_vjp import update_geo, _run_NT_solver, NTdiff_solver
 

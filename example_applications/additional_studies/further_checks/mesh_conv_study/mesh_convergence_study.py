@@ -63,16 +63,16 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from NTcode_config_data.config_run import GEO_CYL as GEO
-from NTcode_config_data.config_def import GeometryConfig, BoundarySpec, MatProperties
-from solvers.NTdiffusion.diffusion_solver import (
+from solvers.LF_diffusion.config_run import GEO_CYL as GEO
+from solvers.LF_diffusion.config_def import GeometryConfig, BoundarySpec, MatProperties
+from solvers.LF_diffusion.diffusion_solver import (
     predict_xs,
     build_xs_callables,
     bc_to_coeffs,
     GEOMETRY_CODE,
     is_homogeneous,
 )
-from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import DiffusionEigenvalue_MG
+from solvers.LF_diffusion.core.MG1D_eigenvalue_nregions import DiffusionEigenvalue_MG
 
 from evaluate_test_metrics import (
     get_run_eval_context,

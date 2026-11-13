@@ -47,7 +47,7 @@ from models.PEDS_subdivision.analysis.evaluate_test_metrics import (
     load_dataset_arrays,
 )
 from PEDS_subdivision.context import update_geo
-from solvers.NTdiffusion.diffusion_solver import xs_layout
+from solvers.LF_diffusion.diffusion_solver import xs_layout
 import models.PEDS_subdivision.analysis.evaluate_test_metrics as _eval_metrics
 
 # Stored training snapshots predate the current PEDS package layout.

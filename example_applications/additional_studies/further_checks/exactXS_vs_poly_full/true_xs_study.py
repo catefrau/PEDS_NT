@@ -54,11 +54,11 @@ OUT_DIR = STUDY_DIR
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config_and_run.NTcode_config_data.config_run import GEO_CYL as GEO  # noqa: E402
-from config_and_run.NTcode_config_data.config_def import (  # noqa: E402
+from solvers.LF_diffusion.config_run import GEO_CYL as GEO  # noqa: E402
+from solvers.LF_diffusion.config_def import (  # noqa: E402
     GeometryConfig, BoundarySpec, MatProperties,
 )
-from solvers.NTdiffusion.diffusion_solver import (  # noqa: E402
+from solvers.LF_diffusion.diffusion_solver import (  # noqa: E402
     run_diffusion_solver, xs_layout, fn_xs_per_region, _enforce_chi, predict_xs,
 )
 

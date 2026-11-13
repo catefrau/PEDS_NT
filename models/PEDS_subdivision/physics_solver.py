@@ -10,9 +10,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from NTcode_config_data.config_run import GEO_CYL as GEO
-from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import diffusion_setup
-from solvers.NTdiffusion.diffusion_solver import (
+from solvers.LF_diffusion.config_run import GEO_CYL as GEO
+from solvers.LF_diffusion.core.MG1D_eigenvalue_nregions import diffusion_setup
+from solvers.LF_diffusion.diffusion_solver import (
     run_diffusion_solver, is_homogeneous, precompute_geometry,
     build_xs_callables, bc_to_coeffs, GEOMETRY_CODE,
 )

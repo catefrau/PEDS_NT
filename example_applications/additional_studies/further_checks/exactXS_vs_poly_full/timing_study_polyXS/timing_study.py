@@ -44,8 +44,8 @@ OUT_DIR = STUDY_DIR
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(TRUE_XS_DIR))
 
-from config_and_run.NTcode_config_data.config_run import GEO_CYL as GEO  # noqa: E402
-from solvers.NTdiffusion.diffusion_solver import (  # noqa: E402
+from solvers.LF_diffusion.config_run import GEO_CYL as GEO  # noqa: E402
+from solvers.LF_diffusion.diffusion_solver import (  # noqa: E402
     run_diffusion_solver, predict_xs,
 )
 from true_xs_study import (  # noqa: E402

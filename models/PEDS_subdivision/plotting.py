@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm, Normalize
 from matplotlib.ticker import LogFormatter
 
-from NTcode_config_data.config_run import GEO_CYL as GEO
-from solvers.NTdiffusion.diffusion_solver import run_diffusion_solver, _plot_fluxes
+from solvers.LF_diffusion.config_run import GEO_CYL as GEO
+from solvers.LF_diffusion.diffusion_solver import run_diffusion_solver, _plot_fluxes
 from PEDS_subdivision import context
 from PEDS_subdivision.context import update_geo
 from PEDS_subdivision.physics_solver import NTdiff_solver

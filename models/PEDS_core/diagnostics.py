@@ -3,11 +3,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from matrix_JAX_optimized import Aphi_Fphi_scan
-from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import diffusion_setup
-from solvers.NTdiffusion.diffusion_solver import (
+from solvers.LF_diffusion.core.MG1D_eigenvalue_nregions import diffusion_setup
+from solvers.LF_diffusion.diffusion_solver import (
     build_xs_callables, bc_to_coeffs, GEOMETRY_CODE, run_diffusion_solver
 )
-from NTcode_config_data.config_def import GeometryConfig
+from solvers.LF_diffusion.config_def import GeometryConfig
 
 
 def solver_floor_check(train_rawparams, train_keffs,
@@ -143,7 +143,7 @@ def check_eigenvalue_residual_vs_solver(xs_tensor, geo_i, phi_fwd_flat, k,
 
 def diagnose_scan_vs_real_cellwise(xs_tensor, geo_i, phi_fwd_flat, k,
                                    _GEO_DATA_CACHE, SLAY):
-    from solvers.NTdiffusion.core.MG1D_eigenvalue_nregions import diffusion_setup, create_grid
+    from solvers.LF_diffusion.core.MG1D_eigenvalue_nregions import diffusion_setup, create_grid
 
     R = geo_i.boundaries[-1].radius
     I = int(R / geo_i.mesh_size)
@@ -227,7 +227,7 @@ def finite_difference_gradient_check(xs_tensor, params_raw_single, sample_id,
                                      NTdiff_solver, _NTdiff_fwd,
                                      _GEO_DATA_CACHE, SLAY, GEO,
                                      rel_eps=1e-3, abs_eps_floor=1e-6):
-    from solvers.NTdiffusion.diffusion_solver import xs_layout
+    from solvers.LF_diffusion.diffusion_solver import xs_layout
 
     xs = jnp.array(xs_tensor, dtype=jnp.float32)
     flat_xs = xs.flatten()
@@ -912,7 +912,7 @@ def full_check(train_rawparams, XS_BASELINE, GEO,
     """
     Single entry point — call this once from main to run all diagnostic checks.
     """
-    from solvers.NTdiffusion.diffusion_solver import xs_layout
+    from solvers.LF_diffusion.diffusion_solver import xs_layout
 
     xs_check     = jnp.array(XS_BASELINE, dtype=jnp.float32)
     params_check = jnp.array(train_rawparams[0], dtype=jnp.float32)

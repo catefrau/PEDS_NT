@@ -6,9 +6,9 @@ import pickle
 import numpy as np
 import jax.numpy as jnp
 
-from NTcode_config_data.config_def import GeometryConfig
-from NTcode_config_data.config_run import GEO_CYL as GEO
-from solvers.NTdiffusion.diffusion_solver import predict_xs
+from solvers.LF_diffusion.config_def import GeometryConfig
+from solvers.LF_diffusion.config_run import GEO_CYL as GEO
+from solvers.LF_diffusion.diffusion_solver import predict_xs
 from PEDS_subdivision import context
 from PEDS_subdivision.context import update_geo
 from PEDS_subdivision.physics_solver import _run_NT_solver

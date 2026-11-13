@@ -26,9 +26,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from NTcode_config_data.config_def import GeometryConfig, BoundarySpec, MatProperties
-from NTcode_config_data.config_run import GEO_CYL as GEO
-from solvers.NTdiffusion.diffusion_solver import (
+from solvers.LF_diffusion.config_def import GeometryConfig, BoundarySpec, MatProperties
+from solvers.LF_diffusion.config_run import GEO_CYL as GEO
+from solvers.LF_diffusion.diffusion_solver import (
     predict_xs, precompute_geometry, xs_layout, bc_to_coeffs,
 )
 
