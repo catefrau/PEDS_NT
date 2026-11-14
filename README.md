@@ -47,12 +47,37 @@ The framework is evaluated on a 1D cylindrical, two-energy-group reactor core mo
 
 ```
 PEDS_NT/
-── config_and_run/          # training config and Slurm launchers
-├── data/                    # OpenMC reference datasets and merged tables
-├── models/                  # PEDS model, training modules, MLP baselines
-├── solvers/                 # OpenMC and 1D diffusion solvers
-├── example_applications/    # thesis results, comparisons, design study
-├── utils/                   # dataset inclusion plots
+├── config_and_run/                      # Training configuration and Slurm launchers
+│   ├── config_peds.py                   # Hyperparameters, dataset path, loss/split settings
+│   ├── run_peds.sh                      # Main Slurm training launcher (invokes models/PEDS.py)
+│   └── smoke_test_peds.sh               # Quick end-to-end training sanity check
+├── data/                                # High-fidelity OpenMC datasets and merged tables
+│   ├── highfidelity/
+│   │   ├── 17jul_0.8_1.2.npz            # Primary dataset used for PEDS NN training/eval
+│   │   └── split_cache/                 # Cached stratified train/val/test split indices
+│   └── files/                           # Merged CSVs (dataset_keff_xs.csv) and dataset builders
+├── models/                              # PEDS model, training modules, and MLP baselines
+│   ├── PEDS.py                          # Main PEDS training loop with custom JAX VJP
+│   ├── matrix_JAX_optimized.py          # JAX-accelerated diffusion matrix & adjoint VJP ops
+│   ├── PEDS_core/                       # Diagnostics (gradient/FD checks) and timing utilities
+│   ├── PEDS_subdivision/                # Modular runtime helpers (context, data, solver, logging)
+│   └── run_mlp_*_compare.py             # Pure-MLP and augmented-MLP baseline trainers
+├── solvers/                             # Low- and high-fidelity neutron transport solvers
+│   ├── LF_diffusion/                    # 1D multigroup diffusion solver, geometry configs, and
+│   │   │                                # polynomial XS regression model (regression_model/)
+│   │   ├── config_def.py / config_run.py
+│   │   ├── diffusion_solver.py          # Solver entry point & XS prediction pipeline
+│   │   └── core/                        # Finite-volume MG diffusion & inverse-power solvers
+│   └── HF_openMC/                       # OpenMC Monte Carlo solver, TD generation & design API
+├── example_applications/                # Thesis experiments, ablations, and design study
+│   ├── main_results/                    # Final PEDS & MLP baseline runs and analysis outputs
+│   ├── forward_design_study/            # 5k-sample PEDS ensemble screening & OpenMC checks
+│   └── additional_studies/              # Train-size, keff-range, gradient, and mesh studies
+├── utils/                               # Post-processing, test evaluation, and plotting
+│   ├── run_analysis.sh                  # Slurm launcher for full study post-processing
+│   ├── run_testset.sh                   # Slurm launcher for held-out test-set evaluation
+│   ├── analysis/                        # Test metrics, param-error, pub plots, XS/training stats
+│   └── inclusion_criteria_plots/        # Dataset keff distribution & inclusion figures
 └── requirements.txt
 ```
 
